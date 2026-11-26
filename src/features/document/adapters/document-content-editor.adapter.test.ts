@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { DocumentContentEditorAdapter } from './document-content-editor.adapter';
 import {
   DocumentContentError,
@@ -10,7 +10,11 @@ import {
   type DriveServicePort,
 } from '../ports';
 import { PdfProcessor } from '../../../infrastructure/pdf/pdf-processor';
-import { PdfCorruptedError } from '../../../infrastructure/pdf/errors';
+import {
+  PdfCorruptedError,
+  PdfEncryptionError,
+  PdfUnsupportedFormError,
+} from '../../../infrastructure/pdf/errors';
 import { createAnonymizedSubmittalCoverSheetPdf } from '../../../../test/fixtures/submittal-cover-sheet.fixture';
 
 function createMockDriveService(overrides?: Partial<DriveServicePort>): DriveServicePort {
@@ -385,6 +389,290 @@ describe('DocumentContentEditorAdapter (#378)', () => {
         })
       ).rejects.toThrow(PdfCorruptedError);
       expect(corruptedDriveService.saveBuffer).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('insertPages onUnmodifiableTarget createSiblingPdf (#380)', () => {
+    it('creates editable sibling Transmittal PDF without ..pdf double suffix for non-PDF, encrypted, pure-XFA, signed, and oversized targets while leaving target untouched', async () => {
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const pdfProcessor = new PdfProcessor();
+
+      // Pure-XFA target
+      const pureXfaDoc = await PDFDocument.create();
+      pureXfaDoc.addPage([400, 400]);
+      pureXfaDoc.catalog
+        .getOrCreateAcroForm()
+        .dict.set(
+          PDFName.of('XFA'),
+          pureXfaDoc.context.register(pureXfaDoc.context.flateStream('<xdp/>'))
+        );
+      const pureXfaBytes = await pureXfaDoc.save({ updateFieldAppearances: false });
+
+      // Signed target
+      const signedDoc = await PDFDocument.create();
+      const sPage = signedDoc.addPage([400, 400]);
+      const sForm = signedDoc.getForm();
+      const sigValRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          Type: 'Sig',
+          Filter: 'Adobe.PPKLite',
+          ByteRange: [0, 100, 200, 300],
+          Contents: PDFString.of('0000'),
+        })
+      );
+      const sigRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          FT: 'Sig',
+          T: PDFString.of('DigitalSig'),
+          V: sigValRef,
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 300, 180, 340],
+          P: sPage.ref,
+        })
+      );
+      sForm.acroForm.addField(sigRef);
+      sForm.acroForm.dict.set(PDFName.of('SigFlags'), signedDoc.context.obj(3));
+      sPage.node.addAnnot(sigRef);
+      const signedBytes = await signedDoc.save({ updateFieldAppearances: false });
+
+      // Normal PDF for streaming/cumulative oversized test
+      const validPdfDoc = await PDFDocument.create();
+      validPdfDoc.addPage([400, 400]);
+      const validPdfBytes = await validPdfDoc.save();
+
+      const cases: Array<{
+        name: string;
+        targetMimeType: string;
+        targetSize?: number;
+        maxBytes?: number;
+        targetBytes?: Uint8Array;
+        downloadError?: Error;
+        requestedFileName: string;
+        expectedSavedName: string;
+        expectedReason: 'non_pdf' | 'encrypted' | 'pure_xfa' | 'signed' | 'oversized';
+      }> = [
+        {
+          name: 'non-PDF MIME',
+          targetMimeType: 'application/vnd.google-apps.document',
+          requestedFileName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'non_pdf',
+        },
+        {
+          name: 'encrypted PDF',
+          targetMimeType: 'application/pdf',
+          targetBytes: validPdfBytes,
+          requestedFileName: '_071200-001-0 Spec Transmittal..pdf',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'encrypted',
+        },
+        {
+          name: 'pure-XFA PDF',
+          targetMimeType: 'application/pdf',
+          targetBytes: pureXfaBytes,
+          requestedFileName: '_071200-001-0 Spec Transmittal',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'pure_xfa',
+        },
+        {
+          name: 'signed PDF',
+          targetMimeType: 'application/pdf',
+          targetBytes: signedBytes,
+          requestedFileName: '_071200-001-0 Spec Transmittal.',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'signed',
+        },
+        {
+          name: 'oversized target metadata',
+          targetMimeType: 'application/pdf',
+          targetSize: 50_000,
+          maxBytes: 20_000,
+          requestedFileName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'oversized',
+        },
+        {
+          name: 'oversized target download stream',
+          targetMimeType: 'application/pdf',
+          downloadError: new DriveFileTooLargeError('Stream exceeded limit'),
+          requestedFileName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedSavedName: '_071200-001-0 Spec Transmittal.pdf',
+          expectedReason: 'oversized',
+        },
+      ];
+
+      for (const testCase of cases) {
+        let savedSiblingBytes: Uint8Array | undefined;
+        const driveService = createMockDriveService({
+          getFile: vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'tpl-cover') {
+              return {
+                id: 'tpl-cover',
+                name: 'Cover.pdf',
+                mimeType: 'application/pdf',
+                size: coverBytes.byteLength,
+              };
+            }
+            return {
+              id: 'dup-target',
+              name: '_071200-001-0 Spec',
+              mimeType: testCase.targetMimeType,
+              parents: ['folder-submittals'],
+              ...(testCase.targetSize !== undefined ? { size: testCase.targetSize } : {}),
+            };
+          }),
+          downloadAsBuffer: vi.fn().mockImplementation(async (fileId: string) => {
+            if (fileId === 'tpl-cover') return coverBytes;
+            if (testCase.downloadError) throw testCase.downloadError;
+            return testCase.targetBytes!;
+          }),
+          saveBuffer: vi.fn().mockImplementation(async (content: Uint8Array, opts) => {
+            savedSiblingBytes = content;
+            return {
+              id: 'sibling-transmittal-1',
+              name: opts.action === 'create' ? opts.name : '',
+              parents: ['folder-submittals'],
+              mimeType: 'application/pdf',
+              webViewLink: 'https://drive.google.com/file/d/sibling-transmittal-1/view',
+            };
+          }),
+        });
+
+        const scopedProcessor =
+          testCase.maxBytes !== undefined
+            ? new PdfProcessor({ getMaxInMemoryFileBytes: async () => testCase.maxBytes })
+            : pdfProcessor;
+
+        if (testCase.expectedReason === 'encrypted') {
+          vi.spyOn(scopedProcessor, 'insertPages').mockRejectedValueOnce(
+            new PdfEncryptionError('Encrypted target', { sourceRole: 'target' })
+          );
+        }
+
+        const adapter = new DocumentContentEditorAdapter({
+          driveService,
+          pdfProcessor: scopedProcessor,
+          ...(testCase.maxBytes !== undefined
+            ? { getMaxInMemoryFileBytes: async () => testCase.maxBytes }
+            : {}),
+        });
+
+        const result = await adapter.insertPages({
+          targetFileId: 'dup-target',
+          sourceFileId: 'tpl-cover',
+          sourceIsTemplate: true,
+          position: 'start',
+          sourcePages: [1],
+          formData: { 'Submittal No': '071200-001-0' },
+          onUnmodifiableTarget: {
+            strategy: 'createSiblingPdf',
+            fileName: testCase.requestedFileName,
+          },
+        });
+
+        expect(result.fallbackUsed, testCase.name).toBe(true);
+        expect(result.unmodifiableReason, testCase.name).toBe(testCase.expectedReason);
+        expect(result.file, testCase.name).toEqual({
+          id: 'sibling-transmittal-1',
+          name: testCase.expectedSavedName,
+          parentId: 'folder-submittals',
+          mimeType: 'application/pdf',
+          uri: 'https://drive.google.com/file/d/sibling-transmittal-1/view',
+        });
+
+        expect(driveService.saveBuffer, testCase.name).toHaveBeenCalledTimes(1);
+        expect(driveService.saveBuffer, testCase.name).toHaveBeenCalledWith(expect.any(Uint8Array), {
+          action: 'create',
+          targetFolderId: 'folder-submittals',
+          name: testCase.expectedSavedName,
+          mimeType: 'application/pdf',
+        });
+
+        if (testCase.expectedReason === 'non_pdf' || testCase.targetSize !== undefined) {
+          expect(driveService.downloadAsBuffer, testCase.name).not.toHaveBeenCalledWith('dup-target');
+        }
+
+        expect(savedSiblingBytes, testCase.name).toBeInstanceOf(Uint8Array);
+        const extracted = await pdfProcessor.extractFormData(savedSiblingBytes!);
+        expect(extracted['Submittal No'], testCase.name).toBe('071200-001-0');
+        expect(extracted['Submittal Response'], testCase.name).toBeUndefined();
+      }
+    });
+
+    it('still fails fast under createSiblingPdf on corrupted target PDF, template errors, and Drive save errors', async () => {
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const pdfProcessor = new PdfProcessor();
+
+      // Corrupted target PDF fails fast
+      const corruptDrive = createMockDriveService({
+        getFile: vi.fn().mockImplementation(async (id: string) => ({
+          id,
+          name: `${id}.pdf`,
+          mimeType: 'application/pdf',
+          parents: ['folder-1'],
+        })),
+        downloadAsBuffer: vi.fn().mockImplementation(async (id: string) => {
+          if (id === 'tpl-cover') return coverBytes;
+          return new Uint8Array([0, 1, 2, 3]);
+        }),
+      });
+      const corruptAdapter = new DocumentContentEditorAdapter({
+        driveService: corruptDrive,
+        pdfProcessor,
+      });
+      await expect(
+        corruptAdapter.insertPages({
+          targetFileId: 'corrupt-dup',
+          sourceFileId: 'tpl-cover',
+          sourceIsTemplate: true,
+          onUnmodifiableTarget: {
+            strategy: 'createSiblingPdf',
+            fileName: '_Sibling Transmittal.pdf',
+          },
+        })
+      ).rejects.toThrow(PdfCorruptedError);
+      expect(corruptDrive.saveBuffer).not.toHaveBeenCalled();
+
+      // Encrypted or XFA cover template fails fast rather than creating sibling
+      const validTarget = await PDFDocument.create();
+      validTarget.addPage([400, 400]);
+      const validTargetBytes = await validTarget.save();
+
+      const xfaCover = await PDFDocument.load(coverBytes);
+      xfaCover.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), xfaCover.context.register(xfaCover.context.flateStream('<xdp/>')));
+      const xfaCoverBytes = await xfaCover.save({ updateFieldAppearances: false });
+
+      const badTemplateDrive = createMockDriveService({
+        getFile: vi.fn().mockImplementation(async (id: string) => ({
+          id,
+          name: `${id}.pdf`,
+          mimeType: 'application/pdf',
+          parents: ['folder-1'],
+        })),
+        downloadAsBuffer: vi.fn().mockImplementation(async (id: string) => {
+          if (id === 'tpl-xfa') return xfaCoverBytes;
+          return validTargetBytes;
+        }),
+      });
+      const badTemplateAdapter = new DocumentContentEditorAdapter({
+        driveService: badTemplateDrive,
+        pdfProcessor,
+      });
+      await expect(
+        badTemplateAdapter.insertPages({
+          targetFileId: 'valid-dup',
+          sourceFileId: 'tpl-xfa',
+          sourceIsTemplate: true,
+          onUnmodifiableTarget: {
+            strategy: 'createSiblingPdf',
+            fileName: '_Sibling Transmittal.pdf',
+          },
+        })
+      ).rejects.toThrow(PdfUnsupportedFormError);
+      expect(badTemplateDrive.saveBuffer).not.toHaveBeenCalled();
     });
   });
 });

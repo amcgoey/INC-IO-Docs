@@ -13,6 +13,8 @@ import type {
   ActivityHandler,
   DocumentContentEditorPort,
   DocumentContentInsertPosition,
+  DocumentContentUnmodifiableTargetReason,
+  DocumentContentUnmodifiableTargetStrategy,
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
   TemplateRegistryPort,
@@ -31,6 +33,17 @@ const InsertDataPayloadSchema = Type.Object(
   { additionalProperties: true }
 );
 type InsertDataPayload = Static<typeof InsertDataPayloadSchema>;
+
+const InsertPagesOnUnmodifiableTargetSchema = Type.Union([
+  Type.Object({ strategy: Type.Literal('error') }, { additionalProperties: false }),
+  Type.Object(
+    {
+      strategy: Type.Literal('createSiblingPdf'),
+      fileName: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false }
+  ),
+]);
 
 const InsertPagesPayloadSchema = Type.Object(
   {
@@ -58,6 +71,9 @@ const InsertPagesPayloadSchema = Type.Object(
       ])
     ),
     fillForm: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+    onUnmodifiableTarget: Type.Optional(
+      Type.Union([InsertPagesOnUnmodifiableTargetSchema, Type.Undefined()])
+    ),
   },
   { additionalProperties: true }
 );
@@ -87,6 +103,43 @@ function mergeFileLocatorMetadata(
     ...(mimeType !== undefined ? { mimeType } : {}),
     ...(uri !== undefined ? { uri } : {}),
   };
+}
+
+function toSiblingFileLocator(
+  sibling: FileLocator,
+  originalTarget: FileLocator
+): FileLocator {
+  const parentId = sibling.parentId ?? originalTarget.parentId;
+  const parentName = sibling.parentName ?? originalTarget.parentName;
+  const mimeType = sibling.mimeType ?? 'application/pdf';
+  return {
+    id: sibling.id,
+    name: sibling.name,
+    ...(parentId !== undefined ? { parentId } : {}),
+    ...(parentName !== undefined ? { parentName } : {}),
+    mimeType,
+    ...(sibling.uri !== undefined ? { uri: sibling.uri } : {}),
+  };
+}
+
+const UNMODIFIABLE_REASON_PHRASES: Readonly<Record<DocumentContentUnmodifiableTargetReason, string>> = {
+  non_pdf: 'it is not a PDF',
+  encrypted: 'it is password-protected/encrypted',
+  pure_xfa: 'it uses pure XFA form data',
+  signed: 'it is cryptographically signed',
+  oversized: 'it exceeds the in-memory file size limit',
+};
+
+function formatSiblingFallbackNotice(
+  targetFile: FileLocator,
+  siblingFile: FileLocator,
+  reason?: DocumentContentUnmodifiableTargetReason
+): string {
+  const targetLabel = targetFile.name || targetFile.id;
+  const reasonPhrase = reason
+    ? UNMODIFIABLE_REASON_PHRASES[reason]
+    : 'the target file could not be modified';
+  return `Cover sheet could not be inserted into "${targetLabel}" because ${reasonPhrase}. Created sibling Transmittal PDF "${siblingFile.name}".`;
 }
 
 /**
@@ -314,6 +367,15 @@ export class DocumentContentActivityHandler implements ActivityHandler {
         seenPages.add(page);
       }
     }
+    if (
+      payload.onUnmodifiableTarget?.strategy === 'createSiblingPdf' &&
+      payload.onUnmodifiableTarget.fileName.trim().length === 0
+    ) {
+      return {
+        success: false,
+        error: 'Invalid INSERT_PAGES payload: onUnmodifiableTarget.fileName must be a non-empty string.',
+      };
+    }
 
     let targetFiles: FileLocator[];
     let sourceFileId: string;
@@ -390,12 +452,27 @@ export class DocumentContentActivityHandler implements ActivityHandler {
     }
 
     const updatedFiles: FileLocator[] = [];
+    const notices: string[] = [];
     for (const targetFile of targetFiles) {
       try {
+        const onUnmodifiableTarget: DocumentContentUnmodifiableTargetStrategy | undefined =
+          payload.onUnmodifiableTarget?.strategy === 'createSiblingPdf'
+            ? {
+                strategy: 'createSiblingPdf',
+                fileName: payload.onUnmodifiableTarget.fileName.trim(),
+                ...(targetFile.parentId !== undefined
+                  ? { targetFolderId: targetFile.parentId }
+                  : {}),
+              }
+            : payload.onUnmodifiableTarget;
+
         const result = await this.deps.contentEditor.insertPages({
           targetFileId: targetFile.id,
           ...(targetFile.mimeType !== undefined ? { targetMimeType: targetFile.mimeType } : {}),
           ...(targetFile.name ? { targetFileName: targetFile.name } : {}),
+          ...(onUnmodifiableTarget !== undefined && targetFile.parentId !== undefined
+            ? { targetFolderId: targetFile.parentId }
+            : {}),
           sourceFileId,
           ...(sourceMimeType !== undefined ? { sourceMimeType } : {}),
           sourceIsTemplate,
@@ -404,14 +481,29 @@ export class DocumentContentActivityHandler implements ActivityHandler {
             : {}),
           ...(payload.sourcePages !== undefined ? { sourcePages: payload.sourcePages } : {}),
           ...(formDataToWrite !== undefined ? { formData: formDataToWrite } : {}),
+          ...(onUnmodifiableTarget !== undefined ? { onUnmodifiableTarget } : {}),
         });
-        updatedFiles.push(mergeFileLocatorMetadata(result.file, targetFile));
+        if (result.fallbackUsed) {
+          const siblingLocator = toSiblingFileLocator(result.file, targetFile);
+          updatedFiles.push(siblingLocator);
+          const rawNotice = formatSiblingFallbackNotice(
+            targetFile,
+            siblingLocator,
+            result.unmodifiableReason
+          );
+          notices.push(
+            this.redactErrorMessage(rawNotice, sourceIsTemplate ? sourceFileId : undefined)
+          );
+        } else {
+          updatedFiles.push(mergeFileLocatorMetadata(result.file, targetFile));
+        }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         return {
           success: false,
           error: this.redactErrorMessage(msg, sourceIsTemplate ? sourceFileId : undefined),
           ...(updatedFiles.length > 0 ? { files: updatedFiles } : {}),
+          ...(notices.length > 0 ? { contextVariables: { notices } } : {}),
         };
       }
     }
@@ -419,6 +511,7 @@ export class DocumentContentActivityHandler implements ActivityHandler {
     return {
       success: true,
       files: updatedFiles,
+      ...(notices.length > 0 ? { contextVariables: { notices } } : {}),
     };
   }
 }

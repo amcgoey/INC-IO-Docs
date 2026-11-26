@@ -5,10 +5,18 @@ export class PdfProcessorError extends Error {
   }
 }
 
+export type PdfSourceRole = 'target' | 'insert';
+
 export class PdfEncryptionError extends PdfProcessorError {
-  constructor(message: string = 'PDF document is encrypted and password-protected', options?: { cause?: unknown }) {
-    super(message, options);
+  readonly sourceRole: PdfSourceRole | undefined;
+
+  constructor(
+    message: string = 'PDF document is encrypted and password-protected',
+    options?: { sourceRole?: PdfSourceRole | undefined; cause?: unknown }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'PdfEncryptionError';
+    this.sourceRole = options?.sourceRole;
   }
 }
 
@@ -45,14 +53,20 @@ export type PdfUnsupportedFormReason = 'xfa' | 'signed' | 'unsupported';
 
 export class PdfUnsupportedFormError extends PdfProcessorError {
   readonly reason: PdfUnsupportedFormReason;
+  readonly sourceRole: PdfSourceRole | undefined;
 
   constructor(
     message: string = 'PDF contains an unsupported interactive form or cryptographic signature',
-    options?: { reason?: PdfUnsupportedFormReason | undefined; cause?: unknown }
+    options?: {
+      reason?: PdfUnsupportedFormReason | undefined;
+      sourceRole?: PdfSourceRole | undefined;
+      cause?: unknown;
+    }
   ) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'PdfUnsupportedFormError';
     this.reason = options?.reason ?? 'unsupported';
+    this.sourceRole = options?.sourceRole;
   }
 }
 

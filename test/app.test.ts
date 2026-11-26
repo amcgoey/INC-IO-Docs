@@ -933,6 +933,10 @@ describe('App integration tests', () => {
               position: 'start',
               sourcePages: [1],
               fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_071200-001-A Waterproofing Specs - 261020 PMG Transmittal.pdf',
+              },
             },
           },
           {
@@ -992,6 +996,10 @@ describe('App integration tests', () => {
               position: 'start',
               sourcePages: [1],
               fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_071200-001-A Waterproofing Specs - 261020 PMG Transmittal.pdf',
+              },
             },
           },
           {
@@ -1259,6 +1267,10 @@ describe('App integration tests', () => {
               position: 'start',
               sourcePages: [1],
               fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_CG104-A Berman Falk - 261021 INC Transmittal.pdf',
+              },
             },
           },
           {
@@ -1318,6 +1330,10 @@ describe('App integration tests', () => {
               position: 'start',
               sourcePages: [1],
               fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_CG104-A Berman Falk - 261021 INC Transmittal.pdf',
+              },
             },
           },
           {

@@ -391,4 +391,141 @@ describe('DocumentContentActivityHandler (#378)', () => {
       expect(multiRes.error).toMatch(/single source file|multiple/i);
     });
   });
+
+  describe('INSERT_PAGES onUnmodifiableTarget (#380)', () => {
+    const submittalDocType: DocumentType = {
+      key: 'submittal-test',
+      name: 'Submittal Test',
+      documentSchema: docType.documentSchema,
+      documentFormSchema: {
+        fields: {
+          'Submittal No': { template: '{{section}}-{{number}}', writable: true },
+        },
+      },
+    };
+    const submittalRegistry: DocumentSchemaRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue([submittalDocType]),
+    };
+
+    it('passes onUnmodifiableTarget with targetFolderId, returns [siblingTransmittalFile] without stale target metadata, and emits redacted contextVariables.notices', async () => {
+      const confidentialTemplateId = 'secret-tpl-380-xyz';
+      const insertPages = vi.fn().mockResolvedValue({
+        file: {
+          id: 'sibling-pdf-1',
+          name: '_071200-001 Transmittal.pdf',
+          mimeType: 'application/pdf',
+        },
+        fallbackUsed: true,
+        unmodifiableReason: 'non_pdf',
+      });
+      const templateRegistry: TemplateRegistryPort = {
+        resolveTemplate: vi.fn().mockResolvedValue({
+          templateKey: 'submittalCoverSheet',
+          fileId: confidentialTemplateId,
+        }),
+        redactSecrets: (msg: string) => msg.split(confidentialTemplateId).join('[REDACTED_TEMPLATE_ID]'),
+      };
+
+      const handler = new DocumentContentActivityHandler({
+        contentEditor: { insertData: vi.fn(), insertPages },
+        documentSchemaRegistry: submittalRegistry,
+        templateEvaluator: handlebars,
+        templateRegistry,
+      });
+
+      const res = await handler.handle(
+        {
+          id: 'insertCoverSheet',
+          type: 'INSERT_PAGES',
+          payload: {
+            fileSourceStepId: 'duplicateForReview',
+            templateKey: 'submittalCoverSheet',
+            position: 'start',
+            sourcePages: [1],
+            fillForm: true,
+            onUnmodifiableTarget: {
+              strategy: 'createSiblingPdf',
+              fileName: '_071200-001 Transmittal.pdf',
+            },
+          },
+        },
+        makeContext({
+          stepOutputs: {
+            duplicateForReview: {
+              success: true,
+              files: [
+                {
+                  id: 'dup-docx-1',
+                  name: '_071200-001.docx',
+                  parentId: 'submittals-folder-1',
+                  parentName: 'Submittals',
+                  mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  uri: 'https://drive/dup-docx-1',
+                },
+              ],
+            },
+          },
+        })
+      );
+
+      expect(res.success).toBe(true);
+      expect(insertPages).toHaveBeenCalledWith({
+        targetFileId: 'dup-docx-1',
+        targetMimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        targetFileName: '_071200-001.docx',
+        targetFolderId: 'submittals-folder-1',
+        sourceFileId: confidentialTemplateId,
+        sourceIsTemplate: true,
+        position: 'start',
+        sourcePages: [1],
+        formData: { 'Submittal No': '071200-001' },
+        onUnmodifiableTarget: {
+          strategy: 'createSiblingPdf',
+          fileName: '_071200-001 Transmittal.pdf',
+          targetFolderId: 'submittals-folder-1',
+        },
+      });
+      // Sibling file must NOT inherit stale uri or docx mimeType from duplicateForReview
+      expect(res.files).toEqual([
+        {
+          id: 'sibling-pdf-1',
+          name: '_071200-001 Transmittal.pdf',
+          parentId: 'submittals-folder-1',
+          parentName: 'Submittals',
+          mimeType: 'application/pdf',
+        },
+      ]);
+      const notices = res.contextVariables?.notices as string[];
+      expect(Array.isArray(notices)).toBe(true);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('_071200-001 Transmittal.pdf');
+      expect(notices[0]).not.toContain(confidentialTemplateId);
+    });
+
+    it('rejects whitespace-only createSiblingPdf fileName cleanly', async () => {
+      const handler = new DocumentContentActivityHandler({
+        contentEditor: { insertData: vi.fn(), insertPages: vi.fn() },
+        documentSchemaRegistry: submittalRegistry,
+        templateEvaluator: handlebars,
+      });
+
+      const res = await handler.handle(
+        {
+          id: 'insertCoverSheet',
+          type: 'INSERT_PAGES',
+          payload: {
+            sourceStepId: 'coverStep',
+            onUnmodifiableTarget: {
+              strategy: 'createSiblingPdf',
+              fileName: '   ',
+            },
+          },
+        },
+        makeContext()
+      );
+
+      expect(res.success).toBe(false);
+      expect(res.error).toMatch(/fileName/i);
+    });
+  });
 });

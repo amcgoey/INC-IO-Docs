@@ -347,6 +347,30 @@ export function validateInsertPagesActivityPayload(
       `Invalid fillForm at "${activityPath}.payload.fillForm": must be a boolean.`
     );
   }
+
+  if (payload['onUnmodifiableTarget'] !== undefined) {
+    const policy = payload['onUnmodifiableTarget'];
+    if (typeof policy !== 'object' || policy === null || Array.isArray(policy)) {
+      errors.push(
+        `Invalid onUnmodifiableTarget at "${activityPath}.payload.onUnmodifiableTarget": must be an object with strategy "error" or "createSiblingPdf".`
+      );
+    } else {
+      const policyObj = policy as Record<string, unknown>;
+      const strategy = policyObj['strategy'];
+      if (strategy !== 'error' && strategy !== 'createSiblingPdf') {
+        errors.push(
+          `Invalid onUnmodifiableTarget.strategy at "${activityPath}.payload.onUnmodifiableTarget.strategy": expected "error" or "createSiblingPdf".`
+        );
+      } else if (strategy === 'createSiblingPdf') {
+        const fileName = policyObj['fileName'];
+        if (typeof fileName !== 'string' || fileName.trim().length === 0) {
+          errors.push(
+            `Invalid onUnmodifiableTarget.fileName at "${activityPath}.payload.onUnmodifiableTarget.fileName": must be a non-empty string.`
+          );
+        }
+      }
+    }
+  }
 }
 
 function parseTemplateWithFallback(

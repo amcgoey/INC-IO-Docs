@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { TypeCompiler } from '@sinclair/typebox/compiler';
@@ -65,6 +65,7 @@ import {
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
 import { PdfProcessor } from '../../infrastructure/pdf/pdf-processor';
+import { PdfEncryptionError } from '../../infrastructure/pdf/errors';
 import { createAnonymizedSubmittalCoverSheetPdf } from '../../../test/fixtures/submittal-cover-sheet.fixture';
 import { ActivityEngine } from './adapters/activity-engine';
 import { DriveActivityHandler } from './adapters/drive-activity-handler';
@@ -7375,6 +7376,10 @@ describe('Document domain', () => {
         position: 'start',
         sourcePages: [1],
         fillForm: true,
+        onUnmodifiableTarget: {
+          strategy: 'createSiblingPdf',
+          fileName: '_071200-001-1 Built-up Bituminous Waterproofing - 261102 PMG Transmittal.pdf',
+        },
       });
       const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[3][0];
       expect(writeLogActivity.id).toBe('writeLog');
@@ -10164,6 +10169,15 @@ describe('Document domain', () => {
               position: -1,
               sourcePages: [1, 1],
               fillForm: 'yes',
+              onUnmodifiableTarget: { strategy: 'invalidStrategy' },
+            },
+          },
+          {
+            id: 'stepBadSibling',
+            type: 'INSERT_PAGES',
+            payload: {
+              templateKey: 'submittalCoverSheet',
+              onUnmodifiableTarget: { strategy: 'createSiblingPdf', fileName: '   ' },
             },
           },
         ]),
@@ -10173,6 +10187,8 @@ describe('Document domain', () => {
       expect(badOptionsErrors.some((e) => /position/i.test(e))).toBe(true);
       expect(badOptionsErrors.some((e) => /sourcePages/i.test(e))).toBe(true);
       expect(badOptionsErrors.some((e) => /fillForm/i.test(e))).toBe(true);
+      expect(badOptionsErrors.some((e) => /onUnmodifiableTarget/i.test(e) && /strategy/i.test(e))).toBe(true);
+      expect(badOptionsErrors.some((e) => /onUnmodifiableTarget/i.test(e) && /fileName/i.test(e))).toBe(true);
 
       const undeclaredTemplateErrors = validateManifestTemplates(
         makeDocType([
@@ -10606,6 +10622,340 @@ describe('Document domain', () => {
         expect(saveFailRes.errors[0]).toMatch(/503/);
       }
       expect(saveFail.writeLogHandler.handle).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('INSERT_PAGES onUnmodifiableTarget (createSiblingPdf) at DocumentService.processDocument() seam (#380)', () => {
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('handles all five unmodifiable target triggers on submittal-arch SubmittalReceived, preserves prior notices, keeps duplicate untouched, binds WRITE_LOG to moveOriginal, and fails fast on corrupted PDFs', async () => {
+      const submittalArchPath = path.resolve(
+        __dirname,
+        '../../../assets/document-types/submittal-arch.json'
+      );
+      const submittalArchSchema: DocumentType = JSON.parse(
+        fs.readFileSync(submittalArchPath, 'utf-8')
+      );
+
+      const coverSheetBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      const pureXfaDoc = await PDFDocument.create();
+      pureXfaDoc.addPage([400, 400]);
+      pureXfaDoc.catalog
+        .getOrCreateAcroForm()
+        .dict.set(
+          PDFName.of('XFA'),
+          pureXfaDoc.context.register(pureXfaDoc.context.flateStream('<xdp/>'))
+        );
+      const pureXfaBytes = await pureXfaDoc.save({ updateFieldAppearances: false });
+
+      const signedDoc = await PDFDocument.create();
+      const sPage = signedDoc.addPage([400, 400]);
+      const sForm = signedDoc.getForm();
+      const sigValRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          Type: 'Sig',
+          Filter: 'Adobe.PPKLite',
+          ByteRange: [0, 100, 200, 300],
+          Contents: PDFString.of('0000'),
+        })
+      );
+      const sigRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          FT: 'Sig',
+          T: PDFString.of('DigitalSig'),
+          V: sigValRef,
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 300, 180, 340],
+          P: sPage.ref,
+        })
+      );
+      sForm.acroForm.addField(sigRef);
+      sForm.acroForm.dict.set(PDFName.of('SigFlags'), signedDoc.context.obj(3));
+      sPage.node.addAnnot(sigRef);
+      const signedBytes = await signedDoc.save({ updateFieldAppearances: false });
+
+      const normalDoc = await PDFDocument.create();
+      normalDoc.addPage([400, 400]);
+      const normalBytes = await normalDoc.save();
+
+      const confidentialTemplateId = 'secret-arch-cover-sheet-id-380';
+
+      const runTrigger = async (cfg: {
+        mode: 'non_pdf' | 'encrypted' | 'pure_xfa' | 'signed' | 'oversized' | 'corrupted';
+      }) => {
+        const targetMime =
+          cfg.mode === 'non_pdf'
+            ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            : 'application/pdf';
+        const targetName = cfg.mode === 'non_pdf' ? 'Door Hardware.docx' : 'Door Hardware.pdf';
+        const targetBuf =
+          cfg.mode === 'pure_xfa'
+            ? pureXfaBytes
+            : cfg.mode === 'signed'
+              ? signedBytes
+              : cfg.mode === 'corrupted'
+                ? new Uint8Array([1, 2, 3, 4])
+                : cfg.mode === 'non_pdf'
+                  ? new Uint8Array([80, 75, 3, 4])
+                  : normalBytes;
+
+        const maxBytes = cfg.mode === 'oversized' ? coverSheetBytes.byteLength + 100 : 10_000_000;
+        const storedBuffers = new Map<string, Uint8Array>([
+          ['arch-orig-1', targetBuf],
+          [confidentialTemplateId, coverSheetBytes],
+        ]);
+        const targetSize = cfg.mode === 'oversized' ? maxBytes + 500 : targetBuf.byteLength;
+
+        const driveService: DriveServicePort = {
+          getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+            id: fileId,
+            name: fileId === confidentialTemplateId ? 'Template.pdf' : targetName,
+            mimeType: fileId === confidentialTemplateId ? 'application/pdf' : targetMime,
+            size: fileId === confidentialTemplateId ? coverSheetBytes.byteLength : targetSize,
+            parents: fileId.endsWith('-review') ? ['arch-Submittals'] : ['inbox-folder'],
+            webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+          })),
+          resolveFolderPath: vi.fn().mockResolvedValue({
+            id: 'folder-6-construction',
+            name: '6 Construction',
+            parents: ['drive-root-1'],
+          }),
+          findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => ({
+            id: `arch-${name}`,
+            name,
+            parents: [parentId],
+          })),
+          move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, moveOpts?: { newName?: string }) => ({
+            id: fileId,
+            name: moveOpts?.newName ?? targetName,
+            parents: [targetFolderId],
+            mimeType: targetMime,
+            webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+          })),
+          rename: vi.fn(),
+          duplicate: vi.fn().mockImplementation(async (fileId: string, dupOpts?: { targetFolderId?: string; newName?: string }) => {
+            const copyId = `${fileId}-review`;
+            const buf = storedBuffers.get(fileId);
+            if (buf) storedBuffers.set(copyId, buf);
+            return {
+              id: copyId,
+              name: dupOpts?.newName ?? `_${targetName}`,
+              parents: dupOpts?.targetFolderId ? [dupOpts.targetFolderId] : ['arch-Submittals'],
+              mimeType: targetMime,
+              webViewLink: `https://drive.google.com/file/d/${copyId}/view`,
+            };
+          }),
+          searchFiles: vi.fn().mockResolvedValue([]),
+          downloadAsBuffer: vi.fn().mockImplementation(async (fileId: string) => {
+            const buf = storedBuffers.get(fileId);
+            if (!buf) throw new FileNotFoundError(`Missing ${fileId}`);
+            return buf;
+          }),
+          saveBuffer: vi.fn().mockImplementation(async (content: Uint8Array, saveOpts: { action: string; fileId?: string; name?: string }) => {
+            const id = saveOpts.action === 'update' ? saveOpts.fileId! : 'sibling-transmittal-1';
+            storedBuffers.set(id, content);
+            return {
+              id,
+              name: saveOpts.action === 'create' ? (saveOpts.name ?? 'sibling.pdf') : targetName,
+              parents: ['arch-Submittals'],
+              mimeType: 'application/pdf',
+              webViewLink: `https://drive.google.com/file/d/${id}/view`,
+            };
+          }),
+          uploadStream: vi.fn(),
+        };
+
+        const pdfProcessor = new PdfProcessor({
+          getMaxInMemoryFileBytes: async () => maxBytes,
+        });
+        if (cfg.mode === 'encrypted') {
+          vi.spyOn(pdfProcessor, 'insertPages').mockRejectedValueOnce(
+            new PdfEncryptionError('PDF is encrypted', { sourceRole: 'target' })
+          );
+        }
+
+        const templateRegistry = new EnvTemplateRegistryAdapter({
+          getTemplatesConfig: async () => ({
+            submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+          }),
+          readEnvVar: (name) =>
+            name === 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID' ? confidentialTemplateId : undefined,
+        });
+
+        const driveHandler = new DriveActivityHandler(driveService);
+        const wrappedMoveHandler: ActivityHandler = {
+          canHandle: (a: Activity) => driveHandler.canHandle(a),
+          handle: async (a: Activity, ctx?: ActivityExecutionContext) => {
+            const out = await driveHandler.handle(a, ctx);
+            if (a.id === 'moveOriginal' && out.success !== false) {
+              return {
+                ...out,
+                contextVariables: {
+                  ...(out.contextVariables ?? {}),
+                  notices: ['Prior archival notice'],
+                },
+              };
+            }
+            return out;
+          },
+        };
+
+        let loggedFileId: string | undefined;
+        const writeLogHandler: ActivityHandler = {
+          canHandle: (a: Activity) => a.type === 'WRITE_LOG',
+          handle: vi.fn().mockImplementation(async (activity: Activity, ctx?: ActivityExecutionContext) => {
+            const sourceStepId = activity.payload.fileSourceStepId as string | undefined;
+            loggedFileId = sourceStepId
+              ? ctx?.stepOutputs[sourceStepId]?.files?.[0]?.id
+              : ctx?.files?.[0]?.id;
+            return { success: true };
+          }),
+        };
+
+        const contentEditor = new DocumentContentEditorAdapter({
+          driveService,
+          pdfProcessor,
+          getMaxInMemoryFileBytes: async () => maxBytes,
+        });
+
+        const registry = createCustomRegistry([submittalArchSchema]);
+        const compiled = createMockCompiledRegistry(registry);
+        await compiled.initialize();
+
+        const engine = new ActivityEngine([
+          wrappedMoveHandler,
+          new DocumentContentActivityHandler({
+            contentEditor,
+            documentSchemaRegistry: registry,
+            templateEvaluator: handlebarsEvaluator,
+            templateRegistry,
+          }),
+          writeLogHandler,
+        ]);
+
+        const service = new DocumentService(
+          engine,
+          registry,
+          handlebarsEvaluator,
+          compiled,
+          {
+            validateExistence: vi.fn().mockResolvedValue({
+              status: { isValid: true, status: 'valid', matchedTuple: { key: 'Open' } },
+              contact: { isValid: true, status: 'valid', matchedTuple: { key: 'MB', name: 'MB' } },
+              action: {
+                isValid: true,
+                status: 'valid',
+                matchedTuple: { key: 'REC', name: 'Received', suffix: '', order: '1' },
+              },
+            }),
+          },
+          undefined,
+          undefined,
+          driveService,
+          false,
+          {
+            resolveOptionTables: vi.fn().mockResolvedValue({
+              csiDivisions: {
+                status: 'ready',
+                tuples: [{ key: '08', folder: '08 - Openings' }],
+              },
+            }),
+          },
+          templateRegistry
+        );
+        await service.initialize();
+
+        const result = await service.processDocument(
+          {
+            type: 'submittal-arch',
+            space: {
+              id: 'proj-1',
+              typeId: 'projects',
+              name: 'Harborview',
+              abstractStorageId: 'drive-root-1',
+            },
+            sourceFiles: [{ id: 'arch-orig-1', name: targetName, mimeType: targetMime }],
+            data: {
+              status: 'Open',
+              section: '081100',
+              number: '001',
+              revision: '0',
+              title: 'Doors',
+              date: '261104',
+              contact: 'MB',
+              action: 'REC',
+            },
+          },
+          'onSubmit'
+        );
+
+        return {
+          result,
+          driveService,
+          storedBuffers,
+          pdfProcessor,
+          writeLogHandler,
+          getLoggedFileId: () => loggedFileId,
+        };
+      };
+
+      for (const mode of ['non_pdf', 'encrypted', 'pure_xfa', 'signed', 'oversized'] as const) {
+        const run = await runTrigger({ mode });
+        expect(run.result.success, mode).toBe(true);
+        if (!run.result.success) continue;
+
+        // Duplicate review copy left untouched (no update on arch-orig-1-review)
+        expect(run.driveService.saveBuffer, mode).toHaveBeenCalledTimes(1);
+        expect(run.driveService.saveBuffer, mode).toHaveBeenCalledWith(expect.any(Uint8Array), {
+          action: 'create',
+          targetFolderId: 'arch-Submittals',
+          name: '_081100-001-0 Doors - 261104 MB Transmittal.pdf',
+          mimeType: 'application/pdf',
+        });
+
+        // Step output contains [siblingTransmittalFile]
+        expect(run.result.stepOutputs?.insertCoverSheet?.files, mode).toEqual([
+          expect.objectContaining({
+            id: 'sibling-transmittal-1',
+            name: '_081100-001-0 Doors - 261104 MB Transmittal.pdf',
+            parentId: 'arch-Submittals',
+            mimeType: 'application/pdf',
+          }),
+        ]);
+
+        // Notices preserved and appended (prior notice + fallback notice), no secret ID leaked
+        const notices = run.result.contextVariables?.notices as string[];
+        expect(notices, mode).toHaveLength(2);
+        expect(notices[0], mode).toBe('Prior archival notice');
+        expect(notices[1], mode).toContain('_081100-001-0 Doors - 261104 MB Transmittal.pdf');
+        expect(JSON.stringify(run.result), mode).not.toContain(confidentialTemplateId);
+
+        // Sibling Transmittal PDF is editable with Submittal No stamped and zero flattening
+        const siblingBytes = run.storedBuffers.get('sibling-transmittal-1')!;
+        expect(await run.pdfProcessor.extractFormData(siblingBytes), mode).toEqual({
+          'Submittal No': '081100-001-0',
+          'Submittal Response': undefined,
+          Date: undefined,
+          'Reviewed By': undefined,
+          REMARKS: undefined,
+        });
+
+        // WRITE_LOG still binds to moveOriginal archived original
+        expect(run.getLoggedFileId(), mode).toBe('arch-orig-1');
+      }
+
+      // Genuinely corrupted PDF still fails fast instead of triggering createSiblingPdf
+      const corruptRun = await runTrigger({ mode: 'corrupted' });
+      expect(corruptRun.result.success).toBe(false);
+      if (!corruptRun.result.success) {
+        expect(corruptRun.result.failedStepId).toBe('insertCoverSheet');
+        expect(corruptRun.result.workflowName).toBe('SubmittalReceived');
+        expect(corruptRun.result.contextVariables?.notices).toEqual(['Prior archival notice']);
+      }
+      expect(corruptRun.driveService.saveBuffer).not.toHaveBeenCalled();
+      expect(corruptRun.writeLogHandler.handle).not.toHaveBeenCalled();
     });
   });
 });
