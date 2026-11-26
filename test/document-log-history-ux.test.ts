@@ -1006,7 +1006,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     expect(resolvedLogSec.collapsible).toBe(true);
     expect(resolvedLogSec.uncollapsibleWidgetsCount).toBe(2); // active bar + warning banner
     expect(resolvedLogSec.widgets).toHaveLength(4); // active bar + warning + 2 matched partial rows
-    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (1 warning)');
+    expect(resolvedLogSec.widgets[1].textParagraph?.text).toContain('Partial read (2 warnings)');
     expect(resolvedLogSec.widgets[1].textParagraph?.text).not.toContain('7120'); // unrelated row warning excluded!
 
     // Newest matched row: missingRequiredDate (no Open button)
@@ -1091,8 +1091,8 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     const ambigLogSec = findSection(ambigCard, 'Document Log')!;
     expect(ambigLogSec.collapsible).toBe(true);
     expect(ambigLogSec.uncollapsibleWidgetsCount).toBe(3); // dropdown + active bar + warning banner
-    // statuses is now a live _Config option source (not static), so "In Review" falls back like Arch actions and only missing vendor warns
-    expect(ambigLogSec.widgets[2].textParagraph?.text).toContain('Partial read (1 warning)');
+    // statuses is a restricted _Config option source (#359), so "In Review" warns alongside missing required vendor
+    expect(ambigLogSec.widgets[2].textParagraph?.text).toContain('Partial read (2 warnings)');
     expect(ambigLogSec.widgets[3].decoratedText?.topLabel).toBe('Rev 0 • LT108 • In Review');
     expect(ambigLogSec.widgets[3].decoratedText?.bottomLabel).toBe('SCONCE —');
     expect(findProcessButton(ambigCard)?.disabled).not.toBe(true);

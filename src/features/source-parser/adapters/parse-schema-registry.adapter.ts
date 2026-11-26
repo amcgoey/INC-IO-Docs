@@ -661,7 +661,25 @@ export class ParseSchemaRegistryAdapter implements ParseSchemaRegistryPort {
           duplicateAlias: (alias, norm, existingKey, canonicalKey) =>
             `Duplicate alias "${alias}" (normalized "${norm}") in AliasDictionary "${relPath}" between keys "${existingKey}" and "${canonicalKey}"`,
         });
-        this.aliasDictionaries.set(sourceKey, aliasDict);
+
+        const normalizedMappings: Record<string, string[]> = {};
+        for (const [rawKey, aliases] of Object.entries(aliasDict.mappings)) {
+          const normKey = rawKey.trim().toLowerCase();
+          if (normKey.length === 0) {
+            throw new Error(`Empty or whitespace-only key in AliasDictionary "${relPath}"`);
+          }
+          if (Object.prototype.hasOwnProperty.call(normalizedMappings, normKey)) {
+            throw new Error(
+              `Duplicate normalized key "${normKey}" in AliasDictionary "${relPath}" (for "${rawKey}")`
+            );
+          }
+          normalizedMappings[normKey] = [...aliases];
+        }
+
+        this.aliasDictionaries.set(sourceKey, {
+          source: aliasDict.source,
+          mappings: normalizedMappings,
+        });
       }
     }
 

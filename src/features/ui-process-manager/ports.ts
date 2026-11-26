@@ -308,6 +308,7 @@ export type UiProcessSourceContext = Static<typeof UiProcessSourceContextSchema>
 export const UiProcessExtractFieldsRequestSchema = Type.Object({
   documentTypeKey: Type.String({ minLength: 1 }),
   spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   context: UiProcessSourceContextSchema,
   existingData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
 });
