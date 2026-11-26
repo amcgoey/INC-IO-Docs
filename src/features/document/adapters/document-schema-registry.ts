@@ -63,7 +63,17 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
   async loadAll(): Promise<DocumentType[]> {
     const rawManifest = (await this.manifestProvider.getRawManifest()) as {
       documentTypes?: string[];
+      configuration?: {
+        templates?: Record<string, unknown>;
+      };
     };
+    const configuredTemplateKeys = new Set(
+      rawManifest?.configuration?.templates &&
+      typeof rawManifest.configuration.templates === 'object' &&
+      !Array.isArray(rawManifest.configuration.templates)
+        ? Object.keys(rawManifest.configuration.templates)
+        : []
+    );
     const documentTypes: DocumentType[] = [];
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
@@ -102,7 +112,8 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
 
       const templateErrors = validateManifestTemplates(
         validatedDocumentType,
-        this.templateEvaluator
+        this.templateEvaluator,
+        { configuredTemplateKeys }
       );
       if (templateErrors.length > 0) {
         throw new Error(

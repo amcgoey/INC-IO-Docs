@@ -12,9 +12,12 @@ import {
 import type {
   ActivityHandler,
   DocumentContentEditorPort,
+  DocumentContentInsertPosition,
   DocumentSchemaRegistryPort,
   TemplateEvaluatorPort,
+  TemplateRegistryPort,
 } from '../ports';
+import { REDACTED_TEMPLATE_ID_PLACEHOLDER } from './env-template-registry.adapter';
 
 const InsertDataPayloadSchema = Type.Object(
   {
@@ -29,10 +32,42 @@ const InsertDataPayloadSchema = Type.Object(
 );
 type InsertDataPayload = Static<typeof InsertDataPayloadSchema>;
 
+const InsertPagesPayloadSchema = Type.Object(
+  {
+    fileSourceStepId: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+    templateKey: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+    sourceStepId: Type.Optional(
+      Type.Union([Type.String({ minLength: 1 }), Type.Undefined()])
+    ),
+    position: Type.Optional(
+      Type.Union([
+        Type.Literal('start'),
+        Type.Literal('end'),
+        Type.Integer({ minimum: 0 }),
+        Type.Undefined(),
+      ])
+    ),
+    sourcePages: Type.Optional(
+      Type.Union([
+        Type.Array(Type.Integer({ minimum: 1 }), { minItems: 1 }),
+        Type.Undefined(),
+      ])
+    ),
+    fillForm: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  },
+  { additionalProperties: true }
+);
+type InsertPagesPayload = Static<typeof InsertPagesPayloadSchema>;
+
 export interface DocumentContentActivityHandlerDeps {
   contentEditor: DocumentContentEditorPort;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   templateEvaluator: TemplateEvaluatorPort;
+  templateRegistry?: TemplateRegistryPort | undefined;
 }
 
 function mergeFileLocatorMetadata(
@@ -55,8 +90,9 @@ function mergeFileLocatorMetadata(
 }
 
 /**
- * ActivityHandler orchestrating content-editing activities (`INSERT_DATA`) by evaluating
- * writable `DocumentFormSchema` fields and delegating to `DocumentContentEditorPort`.
+ * ActivityHandler orchestrating content-editing activities (`INSERT_DATA`, `INSERT_PAGES`)
+ * by resolving templates, evaluating writable `DocumentFormSchema` fields, and delegating
+ * to `DocumentContentEditorPort`.
  */
 export class DocumentContentActivityHandler implements ActivityHandler {
   private cachedDocumentTypesPromise: Promise<DocumentType[]> | undefined;
@@ -64,7 +100,18 @@ export class DocumentContentActivityHandler implements ActivityHandler {
   constructor(private readonly deps: DocumentContentActivityHandlerDeps) {}
 
   canHandle(activity: Activity): boolean {
-    return activity.type === 'INSERT_DATA';
+    return activity.type === 'INSERT_DATA' || activity.type === 'INSERT_PAGES';
+  }
+
+  private redactErrorMessage(message: string, secretId?: string): string {
+    let redacted = message;
+    if (secretId && redacted.includes(secretId)) {
+      redacted = redacted.split(secretId).join(REDACTED_TEMPLATE_ID_PLACEHOLDER);
+    }
+    if (this.deps.templateRegistry?.redactSecrets) {
+      redacted = this.deps.templateRegistry.redactSecrets(redacted);
+    }
+    return redacted;
   }
 
   private async getDocumentType(documentTypeKey: string): Promise<DocumentType | undefined> {
@@ -81,24 +128,25 @@ export class DocumentContentActivityHandler implements ActivityHandler {
   }
 
   private resolveTargetFiles(
-    payload: InsertDataPayload,
+    activityType: 'INSERT_DATA' | 'INSERT_PAGES',
+    fileSourceStepId: string | undefined,
     context: ActivityExecutionContext
   ): FileLocator[] {
-    if (payload.fileSourceStepId !== undefined) {
-      const stepId = payload.fileSourceStepId.trim();
+    if (fileSourceStepId !== undefined) {
+      const stepId = fileSourceStepId.trim();
       if (stepId.length === 0) {
-        throw new Error('INSERT_DATA payload.fileSourceStepId must be a non-empty string.');
+        throw new Error(`${activityType} payload.fileSourceStepId must be a non-empty string.`);
       }
       const stepOutput = context.stepOutputs[stepId];
       if (stepOutput === undefined) {
         throw new Error(
-          `INSERT_DATA fileSourceStepId "${stepId}" references an unexecuted step.`
+          `${activityType} fileSourceStepId "${stepId}" references an unexecuted step.`
         );
       }
       const stepFiles = stepOutput.files ?? [];
       if (stepFiles.length === 0) {
         throw new Error(
-          `INSERT_DATA fileSourceStepId "${stepId}" resolved zero files.`
+          `${activityType} fileSourceStepId "${stepId}" resolved zero files.`
         );
       }
       return [...stepFiles];
@@ -117,7 +165,7 @@ export class DocumentContentActivityHandler implements ActivityHandler {
     }
 
     throw new Error(
-      'INSERT_DATA requires at least one target file from fileSourceStepId or execution context.'
+      `${activityType} requires at least one target file from fileSourceStepId or execution context.`
     );
   }
 
@@ -125,13 +173,22 @@ export class DocumentContentActivityHandler implements ActivityHandler {
     activity: Activity,
     context?: ActivityExecutionContext
   ): Promise<ActivityOutput> {
-    if (activity.type !== 'INSERT_DATA') {
-      return {
-        success: false,
-        error: `DocumentContentActivityHandler cannot handle activity type "${activity.type}".`,
-      };
+    if (activity.type === 'INSERT_DATA') {
+      return this.handleInsertData(activity, context);
     }
+    if (activity.type === 'INSERT_PAGES') {
+      return this.handleInsertPages(activity, context);
+    }
+    return {
+      success: false,
+      error: `DocumentContentActivityHandler cannot handle activity type "${activity.type}".`,
+    };
+  }
 
+  private async handleInsertData(
+    activity: Activity,
+    context?: ActivityExecutionContext
+  ): Promise<ActivityOutput> {
     if (!context || !context.document) {
       return {
         success: false,
@@ -162,7 +219,7 @@ export class DocumentContentActivityHandler implements ActivityHandler {
         };
       }
 
-      targetFiles = this.resolveTargetFiles(payload, context);
+      targetFiles = this.resolveTargetFiles('INSERT_DATA', payload.fileSourceStepId, context);
 
       evaluatedFormData = evaluateWritableDocumentFormFields({
         documentFormSchema: documentType.documentFormSchema,
@@ -199,6 +256,161 @@ export class DocumentContentActivityHandler implements ActivityHandler {
         return {
           success: false,
           error: error instanceof Error ? error.message : String(error),
+          ...(updatedFiles.length > 0 ? { files: updatedFiles } : {}),
+        };
+      }
+    }
+
+    return {
+      success: true,
+      files: updatedFiles,
+    };
+  }
+
+  private async handleInsertPages(
+    activity: Activity,
+    context?: ActivityExecutionContext
+  ): Promise<ActivityOutput> {
+    if (!context || !context.document) {
+      return {
+        success: false,
+        error: 'INSERT_PAGES requires an ActivityExecutionContext with document.',
+      };
+    }
+
+    const rawPayload = activity.payload ?? {};
+    if (!Value.Check(InsertPagesPayloadSchema, rawPayload)) {
+      const details = [...Value.Errors(InsertPagesPayloadSchema, rawPayload)]
+        .map((e) => `${e.path}: ${e.message}`)
+        .join(', ');
+      return {
+        success: false,
+        error: `Invalid INSERT_PAGES payload: ${details}`,
+      };
+    }
+    const payload = rawPayload as InsertPagesPayload;
+
+    if (payload.templateKey !== undefined && payload.sourceStepId !== undefined) {
+      return {
+        success: false,
+        error: 'INSERT_PAGES payload cannot specify both templateKey and sourceStepId.',
+      };
+    }
+    if (payload.templateKey === undefined && payload.sourceStepId === undefined) {
+      return {
+        success: false,
+        error: 'INSERT_PAGES payload must specify either templateKey or sourceStepId.',
+      };
+    }
+    if (payload.sourcePages !== undefined) {
+      const seenPages = new Set<number>();
+      for (const page of payload.sourcePages) {
+        if (seenPages.has(page)) {
+          return {
+            success: false,
+            error: `Invalid INSERT_PAGES payload: duplicate page number ${page} in sourcePages.`,
+          };
+        }
+        seenPages.add(page);
+      }
+    }
+
+    let targetFiles: FileLocator[];
+    let sourceFileId: string;
+    let sourceMimeType: string | undefined;
+    let sourceIsTemplate: boolean;
+    let formDataToWrite: Record<string, string> | undefined;
+
+    try {
+      const documentType = await this.getDocumentType(context.document.type);
+      if (!documentType) {
+        return {
+          success: false,
+          error: `Unknown DocumentType "${context.document.type}" for INSERT_PAGES.`,
+        };
+      }
+
+      targetFiles = this.resolveTargetFiles('INSERT_PAGES', payload.fileSourceStepId, context);
+
+      if (payload.templateKey !== undefined) {
+        if (!this.deps.templateRegistry) {
+          throw new Error(
+            `INSERT_PAGES templateKey "${payload.templateKey}" requires TemplateRegistryPort to be configured.`
+          );
+        }
+        const resolvedTemplate = await this.deps.templateRegistry.resolveTemplate(
+          payload.templateKey
+        );
+        sourceFileId = resolvedTemplate.fileId;
+        sourceIsTemplate = true;
+      } else {
+        const srcStepId = payload.sourceStepId!.trim();
+        if (srcStepId.length === 0) {
+          throw new Error('INSERT_PAGES payload.sourceStepId must be a non-empty string.');
+        }
+        const srcStepOutput = context.stepOutputs[srcStepId];
+        if (srcStepOutput === undefined) {
+          throw new Error(
+            `INSERT_PAGES sourceStepId "${srcStepId}" references an unexecuted step.`
+          );
+        }
+        const srcFiles = srcStepOutput.files ?? [];
+        if (srcFiles.length === 0) {
+          throw new Error(
+            `INSERT_PAGES sourceStepId "${srcStepId}" resolved zero files.`
+          );
+        }
+        if (srcFiles.length > 1) {
+          throw new Error(
+            `INSERT_PAGES sourceStepId "${srcStepId}" resolved ${srcFiles.length} files; expected a single source file.`
+          );
+        }
+        sourceFileId = srcFiles[0]!.id;
+        sourceMimeType = srcFiles[0]!.mimeType;
+        sourceIsTemplate = false;
+      }
+
+      if (payload.fillForm === true) {
+        const evaluated = evaluateWritableDocumentFormFields({
+          documentFormSchema: documentType.documentFormSchema,
+          documentSchema: documentType.documentSchema,
+          data: context.document.data,
+          templateEvaluator: this.deps.templateEvaluator,
+        });
+        if (hasNonEmptyWritableFormData(evaluated)) {
+          formDataToWrite = evaluated;
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        error: this.redactErrorMessage(msg),
+      };
+    }
+
+    const updatedFiles: FileLocator[] = [];
+    for (const targetFile of targetFiles) {
+      try {
+        const result = await this.deps.contentEditor.insertPages({
+          targetFileId: targetFile.id,
+          ...(targetFile.mimeType !== undefined ? { targetMimeType: targetFile.mimeType } : {}),
+          ...(targetFile.name ? { targetFileName: targetFile.name } : {}),
+          sourceFileId,
+          ...(sourceMimeType !== undefined ? { sourceMimeType } : {}),
+          sourceIsTemplate,
+          ...(payload.position !== undefined
+            ? { position: payload.position as DocumentContentInsertPosition }
+            : {}),
+          ...(payload.sourcePages !== undefined ? { sourcePages: payload.sourcePages } : {}),
+          ...(formDataToWrite !== undefined ? { formData: formDataToWrite } : {}),
+        });
+        updatedFiles.push(mergeFileLocatorMetadata(result.file, targetFile));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          error: this.redactErrorMessage(msg, sourceIsTemplate ? sourceFileId : undefined),
           ...(updatedFiles.length > 0 ? { files: updatedFiles } : {}),
         };
       }

@@ -46,6 +46,12 @@ export interface AppInfrastructureArgs {
    * Maximum concurrent requests per Cloud Run instance. Defaults to 4 to bound peak PDF heap usage.
    */
   maxInstanceRequestConcurrency?: pulumi.Input<number>;
+
+  /**
+   * Confidential Drive file ID for the Submittal Cover Sheet template.
+   * Injected as SUBMITTAL_COVER_SHEET_TEMPLATE_ID on Cloud Run when configured.
+   */
+  submittalCoverSheetTemplateId?: pulumi.Input<string | undefined>;
 }
 
 export class AppInfrastructure extends pulumi.ComponentResource {
@@ -159,20 +165,30 @@ export class AppInfrastructure extends pulumi.ComponentResource {
                   cpu: "2",
                 },
               },
-              envs: [
-                {
-                  name: "NODE_ENV",
-                  value: "production",
-                },
-                {
-                  name: "NODE_OPTIONS",
-                  value: "--max-old-space-size=3584",
-                },
-                {
-                  name: "SKIP_SPACE_VALIDATION",
-                  value: "true",
-                },
-              ],
+              envs: pulumi.output(args.submittalCoverSheetTemplateId).apply((templateId) => {
+                const baseEnvs = [
+                  {
+                    name: "NODE_ENV",
+                    value: "production",
+                  },
+                  {
+                    name: "NODE_OPTIONS",
+                    value: "--max-old-space-size=3584",
+                  },
+                  {
+                    name: "SKIP_SPACE_VALIDATION",
+                    value: "true",
+                  },
+                ];
+                const normalizedTemplateId = templateId?.trim();
+                if (normalizedTemplateId) {
+                  baseEnvs.push({
+                    name: "SUBMITTAL_COVER_SHEET_TEMPLATE_ID",
+                    value: normalizedTemplateId,
+                  });
+                }
+                return baseEnvs;
+              }),
             },
           ],
         },

@@ -304,6 +304,15 @@ describe('CI/CD & Release Workflow Contract Validation', () => {
       expect(deployStep).toBeDefined();
       const configMap = String(deployStep!.with?.['config-map'] ?? '');
       expect(configMap).toContain('IMAGE_SHA_TAG');
+
+      const parsedConfigMap = YAML.parse(configMap) as Record<
+        string,
+        { value?: string; secret?: boolean }
+      >;
+      expect(parsedConfigMap.submittalCoverSheetTemplateId).toEqual({
+        value: '${{ secrets.SUBMITTAL_COVER_SHEET_TEMPLATE_ID }}',
+        secret: true,
+      });
     });
 
     it('generates Workspace Add-on manifest with dynamic --environment flag', () => {

@@ -21,6 +21,7 @@ import { GoogleDocsClient, type GoogleDocsClientOptions } from '../src/infrastru
 import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
 
 function createArchOptionTablesSheetsMock(
   manifestPath: string,
@@ -885,6 +886,7 @@ describe('App integration tests', () => {
       };
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         const response = await prodApp.server.inject({
           method: 'POST',
           url: '/documents?eventName=onSubmit',
@@ -920,6 +922,17 @@ describe('App integration tests', () => {
               folderName: 'Submittals',
               fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
               fileNamePrefix: '_',
+            },
+          },
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
             },
           },
           {
@@ -971,6 +984,26 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           3,
           {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          4,
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
             payload: { fileSourceStepId: 'moveOriginal' },
@@ -983,6 +1016,7 @@ describe('App integration tests', () => {
           }
         );
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
       }
     });
@@ -1069,6 +1103,7 @@ describe('App integration tests', () => {
       };
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         // 1. > maxSourceFiles rejected with HTTP 400 before Drive lookups or mutations
         const multiRes = await prodApp.server.inject({
           method: 'POST',
@@ -1126,6 +1161,7 @@ describe('App integration tests', () => {
         ]);
         expect(mockDispatcher.dispatch).toHaveBeenCalled();
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
         getFileSpy.mockRestore();
       }
@@ -1176,6 +1212,7 @@ describe('App integration tests', () => {
       };
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         const response = await prodApp.server.inject({
           method: 'POST',
           url: '/documents?eventName=onSubmit',
@@ -1211,6 +1248,17 @@ describe('App integration tests', () => {
               folderName: '05 Submittals',
               fileName: 'CG104-A Berman Falk - 261021 INC',
               fileNamePrefix: '_',
+            },
+          },
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
             },
           },
           {
@@ -1262,6 +1310,26 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           3,
           {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          4,
+          {
             id: 'writeLog',
             type: 'WRITE_LOG',
             payload: { fileSourceStepId: 'moveOriginal' },
@@ -1274,6 +1342,7 @@ describe('App integration tests', () => {
           }
         );
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
       }
     });
@@ -2575,8 +2644,14 @@ describe('App integration tests', () => {
         templateEvaluator: handlebars,
       });
 
+      const samplePdfBytes = await createAnonymizedSubmittalCoverSheetPdf();
       const mockDriveService: DriveServicePort = {
-        getFile: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
+        getFile: vi.fn().mockImplementation(async (id: string) => ({
+          id,
+          name: 'Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          size: samplePdfBytes.byteLength,
+        })),
         findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-submittals', name: 'Submittals' }),
         resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
         move: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', webViewLink: 'https://drive.google.com/file/d/doc-file-ambig/view' }),
@@ -2589,8 +2664,14 @@ describe('App integration tests', () => {
           webViewLink: 'https://drive.google.com/file/d/doc-file-ambig-copy/view',
         }),
         searchFiles: vi.fn().mockResolvedValue([]),
-        downloadAsBuffer: vi.fn(),
-        saveBuffer: vi.fn(),
+        downloadAsBuffer: vi.fn().mockResolvedValue(samplePdfBytes),
+        saveBuffer: vi.fn().mockResolvedValue({
+          id: 'doc-file-ambig-copy',
+          name: '_071200-002-A Waterproofing - 261020 PMG.pdf',
+          parents: ['folder-submittals'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/doc-file-ambig-copy/view',
+        }),
         uploadStream: vi.fn(),
       };
 
@@ -2620,6 +2701,7 @@ describe('App integration tests', () => {
       }
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         // Validation passes using candidates[0] ("Open" + "REC"), MOVE_FILE succeeds,
         // and WRITE_LOG strictly rejects ambiguous_log.
         const res = await server.inject({
@@ -2655,6 +2737,7 @@ describe('App integration tests', () => {
         // candidates[0] used for validation; WRITE_LOG reused per-request resolveLog (1 search total)
         expect(searchSpy).toHaveBeenCalledTimes(1);
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
         folderSpy.mockRestore();
         resolveFolderSpy.mockRestore();

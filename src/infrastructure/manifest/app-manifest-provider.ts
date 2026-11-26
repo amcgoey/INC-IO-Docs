@@ -77,6 +77,12 @@ export const AppConfigurationSchema = Type.Object({
   maxInMemoryFileBytes: Type.Optional(
     Type.Union([Type.Integer({ minimum: 1 }), Type.Undefined()])
   ),
+  templates: Type.Optional(
+    Type.Union([
+      Type.Record(Type.String({ minLength: 1 }), Type.String({ minLength: 1 })),
+      Type.Undefined(),
+    ])
+  ),
 });
 
 export type AppConfiguration = Static<typeof AppConfigurationSchema>;
@@ -161,6 +167,18 @@ export class AppManifestProvider {
       }
 
       this.cachedConfiguration = validatedManifest.configuration;
+
+      const templates = validatedManifest.configuration?.templates;
+      if (templates !== undefined) {
+        for (const [templateKey, envVarName] of Object.entries(templates)) {
+          if (templateKey.trim().length === 0 || envVarName.trim().length === 0) {
+            throw new Error(
+              `Invalid templates configuration at "${this.manifestPath}": templateKey "${templateKey}" and env var name must be non-empty strings`
+            );
+          }
+        }
+      }
+
       this.cachedRawManifest = rawData;
       this.cachedValidatedManifest = validatedManifest;
       this.isManifestLoaded = true;
@@ -242,6 +260,25 @@ export class AppManifestProvider {
       }
     }
     return this.cachedConfiguration?.maxInMemoryFileBytes ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+  }
+
+  /**
+   * Returns logical DocumentTemplate keys mapped to runtime environment variable names.
+   */
+  async getTemplatesConfig(): Promise<Record<string, string> | undefined> {
+    if (!this.isManifestLoaded) {
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load templates config from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
+    }
+    return this.cachedConfiguration?.templates !== undefined
+      ? structuredClone(this.cachedConfiguration.templates)
+      : undefined;
   }
 
   async getRawManifest(): Promise<unknown> {

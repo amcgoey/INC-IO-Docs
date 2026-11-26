@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { Readable } from 'node:stream';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppOptions } from '../src/app/server';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
@@ -18,6 +19,13 @@ import { ActivityEngine } from '../src/features/document/adapters/activity-engin
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
 import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
 import { DriveActivityHandler } from '../src/features/document/adapters/drive-activity-handler';
+import { DocumentContentEditorAdapter } from '../src/features/document/adapters/document-content-editor.adapter';
+import { DocumentContentActivityHandler } from '../src/features/document/adapters/document-content-activity-handler';
+import { EnvTemplateRegistryAdapter } from '../src/features/document/adapters/env-template-registry.adapter';
+import { PdfProcessor } from '../src/infrastructure/pdf/pdf-processor';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+const sampleCoverPdfBytesPromise = createAnonymizedSubmittalCoverSheetPdf();
 import {
   DocumentService,
   type Activity,
@@ -217,15 +225,24 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
     return { data: created };
   });
 
-  const get = vi.fn().mockImplementation(async ({ fileId }: { fileId: string }) => ({
-    data: {
-      id: fileId,
-      name: '071200-001-0 Fluid-Applied Waterproofing Membrane.pdf',
-      parents: ['inbox-folder'],
-      mimeType: 'application/pdf',
-      webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
-    },
-  }));
+  const get = vi.fn().mockImplementation(async ({ fileId, alt }: { fileId: string; alt?: string }) => {
+    const pdfBytes = await sampleCoverPdfBytesPromise;
+    if (alt === 'media') {
+      return {
+        data: Readable.from([Buffer.from(pdfBytes)]),
+      };
+    }
+    return {
+      data: {
+        id: fileId,
+        name: '071200-001-0 Fluid-Applied Waterproofing Membrane.pdf',
+        parents: ['inbox-folder'],
+        mimeType: 'application/pdf',
+        size: String(pdfBytes.byteLength),
+        webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+      },
+    };
+  });
 
   const update = vi.fn().mockImplementation(async ({ fileId, requestBody, addParents }: { fileId: string; requestBody?: { name?: string }; addParents?: string }) => ({
     data: {
@@ -939,11 +956,13 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
   let handlebars: HandlebarsAdapter;
 
   beforeEach(() => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
     manifestProvider = new AppManifestProvider({ manifestPath });
     handlebars = new HandlebarsAdapter();
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -987,25 +1006,42 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     });
     await logWiring.logSchemaRegistry.initialize();
 
-    const driveActivityHandler = new DriveActivityHandler(
-      {
-        getFile: (id) => driveClient.getFile(id),
-        findOrCreateFolder: (p, n) => driveClient.findOrCreateFolder(p, n),
-        resolveFolderPath: (r, s) => driveClient.resolveFolderPath(r, s),
-        move: (f, t, o) => driveClient.move(f, t, o),
-        rename: (f, n) => driveClient.rename(f, n),
-        duplicate: (f, o) => driveClient.duplicate(f, o),
-        searchFiles: (q) => driveClient.searchFiles(q),
-        downloadAsBuffer: (f) => driveClient.downloadAsBuffer(f),
-        saveBuffer: (c, o) => driveClient.saveBuffer(c, o),
-        uploadStream: (s, o) => driveClient.uploadStream(s, o),
-      },
-      {
-        configProvider: manifestProvider,
-        ...(params.primaryTargetId !== undefined ? { primaryTargetId: params.primaryTargetId } : {}),
-        ...(params.sourceFiles !== undefined ? { sourceFiles: params.sourceFiles } : {}),
-      }
-    );
+    const driveServiceObj = {
+      getFile: (id: string) => driveClient.getFile(id),
+      findOrCreateFolder: (p: string, n: string) => driveClient.findOrCreateFolder(p, n),
+      resolveFolderPath: (r: string, s: string[]) => driveClient.resolveFolderPath(r, s),
+      move: (f: string, t: string, o?: { newName?: string }) => driveClient.move(f, t, o),
+      rename: (f: string, n: string) => driveClient.rename(f, n),
+      duplicate: (f: string, o?: { newName?: string; targetFolderId?: string }) =>
+        driveClient.duplicate(f, o),
+      searchFiles: (q: Parameters<typeof driveClient.searchFiles>[0]) => driveClient.searchFiles(q),
+      downloadAsBuffer: (f: string) => driveClient.downloadAsBuffer(f),
+      saveBuffer: (c: Uint8Array, o: Parameters<typeof driveClient.saveBuffer>[1]) =>
+        driveClient.saveBuffer(c, o),
+      uploadStream: (
+        s: ReadableStream<Uint8Array>,
+        o: Parameters<typeof driveClient.uploadStream>[1]
+      ) => driveClient.uploadStream(s, o),
+    };
+
+    const driveActivityHandler = new DriveActivityHandler(driveServiceObj, {
+      configProvider: manifestProvider,
+      ...(params.primaryTargetId !== undefined ? { primaryTargetId: params.primaryTargetId } : {}),
+      ...(params.sourceFiles !== undefined ? { sourceFiles: params.sourceFiles } : {}),
+    });
+
+    const templateRegistry = new EnvTemplateRegistryAdapter({
+      getTemplatesConfig: () => manifestProvider.getTemplatesConfig(),
+    });
+    const contentHandler = new DocumentContentActivityHandler({
+      contentEditor: new DocumentContentEditorAdapter({
+        driveService: driveServiceObj,
+        pdfProcessor: new PdfProcessor(),
+      }),
+      documentSchemaRegistry: docSchemaRegistry,
+      templateEvaluator: handlebars,
+      templateRegistry,
+    });
 
     const logHandler = logWiring.createActivityHandler({
       ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
@@ -1019,7 +1055,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       documentLogService: logWiring.documentLogService,
       ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
     });
-    const activityEngine = new ActivityEngine([driveActivityHandler, logHandler]);
+    const activityEngine = new ActivityEngine([
+      driveActivityHandler,
+      contentHandler,
+      logHandler,
+    ]);
     const documentService = new DocumentService(
       activityEngine,
       docSchemaRegistry,
@@ -1030,7 +1070,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       params.selectedLogId,
       undefined,
       undefined,
-      params.optionTablePortOverride ?? createDocumentOptionTableAdapter(lookupOptions)
+      params.optionTablePortOverride ?? createDocumentOptionTableAdapter(lookupOptions),
+      templateRegistry
     );
     await documentService.initialize();
 
@@ -1097,7 +1138,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
+    expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
     expect(result.contextVariables).toEqual({
       documentLogWrite: {
         spreadsheetId: 'harborview-log-1',
@@ -1725,11 +1771,25 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       id: 'submittals-id',
       name: 'Submittals',
     });
-    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
-      id: 'moved-doc-1',
+    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => ({
+      id: fileId,
       name: 'Waterproofing.pdf',
+      mimeType: 'application/pdf',
+      size: (await sampleCoverPdfBytesPromise).byteLength,
       parents: ['inbox-id'],
-    });
+    }));
+    vi.spyOn(GoogleDriveClient.prototype, 'downloadAsBuffer').mockImplementation(
+      async () => await sampleCoverPdfBytesPromise
+    );
+    vi.spyOn(GoogleDriveClient.prototype, 'saveBuffer').mockImplementation(
+      async (_content: Uint8Array, opts: { action: string; fileId?: string }) => ({
+        id: opts.action === 'update' ? opts.fileId! : 'saved-pdf-1',
+        name: '_Moved.pdf',
+        parents: ['submittals-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${opts.action === 'update' ? opts.fileId : 'saved-pdf-1'}/view`,
+      })
+    );
     vi.spyOn(GoogleDriveClient.prototype, 'move').mockResolvedValue({
       id: 'moved-doc-1',
       name: 'Moved.pdf',
@@ -2006,7 +2066,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
       expect(result.activities.map((a) => a.type)).toEqual(
         scenario.documentData.action === 'REC'
-          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']
           : ['MOVE_FILE', 'WRITE_LOG']
       );
       const writeInfo = result.contextVariables?.documentLogWrite as {
@@ -2365,7 +2425,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
       expect(result.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
@@ -2453,7 +2518,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
         if (!result.success) return;
 
-        expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
+        expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
         const writeInfo = result.contextVariables?.documentLogWrite as {
           rowNumber: number;
           action: string;
@@ -3048,11 +3118,13 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
   let handlebars: HandlebarsAdapter;
 
   beforeEach(() => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
     manifestProvider = new AppManifestProvider({ manifestPath });
     handlebars = new HandlebarsAdapter();
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 

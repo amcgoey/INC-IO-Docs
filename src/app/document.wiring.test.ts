@@ -720,5 +720,143 @@ describe('document.wiring', () => {
       }
       expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
     });
+
+    it('wires EnvTemplateRegistryAdapter into DocumentService pre-flight and DocumentContentActivityHandler INSERT_PAGES (#379)', async () => {
+      const confidentialTemplateId = 'synthetic-wiring-cover-template-123';
+      const coverSheetBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const targetDoc = await RealPdfProcessor.prototype.extractPages(coverSheetBytes, [1]);
+      const storedFiles = new Map<string, Uint8Array>([
+        [confidentialTemplateId, coverSheetBytes],
+        ['pdf-target-379', targetDoc],
+      ]);
+
+      const insertPagesDocType: DocumentType = {
+        key: 'insert-pages-wiring',
+        name: 'Insert Pages Wiring',
+        documentSchema: {
+          fields: [
+            { key: 'section', name: 'Section', type: 'string', required: true },
+            { key: 'number', name: 'Number', type: 'string', required: true },
+          ],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}-{{number}}', writable: true },
+          },
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'AttachCover' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'AttachCover',
+              activitySequence: [
+                {
+                  id: 'insertCoverSheet',
+                  type: 'INSERT_PAGES',
+                  payload: {
+                    templateKey: 'submittalCoverSheet',
+                    position: 'start',
+                    sourcePages: [1],
+                    fillForm: true,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([insertPagesDocType]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const mockDriveClient = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: fileId === confidentialTemplateId ? 'Cover.pdf' : 'Target.pdf',
+          mimeType: 'application/pdf',
+          size: storedFiles.get(fileId)?.byteLength,
+          parents: ['parent-1'],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        downloadAsBuffer: vi.fn().mockImplementation(async (fileId: string) => storedFiles.get(fileId)!),
+        saveBuffer: vi.fn().mockImplementation(async (content: Uint8Array, opts: { action: string; fileId?: string }) => {
+          if (opts.action === 'update' && opts.fileId) {
+            storedFiles.set(opts.fileId, content);
+          }
+          return {
+            id: opts.fileId ?? 'pdf-target-379',
+            name: 'Target.pdf',
+            mimeType: 'application/pdf',
+            parents: ['parent-1'],
+            webViewLink: `https://drive.google.com/file/d/${opts.fileId ?? 'pdf-target-379'}/view`,
+          };
+        }),
+      } as unknown as GoogleDriveClient;
+
+      const configProvider = {
+        getDriveConfig: vi.fn().mockResolvedValue(undefined),
+        getTemplatesConfig: vi.fn().mockResolvedValue({
+          submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+        }),
+      };
+
+      const factory = createDocumentServiceFactory({
+        documentSchemaRegistry: registry,
+        templateEvaluator: new HandlebarsAdapter(),
+        compiledSchemaRegistry: compiled,
+        driveClient: mockDriveClient,
+        configProvider,
+      });
+
+      const savedEnv = process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID;
+      try {
+        delete process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID;
+        const missingEnvService = (await factory({
+          sourceFiles: [{ id: 'pdf-target-379', name: 'Target.pdf', mimeType: 'application/pdf' }],
+        })) as DocumentService;
+
+        const preflightFail = await missingEnvService.processDocument(
+          {
+            type: 'insert-pages-wiring',
+            sourceFiles: [{ id: 'pdf-target-379', name: 'Target.pdf', mimeType: 'application/pdf' }],
+            data: { section: '071200', number: '001' },
+          },
+          'onSubmit'
+        );
+        expect(preflightFail.success).toBe(false);
+        if (!preflightFail.success) {
+          expect(preflightFail.errors[0]).toMatch(/SUBMITTAL_COVER_SHEET_TEMPLATE_ID/);
+        }
+        expect(mockDriveClient.downloadAsBuffer).not.toHaveBeenCalled();
+
+        process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID = confidentialTemplateId;
+        const okService = (await factory({
+          sourceFiles: [{ id: 'pdf-target-379', name: 'Target.pdf', mimeType: 'application/pdf' }],
+        })) as DocumentService;
+        const okRes = await okService.processDocument(
+          {
+            type: 'insert-pages-wiring',
+            sourceFiles: [{ id: 'pdf-target-379', name: 'Target.pdf', mimeType: 'application/pdf' }],
+            data: { section: '071200', number: '001' },
+          },
+          'onSubmit'
+        );
+        expect(okRes.success).toBe(true);
+        const realPdf = new RealPdfProcessor();
+        const extracted = await realPdf.extractFormData(storedFiles.get('pdf-target-379')!);
+        expect(extracted['Submittal No']).toBe('071200-001');
+      } finally {
+        if (savedEnv === undefined) {
+          delete process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID;
+        } else {
+          process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID = savedEnv;
+        }
+      }
+    });
   });
 });

@@ -251,6 +251,44 @@ describe('AppManifestProvider', () => {
       expect(await provider.getRawManifest()).toEqual(rawData);
     });
 
+    it('retains configuration.templates through Value.Clean, exposes getTemplatesConfig(), and rejects blank env var names (#379)', async () => {
+      const manifestPath = path.join(tempDir, 'templates-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            templates: {
+              submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.getTemplatesConfig()).resolves.toEqual({
+        submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+      });
+
+      const invalidManifestPath = path.join(tempDir, 'invalid-templates-manifest.json');
+      await fs.writeFile(
+        invalidManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            templates: {
+              submittalCoverSheet: '   ',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const invalidProvider = new AppManifestProvider({ manifestPath: invalidManifestPath });
+      await expect(invalidProvider.getTemplatesConfig()).rejects.toThrow(/templates/i);
+    });
+
     it('loads production assets/manifest.json without legacy sheets defaultHeaderRangeName or defaultDataRangeName keys', async () => {
       const prodManifestPath = path.resolve(__dirname, '../../../assets/manifest.json');
       const provider = new AppManifestProvider({ manifestPath: prodManifestPath });

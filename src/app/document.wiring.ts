@@ -13,6 +13,7 @@ import type {
   DocumentOptionTablePort,
   DynamicValidationMessageFormatter,
   DocumentContentEditorPort,
+  TemplateRegistryPort,
 } from '../features/document/ports';
 import {
   DEFAULT_MESSAGE_CATALOG,
@@ -45,6 +46,7 @@ import { createMaxInMemoryFileBytesProvider } from '../infrastructure/manifest/a
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 import { DocumentContentEditorAdapter } from '../features/document/adapters/document-content-editor.adapter';
 import { DocumentContentActivityHandler } from '../features/document/adapters/document-content-activity-handler';
+import { EnvTemplateRegistryAdapter } from '../features/document/adapters/env-template-registry.adapter';
 
 export interface DocumentFeatureWiringOptions {
   manifestProvider: RawManifestProviderPort;
@@ -90,10 +92,38 @@ export function createDocumentFeatureWiring(
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { DocumentServiceFactory } from './ui-process-manager.wiring';
 
+function createTemplateRegistry(params: {
+  templateRegistry?: TemplateRegistryPort | undefined;
+  configProvider?: AppConfigurationProviderPort | undefined;
+  manifestProvider?: RawManifestProviderPort | undefined;
+}): TemplateRegistryPort {
+  if (params.templateRegistry) {
+    return params.templateRegistry;
+  }
+  return new EnvTemplateRegistryAdapter({
+    getTemplatesConfig: async () => {
+      if (params.configProvider && typeof params.configProvider.getTemplatesConfig === 'function') {
+        const fromConfig = await params.configProvider.getTemplatesConfig();
+        if (fromConfig !== undefined) {
+          return fromConfig;
+        }
+      }
+      if (params.manifestProvider) {
+        const raw = (await params.manifestProvider.getRawManifest()) as {
+          configuration?: { templates?: Record<string, string> };
+        };
+        return raw?.configuration?.templates;
+      }
+      return undefined;
+    },
+  });
+}
+
 function createDocumentContentHandler(params: {
   driveService: DriveServicePort;
   documentSchemaRegistry: DocumentSchemaRegistryPort;
   templateEvaluator: TemplateEvaluatorPort;
+  templateRegistry: TemplateRegistryPort;
   pdfProcessor: PdfProcessor;
   getMaxInMemoryFileBytes: () => Promise<number>;
   contentEditor?: DocumentContentEditorPort | undefined;
@@ -109,6 +139,7 @@ function createDocumentContentHandler(params: {
     contentEditor,
     documentSchemaRegistry: params.documentSchemaRegistry,
     templateEvaluator: params.templateEvaluator,
+    templateRegistry: params.templateRegistry,
   });
 }
 
@@ -122,6 +153,7 @@ export interface CreateDocumentServiceFactoryOptions {
   gmailClient?: GoogleGmailClient | undefined;
   pdfProcessor?: PdfProcessor | undefined;
   contentEditor?: DocumentContentEditorPort | undefined;
+  templateRegistry?: TemplateRegistryPort | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
   getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
   optionTablePort?: DocumentOptionTablePort | undefined;
@@ -216,10 +248,17 @@ export function createDocumentServiceFactory(
       isFileSourceEmailAttachments,
     });
 
+    const templateRegistry = createTemplateRegistry({
+      templateRegistry: options.templateRegistry,
+      configProvider: options.configProvider,
+      manifestProvider: options.manifestProvider,
+    });
+
     const contentActivityHandler = createDocumentContentHandler({
       driveService,
       documentSchemaRegistry: options.documentSchemaRegistry,
       templateEvaluator: options.templateEvaluator,
+      templateRegistry,
       pdfProcessor,
       getMaxInMemoryFileBytes,
       contentEditor: options.contentEditor,
@@ -280,7 +319,8 @@ export function createDocumentServiceFactory(
       context.selectedLogId,
       driveService,
       isFileSourceEmailAttachments === true,
-      optionTablePort
+      optionTablePort,
+      templateRegistry
     );
 
     await service.initialize();
@@ -298,6 +338,7 @@ export interface WireDocumentServicesOptions {
   driveService?: DriveServicePort | undefined;
   pdfProcessor?: PdfProcessor | undefined;
   contentEditor?: DocumentContentEditorPort | undefined;
+  templateRegistry?: TemplateRegistryPort | undefined;
   activityEngine?: ActivityDispatcherPort | undefined;
   documentService?: InjectedDocumentService | undefined;
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
@@ -349,6 +390,11 @@ export function wireDocumentServicesAndRoutes(
   const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
   const pdfProcessor =
     options.pdfProcessor ?? new PdfProcessor({ getMaxInMemoryFileBytes });
+  const templateRegistry = createTemplateRegistry({
+    templateRegistry: options.templateRegistry,
+    configProvider: options.configProvider,
+    manifestProvider: options.manifestProvider,
+  });
 
   const buildActivityEngine = async (
     lookupOptions?: LookupOptionsPort,
@@ -369,6 +415,7 @@ export function wireDocumentServicesAndRoutes(
       driveService,
       documentSchemaRegistry: options.documentSchemaRegistry,
       templateEvaluator: options.templateEvaluator,
+      templateRegistry,
       pdfProcessor,
       getMaxInMemoryFileBytes,
       contentEditor: options.contentEditor,
@@ -401,6 +448,7 @@ export function wireDocumentServicesAndRoutes(
       driveService,
       documentSchemaRegistry: options.documentSchemaRegistry,
       templateEvaluator: options.templateEvaluator,
+      templateRegistry,
       pdfProcessor,
       getMaxInMemoryFileBytes,
       contentEditor: options.contentEditor,
@@ -433,7 +481,8 @@ export function wireDocumentServicesAndRoutes(
       undefined,
       driveService,
       undefined,
-      optionTablePort
+      optionTablePort,
+      templateRegistry
     );
   }
 
@@ -459,7 +508,8 @@ export function wireDocumentServicesAndRoutes(
           undefined,
           reqDriveService,
           undefined,
-          options.optionTablePort ?? createDocumentOptionTableAdapter(reqLookupOptions)
+          options.optionTablePort ?? createDocumentOptionTableAdapter(reqLookupOptions),
+          templateRegistry
         );
         await reqService.initialize();
         return reqService;

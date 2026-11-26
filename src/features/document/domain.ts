@@ -8,6 +8,7 @@ import {
   hasNonEmptyWritableFormData,
   validateDocumentFormSchema,
   validateInsertDataActivityPayload,
+  validateInsertPagesActivityPayload,
   type DocumentFormFieldFormat,
   type DocumentFormFieldBinding,
   type DocumentFormSchema,
@@ -27,6 +28,7 @@ import type {
   DynamicValidationMessageFormatter,
   DocumentOptionTablePort,
   DocumentOptionTableResolution,
+  TemplateRegistryPort,
 } from './ports';
 
 const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
@@ -802,7 +804,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly selectedLogId?: string,
     private readonly driveService?: DriveServicePort,
     private readonly isEmailAttachmentSource?: boolean,
-    private readonly optionTablePort?: DocumentOptionTablePort
+    private readonly optionTablePort?: DocumentOptionTablePort,
+    private readonly templateRegistry?: TemplateRegistryPort
   ) {}
 
   async initialize(): Promise<void> {
@@ -1461,6 +1464,63 @@ export class DocumentService implements DocumentServicePort {
       Document: createPathSafeDocument(enrichedDocument, documentType, this.templateEvaluator),
     };
 
+    const redactTemplateErrors = (msg: string): string =>
+      this.templateRegistry?.redactSecrets
+        ? this.templateRegistry.redactSecrets(msg)
+        : msg;
+
+    const preflightTemplateKeys = new Set<string>();
+    for (const activity of activities) {
+      if (
+        activity.type === 'INSERT_PAGES' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
+        activity.payload['templateKey'] !== undefined
+      ) {
+        const resolvedKey = resolvePayloadTemplates(
+          activity.payload['templateKey'],
+          this.templateEvaluator,
+          evaluationContext,
+          pathEvaluationContext
+        );
+        if (typeof resolvedKey !== 'string' || resolvedKey.trim().length === 0) {
+          return {
+            success: false,
+            errors: [
+              `Invalid templateKey on INSERT_PAGES activity in workflow "${workflow.name}".`,
+            ],
+          };
+        }
+        preflightTemplateKeys.add(resolvedKey.trim());
+      }
+    }
+
+    if (preflightTemplateKeys.size > 0) {
+      if (!this.templateRegistry) {
+        return {
+          success: false,
+          errors: [
+            `DocumentTemplate "${Array.from(preflightTemplateKeys)[0]}" cannot be resolved because TemplateRegistryPort is not configured.`,
+          ],
+        };
+      }
+      for (const templateKey of preflightTemplateKeys) {
+        try {
+          await this.templateRegistry.resolveTemplate(templateKey);
+        } catch (error) {
+          const rawMessage =
+            error instanceof Error && error.message.length > 0
+              ? error.message
+              : `Failed to resolve DocumentTemplate "${templateKey}".`;
+          return {
+            success: false,
+            errors: [redactTemplateErrors(rawMessage)],
+          };
+        }
+      }
+    }
+
     let currentFiles: readonly FileLocator[] = Object.freeze([]);
     const stepOutputs: Record<string, ActivityOutput> = {};
     const accumulatedContextVariables: { [key: string]: unknown } = {};
@@ -1476,7 +1536,7 @@ export class DocumentService implements DocumentServicePort {
       failedStepId: string | undefined
     ): ProcessDocumentResult => ({
       success: false,
-      errors,
+      errors: errors.map(redactTemplateErrors),
       workflowName: workflow.name,
       ...(failedStepId !== undefined ? { failedStepId } : {}),
       stepOutputs: { ...stepOutputs },
@@ -1742,7 +1802,8 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
 function validateWorkflowSteps(
   workflows: Workflow[],
   errors: string[],
-  documentFormSchema?: DocumentFormSchema
+  documentFormSchema?: DocumentFormSchema,
+  configuredTemplateKeys?: ReadonlySet<string>
 ): void {
   workflows.forEach((workflow, workflowIndex) => {
     const seenStepIds = new Set<string>();
@@ -1810,6 +1871,22 @@ function validateWorkflowSteps(
           activityPath,
           documentFormSchema,
           errors
+        );
+      }
+
+      if (
+        activity.type === 'INSERT_PAGES' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload)
+      ) {
+        validateInsertPagesActivityPayload(
+          activity.payload,
+          activityPath,
+          seenStepIds,
+          workflow.name,
+          errors,
+          configuredTemplateKeys
         );
       }
 
@@ -2084,13 +2161,18 @@ function validateWorkflowPathPayloads(
   });
 }
 
+export interface ValidateManifestTemplatesOptions {
+  configuredTemplateKeys?: ReadonlySet<string> | readonly string[] | undefined;
+}
+
 /**
  * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
  */
 export function validateManifestTemplates(
   manifest: DocumentType,
-  evaluator: TemplateEvaluatorPort
+  evaluator: TemplateEvaluatorPort,
+  options?: ValidateManifestTemplatesOptions
 ): string[] {
   const errors: string[] = [];
 
@@ -2126,10 +2208,15 @@ export function validateManifestTemplates(
   }
 
   if (manifest.documentWorkflowConfig) {
+    const configuredTemplateKeys =
+      options?.configuredTemplateKeys !== undefined
+        ? new Set(options.configuredTemplateKeys)
+        : undefined;
     validateWorkflowSteps(
       manifest.documentWorkflowConfig.workflows,
       errors,
-      manifest.documentFormSchema
+      manifest.documentFormSchema,
+      configuredTemplateKeys
     );
     validateWorkflowPathPayloads(manifest, errors);
 
