@@ -280,6 +280,7 @@ export const DocumentFormFieldBindingSchema = Type.Object(
         Type.Undefined(),
       ])
     ),
+    writable: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   },
   { additionalProperties: false }
 );

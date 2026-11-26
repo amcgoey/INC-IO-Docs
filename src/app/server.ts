@@ -165,6 +165,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     templateEvaluator,
     driveService: options?.driveService,
+    pdfProcessor,
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
     compiledSchemaRegistry,

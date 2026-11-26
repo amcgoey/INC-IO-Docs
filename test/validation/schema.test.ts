@@ -8,10 +8,16 @@ import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manif
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import { ensureEvaluationOrder } from '../../src/infrastructure/validation/json-logic-graph';
 import {
+  DocumentFormFieldBindingSchema as DocumentFeatureFormFieldBindingSchema,
+  DocumentFormSchemaSchema as DocumentFeatureFormSchemaSchema,
   DocumentTypeSchema,
   formatValidationErrors,
 } from '../../src/features/document/domain';
 import { FormSchemaType, type RawManifestProviderPort } from '../../src/features/document/ports';
+import {
+  DocumentFormFieldBindingSchema as SourceParserFormFieldBindingSchema,
+  DocumentFormSchemaSchema as SourceParserFormSchemaSchema,
+} from '../../src/features/source-parser/ports';
 import { UiSchema, type UiSchema as UiSchemaType } from '../../src/features/schema-driven-ui/domain';
 import { Value } from '@sinclair/typebox/value';
 import {
@@ -375,6 +381,7 @@ describe('DocumentType JSON files schema validation', () => {
         fields: {
           'Submittal No': {
             template: '{{section}}-{{number}}-{{revision}}',
+            writable: true,
           },
           'Submittal Response': {
             template: '{{action.name}}',
@@ -418,6 +425,7 @@ describe('DocumentType JSON files schema validation', () => {
         fields: {
           'Submittal No': {
             template: '{{specTag.key}}-{{revision}}',
+            writable: true,
           },
           'Submittal Response': {
             template: '{{action.name}}',
@@ -1213,6 +1221,63 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
     expect(logRegistry.getDocumentLogSchema('submittal-arch')?.target.sheetName).toBe(
       'Submittal Arch'
     );
+  });
+
+  it('maintains strict structural and hydration parity between document and source-parser DocumentFormSchema schemas (#378)', async () => {
+    expect(JSON.parse(JSON.stringify(DocumentFeatureFormFieldBindingSchema))).toEqual(
+      JSON.parse(JSON.stringify(SourceParserFormFieldBindingSchema))
+    );
+    expect(JSON.parse(JSON.stringify(DocumentFeatureFormSchemaSchema))).toEqual(
+      JSON.parse(JSON.stringify(SourceParserFormSchemaSchema))
+    );
+
+    const validSamples: unknown[] = [
+      { fields: { 'Submittal No': { template: '{{section}}-{{number}}-{{revision}}', writable: true } } },
+      { fields: { 'Submittal Response': { template: '{{action.name}}', valueMap: { RR: 'Revise and Resubmit' }, writable: false } } },
+      { fields: { Date: { template: '{{date}}', format: 'date' } } },
+    ];
+    for (const sample of validSamples) {
+      expect(Value.Check(DocumentFeatureFormSchemaSchema, sample)).toBe(true);
+      expect(Value.Check(SourceParserFormSchemaSchema, sample)).toBe(true);
+    }
+
+    const invalidSamples: unknown[] = [
+      { fields: {} },
+      { fields: { 'Submittal No': { template: '{{section}}', writable: 'true' } } },
+      { fields: { 'Submittal No': { template: '{{section}}', extraProp: true } } },
+      { fields: { 'Submittal No': { template: '{{section}}', valueMap: {} } } },
+    ];
+    for (const sample of invalidSamples) {
+      expect(Value.Check(DocumentFeatureFormSchemaSchema, sample)).toBe(false);
+      expect(Value.Check(SourceParserFormSchemaSchema, sample)).toBe(false);
+    }
+
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const handlebars = new HandlebarsAdapter();
+    const docRegistry = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const parseRegistry = new ParseSchemaRegistryAdapter(manifestProvider, handlebars);
+    const [loadedDocTypes] = await Promise.all([
+      docRegistry.loadAll(),
+      parseRegistry.initialize(),
+    ]);
+
+    for (const docType of loadedDocTypes) {
+      expect(docType.documentFormSchema).toEqual(parseRegistry.getDocumentFormSchema(docType.key));
+    }
+
+    const archDoc = loadedDocTypes.find((d) => d.key === 'submittal-arch');
+    const ffeDoc = loadedDocTypes.find((d) => d.key === 'submittal-ffe');
+    expect(archDoc?.documentFormSchema?.fields['Submittal No']?.writable).toBe(true);
+    expect(archDoc?.documentFormSchema?.fields['Submittal Response']?.writable).toBeUndefined();
+    expect(archDoc?.documentFormSchema?.fields.Date?.writable).toBeUndefined();
+    expect(ffeDoc?.documentFormSchema?.fields['Submittal No']?.writable).toBe(true);
+    expect(ffeDoc?.documentFormSchema?.fields['Submittal Response']?.writable).toBeUndefined();
+    expect(ffeDoc?.documentFormSchema?.fields.Date?.writable).toBeUndefined();
   });
 });
 

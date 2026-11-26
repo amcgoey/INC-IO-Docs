@@ -401,7 +401,8 @@
   "documentFormSchema": {
     "fields": {
       "Submittal No": {
-        "template": "{{specTag.key}}-{{revision}}"
+        "template": "{{specTag.key}}-{{revision}}",
+        "writable": true
       },
       "Submittal Response": {
         "template": "{{action.name}}",
