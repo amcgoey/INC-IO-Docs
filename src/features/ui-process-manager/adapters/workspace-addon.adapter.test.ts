@@ -7261,6 +7261,59 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(res.validationErrors).toBeUndefined();
       expect(res.statusMessages?.some((msg) => /1|single|uncheck/i.test(msg))).toBe(true);
     });
+
+    it('surfaces contextVariables.notices as statusMessages alongside notification on success and preserves notices on error (#380)', async () => {
+      const processDocument = vi
+        .fn()
+        .mockResolvedValueOnce({
+          success: true,
+          contextVariables: {
+            notices: [
+              'Cover sheet could not be inserted into "_071200-001.docx" because it is not a PDF. Created sibling Transmittal PDF "_071200-001 Transmittal.pdf".',
+            ],
+          },
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          errors: ['Failed step writeLog'],
+          contextVariables: {
+            notices: ['Sibling Transmittal notice prior to failure'],
+          },
+        });
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: { processDocument },
+      });
+
+      const baseEvent = {
+        hostApp: 'DRIVE' as const,
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Submittal.docx' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-1'],
+        },
+      };
+
+      const successRes = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
+      expect(successRes.type).toBe('render');
+      expect(successRes.isUpdateCard).toBe(true);
+      expect(successRes.notification).toBe('Document processed successfully');
+      expect(successRes.statusMessages).toEqual([
+        'Cover sheet could not be inserted into "_071200-001.docx" because it is not a PDF. Created sibling Transmittal PDF "_071200-001 Transmittal.pdf".',
+      ]);
+
+      const errorRes = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
+      expect(errorRes.type).toBe('render');
+      expect(errorRes.isUpdateCard).toBe(true);
+      expect(errorRes.validationErrors).toEqual(['Failed step writeLog']);
+      expect(errorRes.statusMessages).toEqual(['Sibling Transmittal notice prior to failure']);
+    });
   });
 });
 

@@ -286,7 +286,11 @@
               "templateKey": "submittalCoverSheet",
               "position": "start",
               "sourcePages": [1],
-              "fillForm": true
+              "fillForm": true,
+              "onUnmodifiableTarget": {
+                "strategy": "createSiblingPdf",
+                "fileName": "_{{Document.calculated.fileName}} Transmittal.pdf"
+              }
             }
           },
           {

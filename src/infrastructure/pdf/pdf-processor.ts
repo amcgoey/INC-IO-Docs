@@ -16,10 +16,12 @@ import {
   PdfOutOfBoundsError,
   PdfProcessorError,
   PdfUnsupportedFormError,
+  type PdfSourceRole,
 } from './errors';
 import { EmailPdfRenderer } from './email-pdf-renderer';
 import type {
   EmailPdfRenderInput,
+  PdfCreateDocumentFromPagesOptions,
   PdfFormData,
   PdfInsertPagesOptions,
   PdfMergeDocumentsOptions,
@@ -104,7 +106,10 @@ export class PdfProcessor {
    * @throws {@link PdfEncryptionError} if the PDF is password-protected or encrypted.
    * @throws {@link PdfCorruptedError} if the PDF buffer is malformed or corrupted.
    */
-  private async loadPdfDocument(buffer: Uint8Array): Promise<PDFDocument> {
+  private async loadPdfDocument(
+    buffer: Uint8Array,
+    sourceRole?: PdfSourceRole
+  ): Promise<PDFDocument> {
     try {
       return await PDFDocument.load(buffer, { parseSpeed: ParseSpeeds.Fast });
     } catch (error: unknown) {
@@ -114,7 +119,7 @@ export class PdfProcessor {
       ) {
         throw new PdfEncryptionError(
           'PDF document is encrypted and password-protected',
-          { cause: error }
+          { sourceRole, cause: error }
         );
       }
       throw new PdfCorruptedError(
@@ -284,19 +289,26 @@ export class PdfProcessor {
     const targetFieldNamespace = options?.targetFieldNamespace ?? '__target';
 
     try {
-      const targetDoc = await this.loadPdfDocument(targetBuffer);
-      const insertDoc = await this.loadPdfDocument(insertBuffer);
+      const insertDoc = await this.loadPdfDocument(insertBuffer, 'insert');
 
       precheckAndHandleXfa(insertDoc, {
         rejectAnyXfa: true,
         xfaPolicy: 'error',
         roleLabel: 'Inserted PDF',
+        sourceRole: 'insert',
       });
+
+      const srcPageIndices = this.resolveValidatedSourcePageIndices(
+        insertDoc.getPageCount(),
+        options?.sourcePages
+      );
+
+      const targetDoc = await this.loadPdfDocument(targetBuffer, 'target');
 
       if (hasActiveCryptographicSignature(targetDoc)) {
         throw new PdfUnsupportedFormError(
           'Target PDF is cryptographically signed and cannot be modified',
-          { reason: 'signed' }
+          { reason: 'signed', sourceRole: 'target' }
         );
       }
 
@@ -304,12 +316,9 @@ export class PdfProcessor {
         rejectAnyXfa: false,
         xfaPolicy,
         roleLabel: 'Target PDF',
+        sourceRole: 'target',
       });
 
-      const srcPageIndices = this.resolveValidatedSourcePageIndices(
-        insertDoc.getPageCount(),
-        options?.sourcePages
-      );
       const insertIndex = this.resolveInsertIndex(
         targetDoc.getPageCount(),
         options?.position
@@ -338,6 +347,63 @@ export class PdfProcessor {
       }
       throw new PdfCorruptedError(
         `Failed to insert pages: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  /**
+   * Creates a standalone editable AcroForm-preserving PDF from `sourceBuffer`
+   * (optionally filtered to 1-indexed `sourcePages` and populated with `formData`)
+   * without flattening any fields.
+   */
+  async createDocumentFromPages(
+    sourceBuffer: Uint8Array,
+    options?: PdfCreateDocumentFromPagesOptions
+  ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([sourceBuffer]);
+
+    try {
+      const sourceDoc = await this.loadPdfDocument(sourceBuffer, 'insert');
+
+      precheckAndHandleXfa(sourceDoc, {
+        rejectAnyXfa: true,
+        xfaPolicy: 'error',
+        roleLabel: 'Inserted PDF',
+        sourceRole: 'insert',
+      });
+
+      const srcPageIndices = this.resolveValidatedSourcePageIndices(
+        sourceDoc.getPageCount(),
+        options?.sourcePages
+      );
+
+      if (options?.formData && sourceDoc.catalog.getAcroForm()) {
+        await populateFormFields(sourceDoc, options.formData);
+      }
+
+      const outDoc = await PDFDocument.create();
+      await graftPagesIntoTarget(outDoc, sourceDoc, {
+        insertIndex: 0,
+        srcPageIndices,
+        targetAcroFormPolicy: 'namespace',
+        targetFieldNamespace: '__target',
+        clearNeedAppearances: options?.formData !== undefined,
+      });
+
+      return await this.savePdfDocument(outDoc);
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to create PDF from pages: ${
           error instanceof Error ? error.message : String(error)
         }`,
         { cause: error }

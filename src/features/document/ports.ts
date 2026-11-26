@@ -416,21 +416,40 @@ export interface DocumentContentInsertDataRequest {
 
 export type DocumentContentInsertPosition = 'start' | 'end' | number;
 
+export type DocumentContentUnmodifiableTargetReason =
+  | 'non_pdf'
+  | 'encrypted'
+  | 'pure_xfa'
+  | 'signed'
+  | 'oversized';
+
+export type DocumentContentUnmodifiableTargetStrategy =
+  | { strategy: 'error' }
+  | {
+      strategy: 'createSiblingPdf';
+      fileName: string;
+      targetFolderId?: string | undefined;
+    };
+
 export interface DocumentContentInsertPagesRequest {
   targetFileId: string;
   targetMimeType?: string | undefined;
   targetFileName?: string | undefined;
+  targetFolderId?: string | undefined;
   sourceFileId: string;
   sourceMimeType?: string | undefined;
   sourceIsTemplate?: boolean | undefined;
   position?: DocumentContentInsertPosition | undefined;
   sourcePages?: number[] | undefined;
   formData?: Record<string, DocumentFormFieldInputValue> | undefined;
+  onUnmodifiableTarget?: DocumentContentUnmodifiableTargetStrategy | undefined;
 }
 
 export interface DocumentContentEditResult {
   file: FileLocator;
   skipped?: boolean | undefined;
+  fallbackUsed?: boolean | undefined;
+  unmodifiableReason?: DocumentContentUnmodifiableTargetReason | undefined;
 }
 
 export interface DocumentContentEditorPort {

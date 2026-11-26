@@ -2116,5 +2116,73 @@ describe('PdfProcessor', () => {
       ).rejects.toThrow(PdfUnsupportedFormError);
     });
   });
+
+  describe('createDocumentFromPages & sourceRole attribution (#380)', () => {
+    it('creates a standalone editable PDF from selected sourcePages and formData without flattening', async () => {
+      const coverDoc = await PDFDocument.load(await createAnonymizedSubmittalCoverSheetPdf());
+      const page2 = coverDoc.addPage([612, 792]);
+      page2.drawText('Extra Template Instructions');
+      const twoPageCoverBytes = await coverDoc.save({ updateFieldAppearances: false });
+
+      const siblingBytes = await processor.createDocumentFromPages(twoPageCoverBytes, {
+        sourcePages: [1],
+        formData: { 'Submittal No': '071200-001-0' },
+      });
+
+      const siblingDoc = await PDFDocument.load(siblingBytes);
+      expect(siblingDoc.getPageCount()).toBe(1);
+      expect(await processor.extractFormData(siblingBytes)).toEqual({
+        'Submittal No': '071200-001-0',
+        'Submittal Response': undefined,
+        Date: undefined,
+        'Reviewed By': undefined,
+        REMARKS: undefined,
+      });
+
+      // Verify remaining fields stay editable
+      const edited = await processor.processFormSubmission(siblingBytes, {
+        'Submittal Response': 'No Exceptions Taken',
+      });
+      expect((await processor.extractFormData(edited))['Submittal Response']).toBe(
+        'No Exceptions Taken'
+      );
+    });
+
+    it('tags sourceRole as insert vs target on XFA errors in insertPages', async () => {
+      const targetBytes = await createSamplePdf(1);
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      const xfaCover = await PDFDocument.load(coverBytes);
+      xfaCover.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), xfaCover.context.register(xfaCover.context.flateStream('<xdp/>')));
+      const xfaCoverBytes = await xfaCover.save({ updateFieldAppearances: false });
+
+      let insertErr: unknown;
+      try {
+        await processor.insertPages(targetBytes, xfaCoverBytes);
+      } catch (err) {
+        insertErr = err;
+      }
+      expect(insertErr).toBeInstanceOf(PdfUnsupportedFormError);
+      expect((insertErr as PdfUnsupportedFormError).sourceRole).toBe('insert');
+
+      const pureXfaTarget = await PDFDocument.create();
+      pureXfaTarget.addPage([400, 400]);
+      pureXfaTarget.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), pureXfaTarget.context.register(pureXfaTarget.context.flateStream('<xdp/>')));
+      const pureXfaTargetBytes = await pureXfaTarget.save({ updateFieldAppearances: false });
+
+      let targetErr: unknown;
+      try {
+        await processor.insertPages(pureXfaTargetBytes, coverBytes);
+      } catch (err) {
+        targetErr = err;
+      }
+      expect(targetErr).toBeInstanceOf(PdfUnsupportedFormError);
+      expect((targetErr as PdfUnsupportedFormError).sourceRole).toBe('target');
+    });
+  });
 });
 

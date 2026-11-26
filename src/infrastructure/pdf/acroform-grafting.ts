@@ -25,7 +25,7 @@ import {
   defaultDropdownAppearanceProvider,
   defaultOptionListAppearanceProvider,
 } from 'pdf-lib';
-import { PdfFormFieldError, PdfUnsupportedFormError } from './errors';
+import { PdfFormFieldError, PdfUnsupportedFormError, type PdfSourceRole } from './errors';
 import type {
   PdfFormData,
   PdfTargetAcroFormPolicy,
@@ -101,7 +101,12 @@ function countDocumentWidgets(doc: PDFDocument, acroForm: PDFAcroForm): number {
  */
 export function precheckAndHandleXfa(
   doc: PDFDocument,
-  options: { rejectAnyXfa: boolean; xfaPolicy: PdfXfaPolicy; roleLabel: string }
+  options: {
+    rejectAnyXfa: boolean;
+    xfaPolicy: PdfXfaPolicy;
+    roleLabel: string;
+    sourceRole?: PdfSourceRole | undefined;
+  }
 ): void {
   const acroForm = doc.catalog.getAcroForm();
   if (!acroForm) return;
@@ -112,7 +117,7 @@ export function precheckAndHandleXfa(
   if (options.rejectAnyXfa || options.xfaPolicy === 'error') {
     throw new PdfUnsupportedFormError(
       `${options.roleLabel} contains XFA form data, which is not supported`,
-      { reason: 'xfa' }
+      { reason: 'xfa', sourceRole: options.sourceRole }
     );
   }
 
@@ -122,7 +127,7 @@ export function precheckAndHandleXfa(
   if (!hasFields || widgetCount === 0) {
     throw new PdfUnsupportedFormError(
       `${options.roleLabel} uses pure XFA form data without AcroForm fields`,
-      { reason: 'xfa' }
+      { reason: 'xfa', sourceRole: options.sourceRole }
     );
   }
 

@@ -73,6 +73,13 @@ export interface PdfInsertPagesOptions {
   formData?: PdfFormData | undefined;
 }
 
+export interface PdfCreateDocumentFromPagesOptions {
+  /** 1-indexed page numbers to copy from `sourceBuffer` (defaults to all pages). */
+  sourcePages?: number[] | undefined;
+  /** Optional form values to populate onto the selected pages' AcroForm fields without flattening. */
+  formData?: PdfFormData | undefined;
+}
+
 export interface PdfMergeDocumentsOptions {
   /** How to handle colliding AcroForm root fields across merged documents (`'namespace'` default or `'strip'`). */
   acroFormPolicy?: PdfTargetAcroFormPolicy | undefined;

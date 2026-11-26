@@ -999,8 +999,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       };
     };
 
-    const createErrorRenderResult = (validationErrors: string[]): Promise<UiProcessResult> =>
-      createRenderResult({ validationErrors, isUpdateCard: true });
+    const createErrorRenderResult = (
+      validationErrors: string[],
+      statusMessages?: string[] | undefined
+    ): Promise<UiProcessResult> =>
+      createRenderResult({
+        validationErrors,
+        ...(statusMessages !== undefined && statusMessages.length > 0
+          ? { statusMessages }
+          : {}),
+        isUpdateCard: true,
+      });
 
     if (actionName === 'copyDocumentLog') {
       if (!this.options.documentLogPort) {
@@ -1232,11 +1241,27 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           );
 
 
+          const rawNotices = result?.contextVariables?.notices;
+          const notices = Array.isArray(rawNotices)
+            ? rawNotices.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+            : [];
+
           if (result && result.success === false) {
             const validationErrors =
               result.errors ??
               (result.error ? [result.error] : ['Document validation failed']);
-            return createErrorRenderResult(validationErrors);
+            return createErrorRenderResult(
+              validationErrors,
+              notices.length > 0 ? notices : undefined
+            );
+          }
+
+          if (notices.length > 0) {
+            return createRenderResult({
+              statusMessages: notices,
+              isUpdateCard: true,
+              notification: 'Document processed successfully',
+            });
           }
         }
 

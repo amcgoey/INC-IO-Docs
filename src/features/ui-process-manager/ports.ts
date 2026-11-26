@@ -172,6 +172,7 @@ export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
   error?: string | undefined;
+  contextVariables?: Record<string, unknown> | undefined;
 }
 
 export const UiProcessLogCandidateSchema = Type.Object({
