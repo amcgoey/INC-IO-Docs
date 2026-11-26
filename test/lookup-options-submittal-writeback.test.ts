@@ -512,6 +512,32 @@ function mockDriveForSubmittalSubmit(logId: string, baseFolderName: string, subF
 
   nock('https://www.googleapis.com')
     .persist()
+    .get('/drive/v3/files')
+    .query(
+      (q) =>
+        typeof q.q === 'string' &&
+        q.q.includes("mimeType = 'application/vnd.google-apps.folder'") &&
+        !q.q.includes(`name = '${baseFolderName}'`) &&
+        !q.q.includes(`name = '${subFolderName}'`)
+    )
+    .reply(200, { files: [] });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post('/drive/v3/files')
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `folder-${reqBody.name ?? 'dyn'}`,
+        name: reqBody.name ?? 'dyn',
+        parents: reqBody.parents ?? ['sub-folder-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
     .patch(`/drive/v3/files/${fileId}`)
     .query(true)
     .reply(200, {

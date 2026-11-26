@@ -209,24 +209,27 @@
     },
     "events": {
       "onSubmit": {
-        "catchAllWorkflow": "FileSubmittalArch"
+        "catchAllWorkflow": "SubmittalSent"
       }
     }
   },
   "documentWorkflowConfig": {
     "workflows": [
       {
-        "name": "FileSubmittalArch",
+        "name": "SubmittalSent",
         "activitySequence": [
           {
+            "id": "moveOriginal",
             "type": "MOVE_FILE",
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",
               "parentPath": "{{StorageContext.basePath}}",
-              "folderName": "Submittals"
+              "folderName": "Submittals/Closed/{{Document.calculated.csiDivisionFolder}}",
+              "fileName": "{{Document.calculated.fileName}}"
             }
           },
           {
+            "id": "writeLog",
             "type": "WRITE_LOG",
             "payload": {}
           }

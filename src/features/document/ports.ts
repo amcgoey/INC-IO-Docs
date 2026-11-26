@@ -375,6 +375,11 @@ export interface DriveDuplicateOptions {
   targetFolderId?: string | undefined;
 }
 
+/** Options for atomic Drive move and optional rename operations. */
+export interface DriveMoveOptions {
+  newName?: string | undefined;
+}
+
 export interface DriveContentCreateOptions {
   action: 'create';
   targetFolderId: string;
@@ -394,7 +399,11 @@ export interface DriveServicePort {
   getFile(fileId: string): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string): Promise<DriveFileResult>;
   resolveFolderPath(rootFolderId: string, pathSegments: string[]): Promise<DriveFileResult>;
-  move(fileId: string, targetFolderId: string): Promise<DriveFileResult>;
+  move(
+    fileId: string,
+    targetFolderId: string,
+    moveOptions?: DriveMoveOptions
+  ): Promise<DriveFileResult>;
   rename(fileId: string, newName: string): Promise<DriveFileResult>;
   duplicate(
     fileId: string,

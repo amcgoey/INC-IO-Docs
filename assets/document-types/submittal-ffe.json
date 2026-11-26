@@ -239,24 +239,27 @@
     },
     "events": {
       "onSubmit": {
-        "catchAllWorkflow": "FileSubmittalFFE"
+        "catchAllWorkflow": "SubmittalSent"
       }
     }
   },
   "documentWorkflowConfig": {
     "workflows": [
       {
-        "name": "FileSubmittalFFE",
+        "name": "SubmittalSent",
         "activitySequence": [
           {
+            "id": "moveOriginal",
             "type": "MOVE_FILE",
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",
               "parentPath": "{{StorageContext.basePath}}",
-              "folderName": "05 Submittals"
+              "folderName": "05 Submittals/Closed/{{Document.calculated.specTagGroup}}/{{Document.data.specTag.key}}",
+              "fileName": "{{Document.calculated.fileName}}"
             }
           },
           {
+            "id": "writeLog",
             "type": "WRITE_LOG",
             "payload": {}
           }

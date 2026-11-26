@@ -79,6 +79,7 @@ export type Activity = Static<typeof ActivityType>;
 export const FileLocatorType = Type.Object({
   id: Type.String(),
   name: Type.String(),
+  parentId: Type.Optional(Type.String()),
   parentName: Type.Optional(Type.String()),
   mimeType: Type.Optional(Type.String()),
   uri: Type.Optional(Type.String()),

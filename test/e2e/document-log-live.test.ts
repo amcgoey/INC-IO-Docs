@@ -392,8 +392,15 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       'Submittals',
     ]);
     trackCleanupId(submittalsFolder.id);
+    const closedArchFolder = await liveDriveClient.resolveFolderPath(submittalsFolder.id, ['Closed']);
     const archFileMeta = await liveDriveClient.getFile(archFileId);
-    expect(archFileMeta.parents).toContain(submittalsFolder.id);
+    const archLeafFolderId = archFileMeta.parents?.[0];
+    expect(archLeafFolderId).toBeDefined();
+    if (archLeafFolderId) {
+      const archLeafMeta = await liveDriveClient.getFile(archLeafFolderId);
+      expect(archLeafMeta.name).toMatch(/^09\b/);
+      expect(archLeafMeta.parents).toContain(closedArchFolder.id);
+    }
   }, 180_000);
 
   it('hydrates full and batch-filtered Submittal Arch logs with live =HYPERLINK fileUri via DocumentLogPort.readLog()', async () => {
@@ -611,8 +618,13 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       '05 Submittals',
     ]);
     trackCleanupId(ffeSubmittalsFolder.id);
+    const ffeClosedLeafFolder = await liveDriveClient.resolveFolderPath(ffeSubmittalsFolder.id, [
+      'Closed',
+      'CG',
+      'CG104',
+    ]);
     const ffeFileMeta = await liveDriveClient.getFile(ffeFileId);
-    expect(ffeFileMeta.parents).toContain(ffeSubmittalsFolder.id);
+    expect(ffeFileMeta.parents).toContain(ffeClosedLeafFolder.id);
   }, 180_000);
 
   it('hydrates full and case-insensitive batch-filtered Submittal FF&E logs including readOnly Spec Title and live =HYPERLINK fileUri via DocumentLogPort.readLog()', async () => {

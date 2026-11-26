@@ -365,6 +365,14 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       .query((q) => typeof q.q === 'string' && q.q.includes("name = 'Submittals'"))
       .reply(200, { files: [{ id: 'folder-subs', name: 'Submittals', parents: ['folder-6c'] }] });
     nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-subs'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
+    nock('https://www.googleapis.com')
       .get(`/drive/v3/files/${FILE_ID}`)
       .query(true)
       .times(2)
