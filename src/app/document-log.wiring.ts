@@ -1,5 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import {
+  DocumentLogConfigurationError,
   DocumentLogError,
   DocumentLogService,
   LogSchemaRegistryAdapter,
@@ -20,6 +21,7 @@ import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import {
   GoogleSheetsApiError,
   GoogleSheetsClient,
+  GoogleSheetsOptionTableConfigError,
   type RowRecord,
   type SheetsClient,
   type SheetsConfigProvider,
@@ -249,25 +251,41 @@ function sanitizeSheetsErrorMessage(error: unknown): string {
 
 function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort {
   return {
-    insertRow: async (request) =>
-      sheetsClient.insertIntoGroupedList({
-        target: request.target,
-        rowData: request.rowData,
-        ...(request.rowKeyExtractor !== undefined
-          ? { rowKeyExtractor: (row: RowRecord) => request.rowKeyExtractor!(row) }
-          : {}),
-        ...(request.targetKeys !== undefined ? { targetKeys: request.targetKeys } : {}),
-        ...(request.groupSortOrder !== undefined
-          ? { groupSortOrder: request.groupSortOrder }
-          : {}),
-        ...(request.rowSortOrder !== undefined ? { rowSortOrder: request.rowSortOrder } : {}),
-        ...(request.duplicatePolicy !== undefined
-          ? { duplicatePolicy: request.duplicatePolicy }
-          : {}),
-        ...(request.readOnlyColumns !== undefined
-          ? { readOnlyColumns: request.readOnlyColumns }
-          : {}),
-      }),
+    insertRow: async (request) => {
+      try {
+        return await sheetsClient.insertIntoGroupedList({
+          target: request.target,
+          rowData: request.rowData,
+          ...(request.rowKeyExtractor !== undefined
+            ? { rowKeyExtractor: (row: RowRecord) => request.rowKeyExtractor!(row) }
+            : {}),
+          ...(request.targetKeys !== undefined ? { targetKeys: request.targetKeys } : {}),
+          ...(request.groupSortOrder !== undefined
+            ? { groupSortOrder: request.groupSortOrder }
+            : {}),
+          ...(request.rowSortOrder !== undefined ? { rowSortOrder: request.rowSortOrder } : {}),
+          ...(request.duplicatePolicy !== undefined
+            ? { duplicatePolicy: request.duplicatePolicy }
+            : {}),
+          ...(request.readOnlyColumns !== undefined
+            ? { readOnlyColumns: request.readOnlyColumns }
+            : {}),
+          ...(request.optionWrites !== undefined
+            ? { optionWrites: request.optionWrites }
+            : {}),
+          ...(request.templateSpreadsheetId !== undefined
+            ? { templateSpreadsheetId: request.templateSpreadsheetId }
+            : {}),
+        });
+      } catch (error) {
+        if (error instanceof GoogleSheetsOptionTableConfigError) {
+          throw new DocumentLogConfigurationError(sanitizeSheetsErrorMessage(error), {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+    },
     readRows: async (request) => {
       try {
         return await sheetsClient.readTable({

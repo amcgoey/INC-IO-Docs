@@ -116,10 +116,17 @@ function mockSpreadsheetReadsForConfig(
     }>;
     statusesRows?: string[][];
     actionsRows?: string[][];
+    contactsRows?: string[][];
     includeHistoryRead?: boolean;
     historyRows?: Array<{ cells: string[]; linkFormula?: string }>;
   }
 ): void {
+  const contactsRows = config.contactsRows ?? [
+    ['Contact', 'Name', 'Contact Type'],
+    ['INC', 'INC Architecture and Design', 'INC'],
+    ['PMG', 'Pavarini McGovern', 'Contractor'],
+    ['---', '', ''],
+  ];
   const historyRows = config.historyRows ?? [];
   const defaultNamedRanges = [
     {
@@ -163,6 +170,17 @@ function mockSpreadsheetReadsForConfig(
           },
         ]
       : []),
+    {
+      namedRangeId: 'nr-contacts',
+      name: 'Options_Submittal_Arch_Contacts',
+      range: {
+        sheetId: 103,
+        startRowIndex: 0,
+        endRowIndex: contactsRows.length,
+        startColumnIndex: 11,
+        endColumnIndex: 14,
+      },
+    },
   ];
 
   // When idGroup is blank, only readOptionTables calls GET /v4/spreadsheets/:id (once);
@@ -222,7 +240,11 @@ function mockSpreadsheetReadsForConfig(
         spreadsheetId,
         valueRanges: ranges.map((r) => ({
           range: r,
-          values: r.includes('A1:') ? (config.statusesRows ?? []) : (config.actionsRows ?? []),
+          values: r.includes('A1:')
+            ? (config.statusesRows ?? [])
+            : r.includes('E1:')
+              ? (config.actionsRows ?? [])
+              : contactsRows,
         })),
       };
     });
@@ -268,8 +290,18 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       ['Ignored Post End', '', '99', 'POST', '_POST'],
     ];
 
+    const contactsRows = [
+      ['Contact Type', 'Name', 'Contact'],
+      ['', '', ''],
+      ['INC', 'INC Architecture and Design', 'INC'],
+      ['Contractor', 'Pavarini McGovern', 'PMG'],
+      ['Contractor Dup Ignored', 'Pavarini Dup', ' pmg '],
+      ['---', '', '---'],
+      ['Post End', 'Ignored Contact', 'POST'],
+    ];
+
     mockDriveSelectionAndSpaces([{ id: logId, name: `${SPACE_NAME} Document Log` }]);
-    mockSpreadsheetReadsForConfig(logId, { statusesRows, actionsRows });
+    mockSpreadsheetReadsForConfig(logId, { statusesRows, actionsRows, contactsRows });
 
     const renderRes = await app.server.inject({
       method: 'POST',
@@ -313,7 +345,7 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       { text: 'No Objections As Corrected', value: 'NOC' },
     ]);
 
-    // Static contacts remain populated alongside live _Config dropdowns (GoogleWorkspaceTextInput.initialSuggestions)
+    // Live _Config contacts remain populated alongside live _Config dropdowns (GoogleWorkspaceTextInput.initialSuggestions)
     const contactInput = docData?.widgets.find(
       (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch')
     )?.textInput;
@@ -376,14 +408,30 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
             name: 'Options_Submittal_Arch_Actions',
             range: { sheetId: 103, startRowIndex: 0, endRowIndex: actionsRows.length, startColumnIndex: 4, endColumnIndex: 10 },
           },
+          {
+            namedRangeId: 'nr-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: contactsRows.length, startColumnIndex: 11, endColumnIndex: 14 },
+          },
         ],
       });
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${logId}/values:batchGet`)
       .query((q) => q.valueRenderOption === 'FORMATTED_VALUE')
-      .reply(200, {
-        spreadsheetId: logId,
-        valueRanges: [{ values: statusesRows }, { values: actionsRows }],
+      .reply(200, (uri) => {
+        const url = new URL(uri, 'https://sheets.googleapis.com');
+        const ranges = url.searchParams.getAll('ranges');
+        return {
+          spreadsheetId: logId,
+          valueRanges: ranges.map((r) => ({
+            range: r,
+            values: r.includes('A1:')
+              ? statusesRows
+              : r.includes('E1:')
+                ? actionsRows
+                : contactsRows,
+          })),
+        };
       });
     nock('https://sheets.googleapis.com')
       .get(new RegExp(`/v4/spreadsheets/${logId}/values/.*`))
@@ -615,11 +663,13 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
     expect(statusText).toContain('statuses');
     expect(statusText.toLowerCase()).toContain('timed out');
     expect(statusText.toLowerCase()).not.toContain('folder "root"');
-    // Static contacts still load despite document_log timeout
+    // Contacts also read from _Config document_log, so timeout surfaces on contact hintText too
     const contactInput = docData?.widgets.find(
       (w) => w.textInput?.name === getDocumentInfoWidgetName('contact', 'submittal-arch')
     )?.textInput;
-    expect((contactInput?.initialSuggestions?.items ?? []).length).toBeGreaterThan(0);
+    expect(contactInput?.hintText ?? '').toContain('contacts');
+    expect((contactInput?.hintText ?? '').toLowerCase()).toContain('timed out');
+    expect(contactInput?.initialSuggestions?.items ?? []).toHaveLength(0);
   });
 });
 

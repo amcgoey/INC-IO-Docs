@@ -168,6 +168,28 @@ const CONFIG_ARCH_ACTION_VALUES = [
   ['---', '', '', ''],
 ];
 
+const CONFIG_ARCH_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture and Design', 'INC'],
+  ['PMG', 'Pavarini McGovern', 'Contractor'],
+  ['---', '', ''],
+];
+
+const CONFIG_FFE_STATUS_VALUES = CONFIG_ARCH_STATUS_VALUES;
+const CONFIG_FFE_ACTION_VALUES = CONFIG_ARCH_ACTION_VALUES;
+const CONFIG_FFE_CONTACT_VALUES = [
+  ['Contact', 'Name', 'Contact Type'],
+  ['INC', 'INC Architecture & Design', 'INC'],
+  ['BW', 'Benjamin West', 'Procurement'],
+  ['---', '', ''],
+];
+const CONFIG_FFE_VENDOR_VALUES = [
+  ['Vendor', 'Name', 'Vendor Type'],
+  ['BM', 'Berman Falk', 'Casegoods'],
+  ['AL', 'Ashley Lighting', 'Lighting'],
+  ['---', '', ''],
+];
+
 function mockPositiveTableRead(options: {
   spreadsheetId: string;
   sheetName: 'Submittal Arch' | 'Submittal FF&E';
@@ -178,6 +200,8 @@ function mockPositiveTableRead(options: {
 }) {
   const isArch = options.sheetName === 'Submittal Arch';
   const sheetId = isArch ? 101 : 102;
+  const configSheetId = isArch ? 103 : 104;
+  const configSheetTitle = isArch ? '_Config Submittal Arch' : '_Config Submittal FF&E';
   const formulaRow = options.formulaRow ?? ['Formula Row'];
   const totalRows = 4 + Math.max(1, options.rows.length);
   const formattedValues: string[][] = [
@@ -190,7 +214,7 @@ function mockPositiveTableRead(options: {
 
   const sheets = [
     { properties: { sheetId, title: options.sheetName } },
-    ...(isArch ? [{ properties: { sheetId: 103, title: '_Config Submittal Arch' } }] : []),
+    { properties: { sheetId: configSheetId, title: configSheetTitle } },
   ];
   const namedRanges = [
     {
@@ -210,7 +234,7 @@ function mockPositiveTableRead(options: {
             namedRangeId: 'nr-arch-statuses',
             name: 'Options_Submittal_Arch_Statuses',
             range: {
-              sheetId: 103,
+              sheetId: configSheetId,
               startRowIndex: 0,
               endRowIndex: 6,
               startColumnIndex: 0,
@@ -221,57 +245,117 @@ function mockPositiveTableRead(options: {
             namedRangeId: 'nr-arch-actions',
             name: 'Options_Submittal_Arch_Actions',
             range: {
-              sheetId: 103,
+              sheetId: configSheetId,
               startRowIndex: 0,
               endRowIndex: 9,
               startColumnIndex: 2,
               endColumnIndex: 6,
             },
           },
+          {
+            namedRangeId: 'nr-arch-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: {
+              sheetId: configSheetId,
+              startRowIndex: 0,
+              endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+              startColumnIndex: 7,
+              endColumnIndex: 10,
+            },
+          },
         ]
-      : []),
+      : [
+          {
+            namedRangeId: 'nr-ffe-statuses',
+            name: 'Options_Submittal_FFE_Statuses',
+            range: {
+              sheetId: configSheetId,
+              startRowIndex: 0,
+              endRowIndex: 6,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-actions',
+            name: 'Options_Submittal_FFE_Actions',
+            range: {
+              sheetId: configSheetId,
+              startRowIndex: 0,
+              endRowIndex: 9,
+              startColumnIndex: 2,
+              endColumnIndex: 6,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-contacts',
+            name: 'Options_Submittal_FFE_Contacts',
+            range: {
+              sheetId: configSheetId,
+              startRowIndex: 0,
+              endRowIndex: CONFIG_FFE_CONTACT_VALUES.length,
+              startColumnIndex: 7,
+              endColumnIndex: 10,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-vendors',
+            name: 'Options_Submittal_FFE_Vendors',
+            range: {
+              sheetId: configSheetId,
+              startRowIndex: 0,
+              endRowIndex: CONFIG_FFE_VENDOR_VALUES.length,
+              startColumnIndex: 11,
+              endColumnIndex: 14,
+            },
+          },
+        ]),
   ];
 
   nock('https://sheets.googleapis.com')
     .get(`/v4/spreadsheets/${options.spreadsheetId}`)
     .query(true)
-    .times(isArch ? 2 : 1)
+    .times(2)
     .reply(200, {
       spreadsheetId: options.spreadsheetId,
       sheets,
       namedRanges,
     });
 
-  if (isArch) {
-    nock('https://sheets.googleapis.com')
-      .get(`/v4/spreadsheets/${options.spreadsheetId}/values:batchGet`)
-      .query((q) => {
-        if (q.valueRenderOption !== 'FORMATTED_VALUE') {
-          return false;
-        }
-        const ranges = Array.isArray(q.ranges)
-          ? q.ranges
-          : typeof q.ranges === 'string'
-            ? q.ranges.split(',')
-            : [];
-        return ranges.length > 0 && ranges.every((r) => String(r).includes('_Config Submittal Arch'));
-      })
-      .reply(200, (uri) => {
-        const url = new URL(uri, 'https://sheets.googleapis.com');
-        const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
-        return {
-          valueRanges: ranges.map((range) => {
-            if (range.includes('A1:A6')) {
-              return { range, values: CONFIG_ARCH_STATUS_VALUES };
-            }
-            if (range.includes('C1:F9')) {
-              return { range, values: CONFIG_ARCH_ACTION_VALUES };
-            }
-            return { range, values: [] };
-          }),
-        };
-      });
-  }
+  nock('https://sheets.googleapis.com')
+    .get(`/v4/spreadsheets/${options.spreadsheetId}/values:batchGet`)
+    .query((q) => {
+      if (q.valueRenderOption !== 'FORMATTED_VALUE') {
+        return false;
+      }
+      const ranges = Array.isArray(q.ranges)
+        ? q.ranges
+        : typeof q.ranges === 'string'
+          ? q.ranges.split(',')
+          : [];
+      return ranges.length > 0 && ranges.every((r) => String(r).includes(configSheetTitle));
+    })
+    .reply(200, (uri) => {
+      const url = new URL(uri, 'https://sheets.googleapis.com');
+      const ranges = url.searchParams.getAll('ranges').flatMap((r) => r.split(','));
+      return {
+        valueRanges: ranges.map((range) => {
+          if (range.includes('A1:A6')) {
+            return { range, values: isArch ? CONFIG_ARCH_STATUS_VALUES : CONFIG_FFE_STATUS_VALUES };
+          }
+          if (range.includes('C1:F9')) {
+            return { range, values: isArch ? CONFIG_ARCH_ACTION_VALUES : CONFIG_FFE_ACTION_VALUES };
+          }
+          if (range.includes('H1:J')) {
+            return { range, values: isArch ? CONFIG_ARCH_CONTACT_VALUES : CONFIG_FFE_CONTACT_VALUES };
+          }
+          if (!isArch && range.includes('L1:N')) {
+            return { range, values: CONFIG_FFE_VENDOR_VALUES };
+          }
+          return { range, values: [] };
+        }),
+      };
+    });
 
   nock('https://sheets.googleapis.com')
     .get(new RegExp(`/v4/spreadsheets/${options.spreadsheetId}/values/.*`))
@@ -1007,6 +1091,7 @@ describe('Ticket #352 CQRS Integration: Collapsible idGroup History, Declarative
     const ambigLogSec = findSection(ambigCard, 'Document Log')!;
     expect(ambigLogSec.collapsible).toBe(true);
     expect(ambigLogSec.uncollapsibleWidgetsCount).toBe(3); // dropdown + active bar + warning banner
+    // statuses is a restricted _Config option source (#359), so "In Review" warns alongside missing required vendor
     expect(ambigLogSec.widgets[2].textParagraph?.text).toContain('Partial read (2 warnings)');
     expect(ambigLogSec.widgets[3].decoratedText?.topLabel).toBe('Rev 0 • LT108 • In Review');
     expect(ambigLogSec.widgets[3].decoratedText?.bottomLabel).toBe('SCONCE —');

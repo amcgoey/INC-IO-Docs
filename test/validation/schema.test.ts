@@ -428,17 +428,27 @@ describe('DocumentType JSON files schema validation', () => {
       });
 
       const ffeTargetSchema = registry.getTargetSchema('submittal-ffe');
-      const nocOption = ffeTargetSchema?.options?.actions?.find((a) => a.key === 'NOC');
-      expect(nocOption?.name).toBe('No Objections As Corrected');
+      expect(ffeTargetSchema?.optionSources).toEqual({
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+        contacts: { provider: 'document_log', properties: ['key', 'name'] },
+        vendors: { provider: 'document_log', properties: ['key', 'name'] },
+      });
+      expect(ffeTargetSchema?.options?.statuses).toBeUndefined();
+      expect(ffeTargetSchema?.options?.actions).toBeUndefined();
+      expect(ffeTargetSchema?.options?.contacts).toBeUndefined();
+      expect(ffeTargetSchema?.options?.vendors).toBeUndefined();
+      expect(ffeTargetSchema?.options?.specs?.length).toBeGreaterThan(0);
 
       const archTargetSchema = registry.getTargetSchema('submittal-arch');
       expect(archTargetSchema?.optionSources).toEqual({
         statuses: { provider: 'document_log', properties: ['key'] },
         actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
+        contacts: { provider: 'document_log', properties: ['key', 'name'] },
       });
       expect(archTargetSchema?.options?.statuses).toBeUndefined();
       expect(archTargetSchema?.options?.actions).toBeUndefined();
-      expect(archTargetSchema?.options?.contacts?.length).toBeGreaterThan(0);
+      expect(archTargetSchema?.options?.contacts).toBeUndefined();
     });
 
     it('should validate production configuration.documentLog and Submittal Arch / Submittal FF&E documentLogSchemas via LogSchemaRegistryAdapter', async () => {
@@ -515,6 +525,16 @@ describe('DocumentType JSON files schema validation', () => {
               Order: 'order',
             },
           },
+          contacts: {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Contacts',
+            validationRangeName: 'Validation_Submittal_Arch_Contacts',
+            endMarker: '---',
+            columns: {
+              Contact: 'key',
+              Name: 'name',
+            },
+          },
         },
       });
 
@@ -551,6 +571,48 @@ describe('DocumentType JSON files schema validation', () => {
           topLabel: 'Rev {{revision}} • {{specTag.key}} • {{status.key}}',
           text: '<b>{{action.name}}</b> {{date}} ({{contact.key}})',
           bottomLabel: '{{specTitle}} — {{vendor.name}}',
+        },
+        optionBindings: {
+          statuses: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Statuses',
+            validationRangeName: 'Validation_Submittal_FFE_Statuses',
+            endMarker: '---',
+            columns: {
+              Status: 'key',
+            },
+          },
+          actions: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Actions',
+            endMarker: '---',
+            columns: {
+              Action: 'key',
+              Name: 'name',
+              Suffix: 'suffix',
+              Order: 'order',
+            },
+          },
+          contacts: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Contacts',
+            validationRangeName: 'Validation_Submittal_FFE_Contacts',
+            endMarker: '---',
+            columns: {
+              Contact: 'key',
+              Name: 'name',
+            },
+          },
+          vendors: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Vendors',
+            validationRangeName: 'Validation_Submittal_FFE_Vendors',
+            endMarker: '---',
+            columns: {
+              Vendor: 'key',
+              Name: 'name',
+            },
+          },
         },
       });
 

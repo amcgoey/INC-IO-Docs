@@ -28,6 +28,7 @@ function createArchOptionTablesSheetsMock(
     getTables?: (spreadsheetId: string) => {
       statuses: string[][];
       actions: string[][];
+      contacts?: string[][];
     };
   }
 ): {
@@ -35,7 +36,7 @@ function createArchOptionTablesSheetsMock(
   getSpy: ReturnType<typeof vi.fn>;
   batchGetSpy: ReturnType<typeof vi.fn>;
 } {
-  const defaultStatuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
+  const defaultStatuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['Billed'], ['---']];
   const defaultActions = [
     ['Action', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
@@ -47,12 +48,20 @@ function createArchOptionTablesSheetsMock(
     ['NET', 'No Exceptions Taken', '_NET', '7'],
     ['---', '', '', ''],
   ];
+  const defaultContacts = [
+    ['Contact', 'Name', 'Contact Type'],
+    ['INC', 'INC Architecture and Design', 'INC'],
+    ['PMG', 'Pavarini McGovern', 'Contractor'],
+    ['---', '', ''],
+  ];
 
   const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
     const tables = options?.getTables?.(spreadsheetId) ?? {
       statuses: defaultStatuses,
       actions: defaultActions,
+      contacts: defaultContacts,
     };
+    const contacts = tables.contacts ?? defaultContacts;
     return {
       data: {
         spreadsheetId,
@@ -94,6 +103,17 @@ function createArchOptionTablesSheetsMock(
               endColumnIndex: 6,
             },
           },
+          {
+            namedRangeId: 'nr-contacts',
+            name: 'Options_Submittal_Arch_Contacts',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: contacts.length,
+              startColumnIndex: 7,
+              endColumnIndex: 10,
+            },
+          },
         ],
       },
     };
@@ -104,13 +124,19 @@ function createArchOptionTablesSheetsMock(
       const tables = options?.getTables?.(spreadsheetId) ?? {
         statuses: defaultStatuses,
         actions: defaultActions,
+        contacts: defaultContacts,
       };
+      const contacts = tables.contacts ?? defaultContacts;
       return {
         data: {
           spreadsheetId,
           valueRanges: (ranges ?? []).map((r) => ({
             range: r,
-            values: r.includes('A1:') ? tables.statuses : tables.actions,
+            values: r.includes('A1:')
+              ? tables.statuses
+              : r.includes('C1:')
+                ? tables.actions
+                : contacts,
           })),
         },
       };
@@ -133,6 +159,107 @@ function createArchOptionTablesSheetsMock(
   });
 
   return { sheetsClient, getSpy, batchGetSpy };
+}
+
+function createFfeOptionTablesSheetsMock(manifestPath: string): {
+  sheetsClient: GoogleSheetsClient;
+} {
+  const statuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['Billed'], ['---']];
+  const actions = [
+    ['Action', 'Name', 'Suffix', 'Order'],
+    ['REC', 'Received', '', '1'],
+    ['REF', 'Referred', '_REF', '2'],
+    ['NR', 'Not Reviewed', '_NR', '3'],
+    ['REJ', 'Rejected', '_REJ', '4'],
+    ['RR', 'Revise & Resubmit', '_RR', '5'],
+    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
+    ['NET', 'No Exceptions Taken', '_NET', '7'],
+    ['---', '', '', ''],
+  ];
+  const contacts = [
+    ['Contact', 'Name', 'Contact Type'],
+    ['INC', 'INC Architecture & Design', 'INC'],
+    ['BW', 'Benjamin West', 'Procurement'],
+    ['---', '', ''],
+  ];
+  const vendors = [
+    ['Vendor', 'Name', 'Vendor Type'],
+    ['BM', 'Berman Falk', 'Casegoods'],
+    ['AL', 'Ashley Lighting', 'Lighting'],
+    ['---', '', ''],
+  ];
+
+  const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
+    data: {
+      spreadsheetId,
+      sheets: [
+        { properties: { sheetId: 102, title: 'Submittal FF&E' } },
+        { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
+      ],
+      namedRanges: [
+        {
+          namedRangeId: 'nr-ffe-log',
+          name: 'Log_Submittal_FFE',
+          range: { sheetId: 102, startRowIndex: 2, endRowIndex: 10, startColumnIndex: 0, endColumnIndex: 11 },
+        },
+        {
+          namedRangeId: 'nr-ffe-statuses',
+          name: 'Options_Submittal_FFE_Statuses',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: statuses.length, startColumnIndex: 0, endColumnIndex: 1 },
+        },
+        {
+          namedRangeId: 'nr-ffe-actions',
+          name: 'Options_Submittal_FFE_Actions',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: actions.length, startColumnIndex: 2, endColumnIndex: 6 },
+        },
+        {
+          namedRangeId: 'nr-ffe-contacts',
+          name: 'Options_Submittal_FFE_Contacts',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: contacts.length, startColumnIndex: 7, endColumnIndex: 10 },
+        },
+        {
+          namedRangeId: 'nr-ffe-vendors',
+          name: 'Options_Submittal_FFE_Vendors',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: vendors.length, startColumnIndex: 11, endColumnIndex: 14 },
+        },
+      ],
+    },
+  }));
+
+  const batchGetSpy = vi.fn().mockImplementation(
+    async ({ spreadsheetId, ranges }: { spreadsheetId: string; ranges?: string[] }) => ({
+      data: {
+        spreadsheetId,
+        valueRanges: (ranges ?? []).map((r) => ({
+          range: r,
+          values: r.includes('A1:')
+            ? statuses
+            : r.includes('C1:')
+              ? actions
+              : r.includes('H1:')
+                ? contacts
+                : vendors,
+        })),
+      },
+    })
+  );
+
+  const sheetsClient = new GoogleSheetsClient({
+    sheets: {
+      spreadsheets: {
+        get: getSpy,
+        batchUpdate: vi.fn().mockResolvedValue({ data: {} }),
+        values: {
+          get: vi.fn().mockResolvedValue({ data: { values: [] } }),
+          batchGet: batchGetSpy,
+          update: vi.fn().mockResolvedValue({ data: {} }),
+        },
+      },
+    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>,
+    configProvider: new AppManifestProvider({ manifestPath }),
+  });
+
+  return { sheetsClient };
 }
 
 describe('App integration tests', () => {
@@ -788,10 +915,20 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createFfeOptionTablesSheetsMock(manifestPath);
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'ffe-log-app-1',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
       const prodApp = createApp({
         skipSpaceValidation: true,
         manifestPath,
         activityEngine: mockDispatcher,
+        sheetsClient,
       });
 
       await prodApp.initialize();
@@ -816,63 +953,67 @@ describe('App integration tests', () => {
         },
       };
 
-      const response = await prodApp.server.inject({
-        method: 'POST',
-        url: '/documents?eventName=onSubmit',
-        payload: ffePayload,
-      });
+      try {
+        const response = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: ffePayload,
+        });
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.success).toBe(true);
-      expect(body.data.id).toBe('CG104-A-261021-1');
-      expect(body.data.idDocument).toBe('CG104-A');
-      expect(body.data.idGroup).toBe('CG104');
-      expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
-      expect(body.activities).toEqual([
-        {
-          type: 'MOVE_FILE',
-          payload: {
-            rootStorageId: 'space-projects-1',
-            parentPath: '3 FFE',
-            folderName: '05 Submittals',
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.success).toBe(true);
+        expect(body.data.id).toBe('CG104-A-261021-1');
+        expect(body.data.idDocument).toBe('CG104-A');
+        expect(body.data.idGroup).toBe('CG104');
+        expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
+        expect(body.activities).toEqual([
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+            },
           },
-        },
-        {
-          type: 'WRITE_LOG',
-          payload: {},
-        },
-      ]);
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
-        1,
-        {
-          type: 'MOVE_FILE',
-          payload: {
-            rootStorageId: 'space-projects-1',
-            parentPath: '3 FFE',
-            folderName: '05 Submittals',
+          {
+            type: 'WRITE_LOG',
+            payload: {},
           },
-        },
-        {
-          document: body.data,
-          files: [],
-          stepOutputs: {},
-          contextVariables: {},
-        }
-      );
-      expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
-        2,
-        {
-          type: 'WRITE_LOG',
-          payload: {},
-        },
-        {
-          document: body.data,
-          files: [],
-          stepOutputs: {},
-          contextVariables: {},
-        }
-      );
+        ]);
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          1,
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          2,
+          {
+            type: 'WRITE_LOG',
+            payload: {},
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+      } finally {
+        searchSpy.mockRestore();
+      }
     });
 
     it('rejects payload with 400 when lookup field has an invalid option value', async () => {
