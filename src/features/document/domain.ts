@@ -338,12 +338,21 @@ export const DocumentTypeSchema = Type.Object({
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;
 
+export interface ProcessStepResult {
+  stepId?: string | undefined;
+  activityType: string;
+  output: ActivityOutput;
+}
+
 export type ProcessDocumentResult =
   | {
       success: true;
       data: Document;
       activities: Activity[];
       outputs: ActivityOutput[];
+      workflowName?: string | undefined;
+      completedStepCount?: number | undefined;
+      stepResults?: ProcessStepResult[] | undefined;
       stepOutputs?: Record<string, ActivityOutput> | undefined;
       files?: FileLocator[] | undefined;
       contextVariables?: { [key: string]: unknown } | undefined;
@@ -353,6 +362,10 @@ export type ProcessDocumentResult =
       errors: string[];
       failedStepId?: string | undefined;
       workflowName?: string | undefined;
+      completedStepCount?: number | undefined;
+      stepResults?: ProcessStepResult[] | undefined;
+      data?: Document | undefined;
+      outputs?: ActivityOutput[] | undefined;
       stepOutputs?: Record<string, ActivityOutput> | undefined;
       files?: FileLocator[] | undefined;
       contextVariables?: { [key: string]: unknown } | undefined;
@@ -1430,6 +1443,8 @@ export class DocumentService implements DocumentServicePort {
         data: enrichedDocument,
         activities: [],
         outputs: [],
+        completedStepCount: 0,
+        stepResults: [],
       };
     }
 
@@ -1531,6 +1546,11 @@ export class DocumentService implements DocumentServicePort {
       accumulatedContextVariables
     );
 
+    const resolvedActivities: Activity[] = [];
+    const collectedOutputs: ActivityOutput[] = [];
+    const stepResults: ProcessStepResult[] = [];
+    let completedStepCount = 0;
+
     const buildWorkflowFailureResult = (
       errors: string[],
       failedStepId: string | undefined
@@ -1538,6 +1558,10 @@ export class DocumentService implements DocumentServicePort {
       success: false,
       errors: errors.map(redactTemplateErrors),
       workflowName: workflow.name,
+      completedStepCount,
+      stepResults: [...stepResults],
+      data: enrichedDocument,
+      outputs: [...collectedOutputs],
       ...(failedStepId !== undefined ? { failedStepId } : {}),
       stepOutputs: { ...stepOutputs },
       files: [...currentFiles],
@@ -1546,8 +1570,6 @@ export class DocumentService implements DocumentServicePort {
         : {}),
     });
 
-    const resolvedActivities: Activity[] = [];
-    const collectedOutputs: ActivityOutput[] = [];
     for (const activity of activities) {
       let resolvedActivity: Activity;
       let output: ActivityOutput | void;
@@ -1582,7 +1604,6 @@ export class DocumentService implements DocumentServicePort {
       resolvedActivities.push(resolvedActivity);
 
       if (output !== undefined) {
-        collectedOutputs.push(output);
         if (output.success === false) {
           if (output.contextVariables) {
             mergeContextVariables(accumulatedContextVariables, output.contextVariables);
@@ -1592,6 +1613,13 @@ export class DocumentService implements DocumentServicePort {
             activity.id
           );
         }
+        collectedOutputs.push(output);
+        completedStepCount += 1;
+        stepResults.push({
+          ...(activity.id !== undefined ? { stepId: activity.id } : {}),
+          activityType: activity.type,
+          output: cloneAndFreezePlainValue(output),
+        });
         if (output.documentDataPatch) {
           enrichedDocument = {
             ...enrichedDocument,
@@ -1637,16 +1665,15 @@ export class DocumentService implements DocumentServicePort {
       data: enrichedDocument,
       activities: resolvedActivities,
       outputs: collectedOutputs,
+      workflowName: workflow.name,
+      completedStepCount,
+      stepResults: [...stepResults],
+      ...(Object.keys(stepOutputs).length > 0 ? { stepOutputs: { ...stepOutputs } } : {}),
+      ...(currentFiles.length > 0 ? { files: [...currentFiles] } : {}),
+      ...(Object.keys(accumulatedContextVariables).length > 0
+        ? { contextVariables: accumulatedContextVariables }
+        : {}),
     };
-    if (Object.keys(stepOutputs).length > 0) {
-      finalResult.stepOutputs = { ...stepOutputs };
-    }
-    if (currentFiles.length > 0) {
-      finalResult.files = [...currentFiles];
-    }
-    if (Object.keys(accumulatedContextVariables).length > 0) {
-      finalResult.contextVariables = accumulatedContextVariables;
-    }
 
     return finalResult;
   }

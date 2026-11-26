@@ -477,8 +477,9 @@ export function translateUiViewToNavigationAction(
  */
 export function translateUiViewToUpdateCardAction(
   payload: unknown,
-  notification?: string | undefined
+  notification?: string | undefined,
+  options?: { popToRoot?: boolean | undefined } | undefined
 ): GoogleWorkspaceActionResponse {
   const card = translateUiViewToWorkspaceCard(payload);
-  return buildUpdateCardNavigationAction(card, notification);
+  return buildUpdateCardNavigationAction(card, notification, options);
 }

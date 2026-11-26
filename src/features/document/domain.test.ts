@@ -5203,6 +5203,160 @@ describe('Document domain', () => {
         other: true,
       });
     });
+
+    it('returns workflowName, completedStepCount, ordered stepResults (including id-less steps), and excludes void/failed outputs (#382)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'step-results-doc',
+          name: 'Step Results Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'MixedStepFlow' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'MixedStepFlow',
+                activitySequence: [
+                  { type: 'MOVE_FILE', payload: {} }, // id-less step 1
+                  { id: 'noopStep', type: 'NOOP_STEP', payload: {} }, // returns undefined
+                  { id: 'writeLog', type: 'WRITE_LOG', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const movedLocator: FileLocator = {
+        id: 'file-1',
+        name: 'Doc.pdf',
+        parentId: 'folder-1',
+        uri: 'https://drive.google.com/file/d/file-1/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'MOVE_FILE') {
+            return { success: true, files: [movedLocator] };
+          }
+          if (activity.type === 'NOOP_STEP') {
+            return undefined;
+          }
+          return {
+            success: true,
+            contextVariables: { documentLogWrite: { rowNumber: 4, action: 'inserted' } },
+          };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'step-results-doc', data: { title: 'Hello' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.workflowName).toBe('MixedStepFlow');
+      expect(result.completedStepCount).toBe(2);
+      expect(result.stepResults).toEqual([
+        {
+          activityType: 'MOVE_FILE',
+          output: { success: true, files: [movedLocator] },
+        },
+        {
+          stepId: 'writeLog',
+          activityType: 'WRITE_LOG',
+          output: {
+            success: true,
+            contextVariables: { documentLogWrite: { rowNumber: 4, action: 'inserted' } },
+          },
+        },
+      ]);
+      expect('stepId' in result.stepResults![0]).toBe(false);
+    });
+
+    it('counts completedStepCount accurately and excludes failed step from outputs/stepResults when step 2 returns success: false (#382)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'idless-fail-doc',
+          name: 'Idless Fail Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'IdlessFailFlow' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'IdlessFailFlow',
+                activitySequence: [
+                  { type: 'MOVE_FILE', payload: {} }, // id-less step 1 succeeds
+                  { id: 'writeLog', type: 'WRITE_LOG', payload: {} }, // step 2 fails
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const movedLocator: FileLocator = {
+        id: 'file-idless',
+        name: 'Comm.pdf',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'MOVE_FILE') {
+            return { success: true, files: [movedLocator] };
+          }
+          return { success: false, error: 'Log write failed' };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'idless-fail-doc', data: { title: 'Comm' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.workflowName).toBe('IdlessFailFlow');
+      expect(result.failedStepId).toBe('writeLog');
+      expect(result.completedStepCount).toBe(1);
+      expect(result.outputs).toEqual([{ success: true, files: [movedLocator] }]);
+      expect(result.stepResults).toEqual([
+        {
+          activityType: 'MOVE_FILE',
+          output: { success: true, files: [movedLocator] },
+        },
+      ]);
+      expect(result.data?.data).toEqual({ title: 'Comm' });
+      expect(result.files).toEqual([movedLocator]);
+    });
   });
 
   describe('walkTemplates', () => {

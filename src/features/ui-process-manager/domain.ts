@@ -134,6 +134,7 @@ export type ProcessUiStateOutput = Static<typeof ProcessUiStateOutputSchema>;
 
 export const DRIVE_WORKSPACE_ADDON_VIEW_ID = 'drive-document-process-card';
 export const GMAIL_WORKSPACE_ADDON_VIEW_ID = 'gmail-document-process-card';
+export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
 
 export const DRIVE_ROUTING_FALLBACK_NOTICE =
   'Could not inspect Google Drive folder hierarchy; please verify Document Space and Document Type.';
@@ -365,7 +366,7 @@ export function isResetOrInitialLoad(context?: ProcessUiStateEvent): boolean {
     return true;
   }
   const action = context.actionName ?? context.parameters?.action;
-  const isRefresh = action === 'refresh';
+  const isRefresh = action === 'refresh' || action === 'startOver';
   const hasInCardAction = isInCardAction(action);
   const hasSelectionKeysInFormData = Boolean(
     context.formData &&
@@ -616,6 +617,7 @@ export function reconcileDocumentLogSelection(params: {
   const shouldClear =
     params.actionName === 'onSpaceTypeChange' ||
     params.actionName === 'refresh' ||
+    params.actionName === 'startOver' ||
     params.actionName === 'onFileSourceChange' ||
     params.actionName === 'onEmailMessageChange' ||
     Boolean(params.isSourceReset) ||
@@ -928,7 +930,14 @@ export function evaluateProcessUiState(input: ProcessUiStateInput): ProcessUiSta
   const isRefresh = action === 'refresh';
   let isUpdateCard = isRefresh
     ? false
-    : Boolean(context.isUpdateCard || isSpaceTypeChange || isDocTypeChange || isFileSourceChange || isEmailMessageChange);
+    : Boolean(
+        action === 'startOver' ||
+          context.isUpdateCard ||
+          isSpaceTypeChange ||
+          isDocTypeChange ||
+          isFileSourceChange ||
+          isEmailMessageChange
+      );
 
   const rawSelectedDocType =
     resolveDocumentType({

@@ -506,7 +506,10 @@ describe('E2E Tracer Bullet: DriveDocumentProcessCard', () => {
 
     expect(successResponse.statusCode).toBe(200);
     const successBody = JSON.parse(successResponse.payload);
-    expect(successBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(successBody.action?.notification).toBeUndefined();
+    expect(successBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Communication Project Filed'
+    );
   });
 });
 

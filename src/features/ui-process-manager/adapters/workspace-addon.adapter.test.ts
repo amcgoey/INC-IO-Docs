@@ -634,10 +634,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
 
       expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('aborts submission and returns error update card when selectedItems is missing or empty', async () => {
@@ -791,10 +793,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
         'onSubmit'
       );
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('allows submission with 0 source files when allowEmptySourceFiles is true in Gmail context', async () => {
@@ -835,10 +839,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         }),
         'onSubmit'
       );
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('aborts submission with Gmail-specific error message when 0 files and allowEmptySourceFiles is false or omitted in Gmail context', async () => {
@@ -925,10 +931,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         }),
         'onSubmit'
       );
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('in Gmail context with SelectFileSource = "Google Drive URL" and valid folder URL, appends parsed folder to activeSourceFiles', async () => {
@@ -977,10 +985,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         }),
         'onSubmit'
       );
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('in Gmail context with SelectFileSource = "Google Drive URL" and invalid URL, aborts submission immediately and preserves user form inputs', async () => {
@@ -1110,10 +1120,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         }),
         'onSubmit'
       );
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('preserves empty string title and mimeType while cleanly omitting undefined in sourceFiles mapping', async () => {
@@ -1164,10 +1176,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(Object.prototype.hasOwnProperty.call(secondFile, 'name')).toBe(false);
       expect(Object.prototype.hasOwnProperty.call(secondFile, 'mimeType')).toBe(false);
 
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
 
@@ -1198,10 +1212,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       const response = await adapter.processUiEvent(context);
 
       expect(mockDocumentRunner.processDocument).toHaveBeenCalled();
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('executes documentRunner with space from dynamically suffixed SelectDocumentSpace_<activeSpaceType>', async () => {
@@ -1728,10 +1744,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       );
 
       expect(Value.Check(UiProcessResultSchema, response)).toBe(true);
-      expect(response).toEqual({
-        type: 'notification',
-        text: 'Document processed successfully',
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
       });
+      expect((response as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('aborts submission and returns update card with collision error on whitespace and case variations of colliding space names', async () => {
@@ -2775,7 +2793,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       };
 
       const response = await adapter.processUiEvent(context);
-      expect(response.type).toBe('notification');
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           sourceFiles: [
@@ -2852,7 +2874,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       };
 
       const response = await adapter.processUiEvent(context);
-      expect(response.type).toBe('notification');
+      expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           sourceFiles: [
@@ -2901,7 +2927,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           expect.objectContaining({
             sourceFiles: [
@@ -2947,7 +2977,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           expect.objectContaining({
             sourceFiles: [
@@ -2995,7 +3029,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           expect.objectContaining({
             sourceFiles: [
@@ -3150,7 +3188,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           expect.objectContaining({
             sourceFiles: [
@@ -3205,7 +3247,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           expect.objectContaining({
             sourceFiles: [],
@@ -3293,7 +3339,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           {
@@ -3364,7 +3414,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           {
@@ -3423,7 +3477,11 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         };
 
         const response = await adapter.processUiEvent(context);
-        expect(response.type).toBe('notification');
+        expect(response).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledTimes(1);
         expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
           {
@@ -6014,7 +6072,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
 
       const result = await adapter.processUiEvent(buildSubmitEvent('communication-project'));
-      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(result).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((result as UiProcessRenderResult).notification).toBeUndefined();
       expect(documentLogPort.requiresDocumentLog).toHaveBeenCalledWith('communication-project');
       expect(documentLogPort.resolveLog).not.toHaveBeenCalled();
       expect(documentRunner.processDocument).toHaveBeenCalledWith(
@@ -6133,7 +6196,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       });
 
       const result = await adapter.processUiEvent(buildSubmitEvent('invoice-project'));
-      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(result).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((result as UiProcessRenderResult).notification).toBeUndefined();
       expect(documentLogPort.resolveLog).toHaveBeenCalledWith({
         id: 'proj1',
         name: 'Project Main',
@@ -6187,7 +6255,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       });
 
-      expect(result).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(result).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((result as UiProcessRenderResult).notification).toBeUndefined();
       expect(documentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'invoice-project',
@@ -7086,7 +7159,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       });
 
-      expect(res).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(res).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((res as UiProcessRenderResult).notification).toBeUndefined();
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           sourceFiles: [{ id: 'file-2', name: 'Two.pdf', mimeType: 'application/pdf' }],
@@ -7192,7 +7270,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
           SaveEmailToPdf: true,
         },
       });
-      expect(savePdfOnlyRes).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(savePdfOnlyRes).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((savePdfOnlyRes as UiProcessRenderResult).notification).toBeUndefined();
     });
 
     it('preserves multi-file submission for Communications (maxSourceFiles omitted) in both Drive and Gmail', async () => {
@@ -7222,7 +7305,12 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
         },
       });
 
-      expect(gmailMultiRes).toEqual({ type: 'notification', text: 'Document processed successfully' });
+      expect(gmailMultiRes).toMatchObject({
+        type: 'render',
+        viewId: 'document-success-card',
+        isUpdateCard: false,
+      });
+      expect((gmailMultiRes as UiProcessRenderResult).notification).toBeUndefined();
       expect(mockDocumentRunner.processDocument).toHaveBeenCalledWith(
         expect.objectContaining({
           sourceFiles: expect.arrayContaining([
@@ -7302,9 +7390,10 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
 
       const successRes = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
       expect(successRes.type).toBe('render');
-      expect(successRes.isUpdateCard).toBe(true);
-      expect(successRes.notification).toBe('Document processed successfully');
-      expect(successRes.statusMessages).toEqual([
+      expect(successRes.viewId).toBe('document-success-card');
+      expect(successRes.isUpdateCard).toBe(false);
+      expect(successRes.notification).toBeUndefined();
+      expect(successRes.executionOutcome?.notices).toEqual([
         'Cover sheet could not be inserted into "_071200-001.docx" because it is not a PDF. Created sibling Transmittal PDF "_071200-001 Transmittal.pdf".',
       ]);
 
@@ -7313,6 +7402,78 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(errorRes.isUpdateCard).toBe(true);
       expect(errorRes.validationErrors).toEqual(['Failed step writeLog']);
       expect(errorRes.statusMessages).toEqual(['Sibling Transmittal notice prior to failure']);
+    });
+
+    it('pushes document-success-card (isUpdateCard: false, no toast), skips lockedFieldsResolver, and handles startOver with popToRoot: true + isUpdateCard: true (#382)', async () => {
+      const lockedFieldsResolver = {
+        deriveLockedFields: vi.fn().mockResolvedValue({ specTitle: 'HOOK' }),
+      };
+      const processDocument = vi.fn().mockResolvedValue({
+        success: true,
+        executionOutcome: {
+          success: true,
+          workflowName: 'SubmittalReceived',
+          completedStepCount: 2,
+          spaceName: 'Project Main',
+          documentData: { title: 'Waterproofing' },
+          stepResults: [
+            {
+              stepId: 'moveOriginal',
+              activityType: 'MOVE_FILE',
+              files: [{ id: 'f-1', name: 'Submittal.pdf', uri: 'https://drive.google.com/file/d/f-1/view' }],
+            },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(1),
+        documentRunner: { processDocument },
+        lockedFieldsResolver,
+      });
+
+      const submitRes = (await adapter.processUiEvent({
+        hostApp: 'DRIVE',
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-1'],
+          title_submittal_arch: 'Waterproofing',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(submitRes.type).toBe('render');
+      expect(submitRes.viewId).toBe('document-success-card');
+      expect(submitRes.documentTypeKey).toBe('submittal-arch');
+      expect(submitRes.spaceId).toBe('proj-1');
+      expect(submitRes.isUpdateCard).toBe(false);
+      expect(submitRes.notification).toBeUndefined();
+      expect(submitRes.executionOutcome?.workflowName).toBe('SubmittalReceived');
+      expect(submitRes.executionOutcome?.stepResults).toHaveLength(1);
+      expect(lockedFieldsResolver.deriveLockedFields).not.toHaveBeenCalled();
+
+      const startOverRes = (await adapter.processUiEvent({
+        hostApp: 'DRIVE',
+        actionName: 'startOver',
+        selectedItems: [{ id: 'file-1', title: 'Submittal.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          title_submittal_arch: 'Stale Value',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(startOverRes.type).toBe('render');
+      expect(startOverRes.viewId).toBe('drive-document-process-card');
+      expect(startOverRes.popToRoot).toBe(true);
+      expect(startOverRes.isUpdateCard).toBe(true);
+      expect(startOverRes.formData?.title).toBeUndefined();
     });
   });
 });

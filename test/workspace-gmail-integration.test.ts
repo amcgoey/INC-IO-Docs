@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
+import { Value } from '@sinclair/typebox/value';
 import { PDFDocument } from 'pdf-lib';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
@@ -11,9 +12,10 @@ import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import type { GmailThreadDetails } from '../src/infrastructure/gmail/types';
 // nosemgrep: adapter-leakage-warning
 import { google, type gmail_v1 } from 'googleapis';
-import type {
-  GoogleWorkspaceActionResponse,
-  GoogleWorkspaceSection,
+import {
+  GoogleWorkspaceActionResponseSchema,
+  type GoogleWorkspaceActionResponse,
+  type GoogleWorkspaceSection,
 } from '../src/infrastructure/workspace-addon/ui-blocks';
 import {
   getDocumentTypeWidgetName,
@@ -1373,14 +1375,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     });
 
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.payload);
-    expect(body).toEqual({
-      action: {
-        notification: {
-          text: 'Document processed successfully',
-        },
-      },
-    });
+    const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+    expect(body.action?.notification).toBeUndefined();
+    expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
     expect(nock.isDone()).toBe(true);
   });
 
@@ -1555,14 +1553,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -1629,14 +1623,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -1703,14 +1693,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2032,7 +2018,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify attachment was downloaded from Gmail preserving metadata
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2229,7 +2217,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify inline CID image was downloaded
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2305,7 +2295,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2395,7 +2387,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify attachment was downloaded
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2496,7 +2490,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2769,7 +2765,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(resAction.statusCode).toBe(200);
       const bodyAction = JSON.parse(resAction.payload) as GoogleWorkspaceActionResponse;
-      expect(bodyAction.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, bodyAction)).toBe(true);
+      expect(bodyAction.action?.notification).toBeUndefined();
+      expect(bodyAction.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment must have been called with the freshest token from the hydration fetch!
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2871,7 +2869,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(messageId, 'fresh-token-inv-1', expect.anything());
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(messageId, 'fresh-token-inv-2', expect.anything());
@@ -2972,7 +2972,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment should NOT have been called for the email attachment!
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
@@ -3306,7 +3308,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial assertion: getAttachment must NOT have been called!
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
@@ -3500,7 +3504,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // The critical assertion: users.messages.get was called ONLY ONCE across the entire request!
       expect(mockMessagesGet).toHaveBeenCalledTimes(1);
@@ -3669,7 +3675,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(actionResponse.statusCode).toBe(200);
       const actionBody = JSON.parse(actionResponse.payload) as GoogleWorkspaceActionResponse;
-      expect(actionBody.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionBody)).toBe(true);
+      expect(actionBody.action?.notification).toBeUndefined();
+      expect(actionBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Across both the on-form-change and processDocument with hydrator + UI manager, users.messages.get was called ONLY ONCE!
       expect(mockMessagesGet).toHaveBeenCalledTimes(1);
@@ -3924,7 +3932,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment was called with the selected email ID (msg-email-2) rather than initial trigger (msg-email-1)
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -3991,7 +4001,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: generateEmailPdf received headers, subject, and body from msg-email-2
       expect(generateEmailPdfSpy).toHaveBeenCalledWith(
@@ -4077,7 +4089,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Attachment downloaded from msg-email-2
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -4379,7 +4393,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(processRes.statusCode).toBe(200);
         const processBody = JSON.parse(processRes.payload) as GoogleWorkspaceActionResponse;
-        expect(processBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, processBody)).toBe(true);
+        expect(processBody.action?.notification).toBeUndefined();
+        expect(processBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
         // The critical assertion: users.messages.get was called 0 times because getThread pre-warmed msg-cached-2 in cache!
         expect(mockMessagesGet).toHaveBeenCalledTimes(0);
@@ -6171,7 +6187,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(submitRes.statusCode).toBe(200);
         const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, submitBody)).toBe(true);
+        expect(submitBody.action?.notification).toBeUndefined();
+        expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal Arch Filed');
         expect(capturedBatchUpdate).toBeDefined();
         expect(JSON.stringify(capturedBatchUpdate)).toContain(
           '=HYPERLINK(\\"https://drive.google.com/file/d/drive-saved-submittal-arch/view\\", \\"Link\\")'
@@ -6452,7 +6470,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(submitRes.statusCode).toBe(200);
         const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, submitBody)).toBe(true);
+        expect(submitBody.action?.notification).toBeUndefined();
+        expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal FF&E Filed');
         expect(capturedBatchUpdate).toBeDefined();
         const batchRequests = (capturedBatchUpdate as { requests: Array<{ updateCells?: { range?: { startColumnIndex?: number; endColumnIndex?: number } } }> }).requests;
         expect(batchRequests.map((r) => [r.updateCells?.range?.startColumnIndex, r.updateCells?.range?.endColumnIndex])).toEqual([

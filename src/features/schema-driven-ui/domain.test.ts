@@ -1351,5 +1351,91 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
 
       expect(capturedContext?.lockedFields).toEqual({ specTitle: 'HOOK' });
     });
+
+    it('skips getDocumentSchema, OptionsFetcherPort, and UiContextQueryPort when requiresDocumentSchema: false, requiresUiSchema: "optional", and contextKeys is empty (#382)', async () => {
+      const manifestPort: UiManifestPort = {
+        getUiSchema: vi.fn().mockResolvedValue(undefined),
+        getDocumentSchema: vi.fn(),
+      };
+      const optionsFetcher: OptionsFetcherPort = {
+        fetchOptions: vi.fn(),
+      };
+      const uiContextQuery: UiContextQueryPort = {
+        queryContext: vi.fn(),
+      };
+
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'document-success-card',
+        requiresDocumentSchema: false,
+        requiresUiSchema: 'optional',
+        contextKeys: [],
+        composeView: vi.fn(async (ctx) => {
+          capturedContext = ctx;
+          return {
+            id: 'document-success-card',
+            header: { title: 'Submittal Arch Filed' },
+            sections: [{ widgets: [{ textParagraph: { text: 'Filed.' } }] }],
+          };
+        }),
+      };
+
+      const service = new SchemaDrivenUiService(
+        manifestPort,
+        [adapter],
+        optionsFetcher,
+        uiContextQuery
+      );
+
+      const prev = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        const view = await service.generateView({
+          viewId: 'document-success-card',
+          documentTypeKey: 'submittal-arch',
+          executionOutcome: {
+            success: true,
+            workflowName: 'SubmittalReceived',
+            completedStepCount: 1,
+            spaceName: 'Project Alpha',
+            documentData: { title: 'Waterproofing' },
+            stepResults: [],
+            notices: [],
+            errors: [],
+          },
+        });
+        expect(view.id).toBe('document-success-card');
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prev;
+      }
+
+      expect(manifestPort.getUiSchema).toHaveBeenCalledWith('submittal-arch');
+      expect(manifestPort.getDocumentSchema).not.toHaveBeenCalled();
+      expect(optionsFetcher.fetchOptions).not.toHaveBeenCalled();
+      expect(uiContextQuery.queryContext).not.toHaveBeenCalled();
+      expect(capturedContext?.executionOutcome?.workflowName).toBe('SubmittalReceived');
+    });
+
+    it('skips getUiSchema completely when requiresUiSchema is "none" (#382)', async () => {
+      const manifestPort: UiManifestPort = {
+        getUiSchema: vi.fn(),
+        getDocumentSchema: vi.fn(),
+      };
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'no-ui-schema-view',
+        requiresDocumentSchema: false,
+        requiresUiSchema: 'none',
+        composeView: vi.fn(async () => ({
+          id: 'no-ui-schema-view',
+          sections: [{ widgets: [{ textParagraph: { text: 'OK' } }] }],
+        })),
+      };
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter]);
+      await service.generateView({ viewId: 'no-ui-schema-view', documentTypeKey: 'submittal-arch' });
+
+      expect(manifestPort.getUiSchema).not.toHaveBeenCalled();
+      expect(manifestPort.getDocumentSchema).not.toHaveBeenCalled();
+    });
   });
 });

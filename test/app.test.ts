@@ -391,6 +391,9 @@ describe('App integration tests', () => {
           },
         ],
         outputs: [],
+        workflowName: 'SubmitCommProject',
+        completedStepCount: 0,
+        stepResults: [],
       });
       expect(mockActivityEngine.dispatch).toHaveBeenCalledWith(
         {
@@ -427,6 +430,8 @@ describe('App integration tests', () => {
         data: validDocument,
         activities: [],
         outputs: [],
+        completedStepCount: 0,
+        stepResults: [],
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });

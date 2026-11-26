@@ -22,7 +22,9 @@ import type {
   UiProcessSpaceCollection,
   ProcessUiStateConfig,
   UiProcessSpaceType,
+  UiProcessDocumentExecutionOutcome,
 } from '../ports';
+import { DOCUMENT_SUCCESS_CARD_VIEW_ID } from '../ports';
 
 import {
   evaluateProcessUiState,
@@ -476,7 +478,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       this.options;
 
     const actionName = context.actionName ?? context.parameters?.action;
+    const isStartOver = actionName === 'startOver';
     let effectiveContext = context.actionName === actionName ? context : { ...context, actionName };
+    if (isStartOver) {
+      effectiveContext = {
+        ...effectiveContext,
+        formData: undefined,
+      };
+    }
 
     const isGmail = isGmailContext(context);
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
@@ -525,6 +534,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isSourceReset =
       isResetOrInitial ||
       actionName === 'refresh' ||
+      actionName === 'startOver' ||
       (isGmail && (
         actionName === 'onEmailMessageChange' ||
         (actionName === 'onFileSourceChange' && (
@@ -701,6 +711,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       } else if (
         actionName === 'onEmailMessageChange' ||
         actionName === 'refresh' ||
+        actionName === 'startOver' ||
         isGmailDriveUrlPass1Event ||
         (isGmailEmailPass1Event && actionName === 'onFileSourceChange')
       ) {
@@ -916,6 +927,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       validationErrors?: string[] | undefined;
       statusMessages?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
+      popToRoot?: boolean | undefined;
       hiddenFields?: string[] | undefined;
       clearPreviousSelectedLogId?: boolean | undefined;
       notification?: string | undefined;
@@ -991,6 +1003,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         selectionState: state.selectionState,
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,
+        ...(options.popToRoot ? { popToRoot: true } : {}),
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(lockedFields !== undefined ? { lockedFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
@@ -1227,8 +1240,11 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
+        let result:
+          | Awaited<ReturnType<NonNullable<typeof documentRunner>['processDocument']>>
+          | undefined;
         if (documentRunner) {
-          const result = await documentRunner.processDocument(
+          result = await documentRunner.processDocument(
             {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
@@ -1239,7 +1255,6 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             },
             'onSubmit'
           );
-
 
           const rawNotices = result?.contextVariables?.notices;
           const notices = Array.isArray(rawNotices)
@@ -1255,19 +1270,31 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
               notices.length > 0 ? notices : undefined
             );
           }
-
-          if (notices.length > 0) {
-            return createRenderResult({
-              statusMessages: notices,
-              isUpdateCard: true,
-              notification: 'Document processed successfully',
-            });
-          }
         }
 
+        const rawNotices = result?.contextVariables?.notices;
+        const notices = Array.isArray(rawNotices)
+          ? rawNotices.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+          : [];
+        const executionOutcome: UiProcessDocumentExecutionOutcome = result?.executionOutcome ?? {
+          success: true,
+          completedStepCount: 0,
+          spaceName: space.name,
+          documentData: data,
+          stepResults: [],
+          notices,
+          errors: [],
+        };
+
         return {
-          type: 'notification',
-          text: 'Document processed successfully',
+          type: 'render',
+          viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+          ...(resolvedDocumentTypeKey !== undefined
+            ? { documentTypeKey: resolvedDocumentTypeKey }
+            : {}),
+          spaceId: space.id,
+          isUpdateCard: false,
+          executionOutcome,
         };
       } catch (error) {
         const validationErrors = [error instanceof Error ? error.message : 'Document processing failed'];
@@ -1360,7 +1387,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       formData: evaluatedFormData,
       hiddenFields,
       ...(docTypeStatusWarnings !== undefined ? { statusMessages: docTypeStatusWarnings } : {}),
-      isUpdateCard: actionName === 'onFormChange',
+      isUpdateCard: isStartOver || actionName === 'onFormChange',
+      ...(isStartOver ? { popToRoot: true } : {}),
     });
   }
 
@@ -1387,11 +1415,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       !effectiveContext.selectedItems ||
       effectiveContext.selectedItems.length === 0 ||
       actionName === 'refresh' ||
+      actionName === 'startOver' ||
       isInCardAction;
 
     if (needsGmailFetch) {
       const token = context.userOAuthToken ?? context.gmail?.accessToken;
-      const skipCache = actionName === 'refresh';
+      const skipCache = actionName === 'refresh' || actionName === 'startOver';
 
       if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
         try {
@@ -1433,9 +1462,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       if (threadMessages && threadMessages.length > 0) {
-        const formMsgId = actionName === 'refresh'
-          ? undefined
-          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
+        const formMsgId =
+          actionName === 'refresh' || actionName === 'startOver'
+            ? undefined
+            : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
         activeMsg =
           threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
           threadMessages[threadMessages.length - 1];
@@ -1451,6 +1481,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           !effectiveContext.selectedItems ||
           effectiveContext.selectedItems.length === 0 ||
           actionName === 'refresh' ||
+          actionName === 'startOver' ||
           isEmailSwitch
         ) {
           effectiveContext = {
@@ -1514,17 +1545,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       Boolean(parsedCurrentDriveUrl) &&
       effectiveFileSource === 'Google Drive URL' &&
       (actionName === 'refresh' ||
-       (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
-       actionName === 'onFileSourceChange');
+        actionName === 'startOver' ||
+        (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
+        actionName === 'onFileSourceChange');
 
     const isGmailEmailPass1Event =
       isGmail &&
       Boolean(activeMsg) &&
       (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
       (isResetOrInitial ||
-       actionName === 'refresh' ||
-       actionName === 'onEmailMessageChange' ||
-       actionName === 'onFileSourceChange');
+        actionName === 'refresh' ||
+        actionName === 'startOver' ||
+        actionName === 'onEmailMessageChange' ||
+        actionName === 'onFileSourceChange');
 
     const isGmailPass1Event = isGmailDriveUrlPass1Event || isGmailEmailPass1Event;
 
