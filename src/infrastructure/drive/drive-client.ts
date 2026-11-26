@@ -6,6 +6,9 @@ import {
   DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
   resolveMaxInMemoryFileBytesFromEnv,
 } from '../manifest/app-manifest-provider';
+import { KeyedAsyncLock } from '../sheets/keyed-lock';
+
+const SHARED_DRIVE_FOLDER_LOCK = new KeyedAsyncLock();
 
 export interface DriveShortcutDetails {
   targetId?: string | undefined;
@@ -54,6 +57,10 @@ export interface DriveSearchParams {
 export interface DriveDuplicateOptions {
   newName?: string | undefined;
   targetFolderId?: string | undefined;
+}
+
+export interface DriveMoveOptions {
+  newName?: string | undefined;
 }
 
 export interface DriveContentCreateOptions {
@@ -184,6 +191,7 @@ export interface GoogleDriveClientOptions {
   getMaxInMemoryFileBytes?:
     | (() => Promise<number | undefined> | number | undefined)
     | undefined;
+  folderLock?: KeyedAsyncLock | undefined;
 }
 
 function extractHttpStatusCode(error: unknown): number | undefined {
@@ -304,11 +312,13 @@ export class GoogleDriveClient {
   private readonly getMaxInMemoryFileBytesFn?:
     | (() => Promise<number | undefined> | number | undefined)
     | undefined;
+  private readonly folderLock: KeyedAsyncLock;
 
   constructor(options: GoogleDriveClientOptions = {}) {
     this.retryOptions = options.retryOptions ?? {};
     this.configProvider = options.configProvider;
     this.getMaxInMemoryFileBytesFn = options.getMaxInMemoryFileBytes;
+    this.folderLock = options.folderLock ?? SHARED_DRIVE_FOLDER_LOCK;
 
     if (options.drive) {
       this.defaultDrive = options.drive;
@@ -519,67 +529,70 @@ export class GoogleDriveClient {
       throw new Error('Folder name must be a non-empty string');
     }
     const drive = this.getDrive(options?.auth);
-    try {
-      const escapedName = escapeDriveQuery(folderName);
-      const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const lockKey = JSON.stringify([parentId, folderName]);
+    return this.folderLock.acquire(lockKey, async () => {
+      try {
+        const escapedName = escapeDriveQuery(folderName);
+        const q = `'${parentId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
-      const res = await this.executeWithRetry(() =>
-        drive.files.list({
-          q,
-          fields: 'files(id, name, parents, mimeType, webViewLink)',
-          spaces: 'drive',
-          includeItemsFromAllDrives: true,
-          supportsAllDrives: true,
-        })
-      );
-
-      if (res.data.files && res.data.files.length > 1) {
-        throw new GoogleDriveAmbiguousPathError(
-          `Query for folder '${folderName}' in parent '${parentId}' returned ${res.data.files.length} results, exceeding unique match threshold.`
+        const res = await this.executeWithRetry(() =>
+          drive.files.list({
+            q,
+            fields: 'files(id, name, parents, mimeType, webViewLink)',
+            spaces: 'drive',
+            includeItemsFromAllDrives: true,
+            supportsAllDrives: true,
+          })
         );
-      }
 
-      const existingFolder = res.data.files?.[0];
-      if (existingFolder?.id && existingFolder?.name) {
+        if (res.data.files && res.data.files.length > 1) {
+          throw new GoogleDriveAmbiguousPathError(
+            `Query for folder '${folderName}' in parent '${parentId}' returned ${res.data.files.length} results, exceeding unique match threshold.`
+          );
+        }
+
+        const existingFolder = res.data.files?.[0];
+        if (existingFolder?.id && existingFolder?.name) {
+          return {
+            id: existingFolder.id,
+            name: existingFolder.name,
+            parents: existingFolder.parents ?? [parentId],
+            mimeType: existingFolder.mimeType ?? 'application/vnd.google-apps.folder',
+            webViewLink: existingFolder.webViewLink ?? undefined,
+          };
+        }
+
+        const createRes = await this.executeWithRetry(() =>
+          drive.files.create({
+            requestBody: {
+              name: folderName,
+              mimeType: 'application/vnd.google-apps.folder',
+              parents: [parentId],
+            },
+            fields: 'id, name, parents, mimeType, webViewLink',
+            supportsAllDrives: true,
+          })
+        );
+
+        const { id, name } = this.requireFileMetadata(
+          createRes.data,
+          `Failed to create folder '${folderName}' in parent '${parentId}'`
+        );
+
         return {
-          id: existingFolder.id,
-          name: existingFolder.name,
-          parents: existingFolder.parents ?? [parentId],
-          mimeType: existingFolder.mimeType ?? 'application/vnd.google-apps.folder',
-          webViewLink: existingFolder.webViewLink ?? undefined,
+          id,
+          name,
+          parents: createRes.data.parents ?? [parentId],
+          mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
+          webViewLink: createRes.data.webViewLink ?? undefined,
         };
+      } catch (error) {
+        if (error instanceof GoogleDriveAmbiguousPathError) {
+          throw error;
+        }
+        this.wrapApiError('findOrCreateFolder', error);
       }
-
-      const createRes = await this.executeWithRetry(() =>
-        drive.files.create({
-          requestBody: {
-            name: folderName,
-            mimeType: 'application/vnd.google-apps.folder',
-            parents: [parentId],
-          },
-          fields: 'id, name, parents, mimeType, webViewLink',
-          supportsAllDrives: true,
-        })
-      );
-
-      const { id, name } = this.requireFileMetadata(
-        createRes.data,
-        `Failed to create folder '${folderName}' in parent '${parentId}'`
-      );
-
-      return {
-        id,
-        name,
-        parents: createRes.data.parents ?? [parentId],
-        mimeType: createRes.data.mimeType ?? 'application/vnd.google-apps.folder',
-        webViewLink: createRes.data.webViewLink ?? undefined,
-      };
-    } catch (error) {
-      if (error instanceof GoogleDriveAmbiguousPathError) {
-        throw error;
-      }
-      this.wrapApiError('findOrCreateFolder', error);
-    }
+    });
   }
 
   async resolveFolderPath(
@@ -691,27 +704,43 @@ export class GoogleDriveClient {
   async move(
     fileId: string,
     targetFolderId: string,
+    moveOptions?: DriveMoveOptions & DriveOperationOptions,
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
-    const drive = this.getDrive(options?.auth);
-    try {
-      const file = await this.getFile(fileId, options);
-      const currentParents = file.parents ?? [];
-      const removeParentsList = currentParents.filter(
-        (parentId) => parentId !== targetFolderId
-      );
-      const removeParents =
-        removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
+    if (
+      moveOptions?.newName !== undefined &&
+      (typeof moveOptions.newName !== 'string' || moveOptions.newName.trim().length === 0)
+    ) {
+      throw new Error('New file name must be a non-empty string');
+    }
 
-      if (currentParents.includes(targetFolderId)) {
+    const effectiveOptions =
+      options ?? (moveOptions?.auth !== undefined ? { auth: moveOptions.auth } : undefined);
+    const drive = this.getDrive(effectiveOptions?.auth);
+    try {
+      const file = await this.getFile(fileId, effectiveOptions);
+      const currentParents = file.parents ?? [];
+      const alreadyInTargetFolder = currentParents.includes(targetFolderId);
+      const trimmedNewName = moveOptions?.newName?.trim();
+      const needsMove = !alreadyInTargetFolder;
+      const needsRename = trimmedNewName !== undefined && trimmedNewName !== file.name;
+
+      if (!needsMove && !needsRename) {
         return file;
       }
+
+      const removeParentsList = needsMove
+        ? currentParents.filter((parentId) => parentId !== targetFolderId)
+        : [];
+      const removeParents =
+        removeParentsList.length > 0 ? removeParentsList.join(',') : undefined;
 
       const res = await this.executeWithRetry(() =>
         drive.files.update({
           fileId,
-          addParents: targetFolderId,
+          ...(needsMove ? { addParents: targetFolderId } : {}),
           ...(removeParents ? { removeParents } : {}),
+          ...(needsRename ? { requestBody: { name: trimmedNewName } } : {}),
           fields: 'id, name, parents, mimeType, webViewLink',
           supportsAllDrives: true,
         })
@@ -725,7 +754,7 @@ export class GoogleDriveClient {
       return {
         id,
         name,
-        parents: res.data.parents ?? [targetFolderId],
+        parents: res.data.parents ?? (needsMove ? [targetFolderId] : file.parents ?? [targetFolderId]),
         mimeType: res.data.mimeType ?? undefined,
         webViewLink: res.data.webViewLink ?? undefined,
       };

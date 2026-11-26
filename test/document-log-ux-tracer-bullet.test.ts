@@ -1139,6 +1139,14 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
     nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-submittals' in parents") && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-submittals'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-closed' in parents") && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
+    nock('https://www.googleapis.com')
       .get('/drive/v3/files/arch-res-file')
       .query(true)
       .times(2)
@@ -1223,6 +1231,14 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-submittals' in parents") && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-submittals'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-closed' in parents") && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
     nock('https://www.googleapis.com')
       .post('/upload/drive/v3/files')
       .query(true)

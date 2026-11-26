@@ -110,9 +110,12 @@ interface MockDriveState {
 }
 
 function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClientOptions['drive']> {
+  const dynamicFolders = new Map<string, { id: string; name: string; parents: string[]; mimeType: string }>();
+  let nextFolderId = 1;
+
   const list = vi.fn().mockImplementation(async (params: { q?: string }) => {
     const q = params.q ?? '';
-    // Folder resolution for MOVE_FILE ("6 Construction" -> "Submittals")
+    // Folder resolution for MOVE_FILE ("6 Construction" -> "Submittals/Closed/..." or "3 FFE" -> "05 Submittals/Closed/...")
     if (q.includes("mimeType = 'application/vnd.google-apps.folder'")) {
       if (q.includes("name = '6 Construction'")) {
         return {
@@ -170,6 +173,16 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
           },
         };
       }
+
+      const parentMatch = /'([^']+)' in parents/.exec(q);
+      const nameMatch = /name = '((?:\\'|[^'])*)'/.exec(q);
+      if (parentMatch && nameMatch) {
+        const key = `${parentMatch[1]}/${nameMatch[1].replace(/\\'/g, "'")}`;
+        const existing = dynamicFolders.get(key);
+        if (existing) {
+          return { data: { files: [existing] } };
+        }
+      }
       return { data: { files: [] } };
     }
 
@@ -185,6 +198,25 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
     return { data: { files: [] } };
   });
 
+  const create = vi.fn().mockImplementation(async (params: { requestBody?: { name?: string; parents?: string[]; mimeType?: string } }) => {
+    const name = params.requestBody?.name ?? 'Untitled';
+    const parents = params.requestBody?.parents ?? ['root'];
+    const mimeType = params.requestBody?.mimeType ?? 'application/vnd.google-apps.folder';
+    const key = `${parents[0]}/${name}`;
+    const existing = dynamicFolders.get(key);
+    if (existing) {
+      return { data: existing };
+    }
+    const created = {
+      id: `folder-dyn-${nextFolderId++}`,
+      name,
+      parents,
+      mimeType,
+    };
+    dynamicFolders.set(key, created);
+    return { data: created };
+  });
+
   const get = vi.fn().mockImplementation(async ({ fileId }: { fileId: string }) => ({
     data: {
       id: fileId,
@@ -195,18 +227,18 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
     },
   }));
 
-  const update = vi.fn().mockImplementation(async ({ fileId }: { fileId: string }) => ({
+  const update = vi.fn().mockImplementation(async ({ fileId, requestBody, addParents }: { fileId: string; requestBody?: { name?: string }; addParents?: string }) => ({
     data: {
       id: fileId,
-      name: '071200-001-0 Fluid-Applied Waterproofing Membrane - 260204 MB.pdf',
-      parents: ['folder-submittals'],
+      name: requestBody?.name ?? '071200-001-0 Fluid-Applied Waterproofing Membrane - 260204 MB.pdf',
+      parents: [addParents ?? 'folder-submittals'],
       mimeType: 'application/pdf',
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     },
   }));
 
   return {
-    files: { list, get, update },
+    files: { list, get, update, create },
   } as unknown as NonNullable<GoogleDriveClientOptions['drive']>;
 }
 
@@ -950,7 +982,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         getFile: (id) => driveClient.getFile(id),
         findOrCreateFolder: (p, n) => driveClient.findOrCreateFolder(p, n),
         resolveFolderPath: (r, s) => driveClient.resolveFolderPath(r, s),
-        move: (f, t) => driveClient.move(f, t),
+        move: (f, t, o) => driveClient.move(f, t, o),
         rename: (f, n) => driveClient.rename(f, n),
         duplicate: (f, o) => driveClient.duplicate(f, o),
         searchFiles: (q) => driveClient.searchFiles(q),
@@ -1216,7 +1248,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         documentWorkflowConfig: {
           workflows: [
             {
-              name: 'FileSubmittalArch',
+              name: 'SubmittalSent',
               activitySequence: [
                 { id: 'createSubmittal', type: 'CREATE_SUBMITTAL', payload: {} },
                 { id: 'archiveCopy', type: 'ARCHIVE_COPY', payload: {} },

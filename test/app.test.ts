@@ -901,14 +901,17 @@ describe('App integration tests', () => {
         expect(body.data.calculated.csiDivisionFolder).toBe('07 Thermal and Moisture Protection');
         expect(body.activities).toEqual([
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '6 Construction',
-              folderName: 'Submittals',
+              folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
             },
           },
           {
+            id: 'writeLog',
             type: 'WRITE_LOG',
             payload: {},
           },
@@ -916,11 +919,13 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           1,
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '6 Construction',
-              folderName: 'Submittals',
+              folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
             },
           },
           {
@@ -933,6 +938,7 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'writeLog',
             type: 'WRITE_LOG',
             payload: {},
           },
@@ -1153,14 +1159,17 @@ describe('App integration tests', () => {
         expect(body.data.calculated.specTagGroup).toBe('CG');
         expect(body.activities).toEqual([
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '3 FFE',
-              folderName: '05 Submittals',
+              folderName: '05 Submittals/Closed/CG/CG104',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
             },
           },
           {
+            id: 'writeLog',
             type: 'WRITE_LOG',
             payload: {},
           },
@@ -1168,11 +1177,13 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           1,
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '3 FFE',
-              folderName: '05 Submittals',
+              folderName: '05 Submittals/Closed/CG/CG104',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
             },
           },
           {
@@ -1185,6 +1196,7 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'writeLog',
             type: 'WRITE_LOG',
             payload: {},
           },

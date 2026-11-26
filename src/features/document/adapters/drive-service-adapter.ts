@@ -6,6 +6,7 @@ import {
   type DriveContentSaveOptions,
   type DriveDuplicateOptions,
   type DriveFileResult,
+  type DriveMoveOptions,
   type DriveSearchQuery,
   type DriveServicePort,
 } from '../ports';
@@ -39,6 +40,10 @@ interface DriveClientDuplicateOptions {
   targetFolderId?: string | undefined;
 }
 
+interface DriveClientMoveOptions {
+  newName?: string | undefined;
+}
+
 interface DriveClientCreateOptions {
   action: 'create';
   targetFolderId: string;
@@ -66,7 +71,8 @@ export interface DriveClientPort {
   ): Promise<DriveClientFileMetadata>;
   move(
     fileId: string,
-    targetFolderId: string
+    targetFolderId: string,
+    moveOptions?: DriveClientMoveOptions
   ): Promise<DriveClientFileMetadata>;
   rename(
     fileId: string,
@@ -231,13 +237,14 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async move(
     fileId: string,
-    targetFolderId: string
+    targetFolderId: string,
+    moveOptions?: DriveMoveOptions
   ): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.move(
-        fileId,
-        targetFolderId
-      );
+      const metadata =
+        moveOptions !== undefined
+          ? await this.driveClient.move(fileId, targetFolderId, moveOptions)
+          : await this.driveClient.move(fileId, targetFolderId);
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('move', error);

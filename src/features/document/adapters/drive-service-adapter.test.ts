@@ -133,6 +133,23 @@ describe('DriveServiceAdapter', () => {
       });
     });
 
+    it('forwards DriveMoveOptions with newName to driveClient.move (#375)', async () => {
+      (mockDriveClient.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'file-1',
+        name: '071200-001-0 Renamed.pdf',
+        parents: ['target-folder'],
+        mimeType: 'application/pdf',
+      });
+
+      const res = await adapter.move('file-1', 'target-folder', {
+        newName: '071200-001-0 Renamed.pdf',
+      });
+      expect(res.name).toBe('071200-001-0 Renamed.pdf');
+      expect(mockDriveClient.move).toHaveBeenCalledWith('file-1', 'target-folder', {
+        newName: '071200-001-0 Renamed.pdf',
+      });
+    });
+
     it('translates external errors to DriveServiceError', async () => {
       (mockDriveClient.move as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('Move failed')

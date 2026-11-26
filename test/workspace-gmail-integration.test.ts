@@ -5936,6 +5936,20 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           });
 
         nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('submittals-folder-id') && q.q.includes("name = 'Closed'"))
+          .reply(200, {
+            files: [{ id: 'submittals-closed-id', name: 'Closed', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('submittals-closed-id') && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+          .reply(200, {
+            files: [{ id: 'submittals-csi-07-id', name: '07 Thermal and Moisture Protection', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
           .post('/upload/drive/v3/files')
           .query(true)
           .reply(200, {
@@ -6158,6 +6172,27 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           .query((q) => typeof q.q === 'string' && q.q.includes('ffe-folder-id') && q.q.includes("name = '05 Submittals'"))
           .reply(200, {
             files: [{ id: 'ffe-submittals-id', name: '05 Submittals', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-submittals-id') && q.q.includes("name = 'Closed'"))
+          .reply(200, {
+            files: [{ id: 'ffe-closed-id', name: 'Closed', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-closed-id') && q.q.includes("name = 'CG'"))
+          .reply(200, {
+            files: [{ id: 'ffe-cg-id', name: 'CG', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-cg-id') && q.q.includes("name = 'CG104'"))
+          .reply(200, {
+            files: [{ id: 'ffe-cg104-id', name: 'CG104', mimeType: 'application/vnd.google-apps.folder' }],
           });
 
         nock('https://www.googleapis.com')

@@ -61,6 +61,8 @@ import {
   type DriveServicePort,
 } from './ports';
 import { HandlebarsAdapter } from '../../infrastructure/template-engine/handlebars-adapter';
+import { ActivityEngine } from './adapters/activity-engine';
+import { DriveActivityHandler } from './adapters/drive-activity-handler';
 
 
 
@@ -7055,16 +7057,19 @@ describe('Document domain', () => {
       expect(result.data.idDocument).toBe('071200-001-1');
       expect(result.data.id).toBe('071200-001-1-261102-1');
 
-      // Dispatched activities: MOVE_FILE followed by WRITE_LOG
+      // Dispatched activities: MOVE_FILE (moveOriginal) followed by WRITE_LOG (writeLog)
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
+      expect(dispatchedActivity.id).toBe('moveOriginal');
       expect(dispatchedActivity.type).toBe('MOVE_FILE');
       expect(dispatchedActivity.payload).toEqual({
         rootStorageId: 'drive-folder-root',
         parentPath: '6 Construction',
-        folderName: 'Submittals',
+        folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+        fileName: '071200-001-1 Built-up Bituminous Waterproofing - 261102 PMG',
       });
       const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      expect(writeLogActivity.id).toBe('writeLog');
       expect(writeLogActivity.type).toBe('WRITE_LOG');
       expect(writeLogActivity.payload).toEqual({});
     });
@@ -7475,16 +7480,19 @@ describe('Document domain', () => {
       expect(result.data.idDocument).toBe('AC102-A');
       expect(result.data.id).toBe('AC102-A-261102-2');
 
-      // Dispatched activities: MOVE_FILE followed by WRITE_LOG
+      // Dispatched activities: MOVE_FILE (moveOriginal) followed by WRITE_LOG (writeLog)
       expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
       const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
+      expect(dispatchedActivity.id).toBe('moveOriginal');
       expect(dispatchedActivity.type).toBe('MOVE_FILE');
       expect(dispatchedActivity.payload).toEqual({
         rootStorageId: 'drive-folder-root',
         parentPath: '3 FFE',
-        folderName: '05 Submittals',
+        folderName: '05 Submittals/Closed/AC/AC102',
+        fileName: 'AC102-A Berman Falk - 261102 BW_REF',
       });
       const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      expect(writeLogActivity.id).toBe('writeLog');
       expect(writeLogActivity.type).toBe('WRITE_LOG');
       expect(writeLogActivity.payload).toEqual({});
     });
@@ -8438,6 +8446,275 @@ describe('Document domain', () => {
         'onSubmit'
       );
       expect(commRes.success).toBe(true);
+    });
+  });
+
+  describe('SubmittalSent end-to-end workflow at DocumentService.processDocument() seam (#375)', () => {
+    const submittalArchPath = path.resolve(__dirname, '../../../assets/document-types/submittal-arch.json');
+    const submittalFfePath = path.resolve(__dirname, '../../../assets/document-types/submittal-ffe.json');
+    const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
+    const submittalFfeSchema: DocumentType = JSON.parse(fs.readFileSync(submittalFfePath, 'utf-8'));
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('executes SubmittalSent for submittal-arch moving and renaming atomically into Closed/<csiDivisionFolder> with FileLocator.parentId and logging URI', async () => {
+      const folderMap = new Map<string, { id: string; name: string; parents: string[] }>([
+        ['drive-root-1/6 Construction', { id: 'folder-6-const', name: '6 Construction', parents: ['drive-root-1'] }],
+      ]);
+      const createdFolders: Array<{ id: string; name: string }> = [];
+      let nextFolderNum = 1;
+
+      const driveService: DriveServicePort = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: '08.11.00 - Doors',
+          mimeType: 'application/pdf',
+          parents: ['inbox-folder'],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        resolveFolderPath: vi.fn().mockImplementation(async (rootId: string, segments: string[]) => {
+          const folder = folderMap.get(`${rootId}/${segments.join('/')}`);
+          if (!folder) throw new FileNotFoundError(`Missing ${segments.join('/')}`);
+          return folder;
+        }),
+        findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => {
+          const existing = createdFolders.find((f) => f.name === `${parentId}/${name}`);
+          if (existing) {
+            return { id: existing.id, name, parents: [parentId] };
+          }
+          const id = `folder-created-${nextFolderNum++}`;
+          createdFolders.push({ id, name: `${parentId}/${name}` });
+          return { id, name, parents: [parentId] };
+        }),
+        move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, moveOpts?: { newName?: string }) => ({
+          id: fileId,
+          name: moveOpts?.newName ?? '08.11.00 - Doors',
+          parents: [targetFolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        rename: vi.fn(),
+        duplicate: vi.fn(),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
+      };
+
+      let loggedUri: string | undefined;
+      const writeLogHandler = {
+        canHandle: (a: Activity) => a.type === 'WRITE_LOG',
+        handle: vi.fn().mockImplementation(async (_a: Activity, ctx?: ActivityExecutionContext) => {
+          loggedUri = ctx?.files?.[0]?.uri;
+          return { success: true };
+        }),
+      };
+
+      const engine = new ActivityEngine([
+        new DriveActivityHandler(driveService),
+        writeLogHandler,
+      ]);
+
+      const optionTablePort: DocumentOptionTablePort = {
+        resolveOptionTables: vi.fn().mockResolvedValue({
+          csiDivisions: {
+            status: 'ready',
+            tuples: [{ key: '08', folder: '08 Openings' }],
+          },
+        }),
+      };
+
+      const registry = createCustomRegistry([submittalArchSchema]);
+      const compiled = createMockCompiledRegistry(registry);
+      await compiled.initialize();
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        compiled,
+        {
+          validateExistence: vi.fn().mockResolvedValue({
+            status: { isValid: true, status: 'valid', matchedTuple: { key: 'Open' } },
+            action: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'NOC', name: 'No Exceptions Taken', suffix: '_NOC', order: '3' },
+            },
+            contact: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'PMG', name: 'Pavarini McGovern' },
+            },
+          }),
+        },
+        undefined,
+        undefined,
+        driveService,
+        false,
+        optionTablePort
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          space: {
+            id: 'proj-1',
+            typeId: 'projects',
+            name: '123 Main',
+            abstractStorageId: 'drive-root-1',
+          },
+          sourceFiles: [{ id: 'arch-file-375' }],
+          data: {
+            status: 'Open',
+            section: '081100',
+            number: '001',
+            revision: '0',
+            title: 'Hollow Metal Doors',
+            date: '261104',
+            contact: 'PMG',
+            action: 'NOC',
+          },
+        },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(1, 'folder-6-const', 'Submittals');
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(2, 'folder-created-1', 'Closed');
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(3, 'folder-created-2', '08 Openings');
+      expect(driveService.move).toHaveBeenCalledWith('arch-file-375', 'folder-created-3', {
+        newName: '081100-001-0 Hollow Metal Doors - 261104 PMG_NOC.pdf',
+      });
+      expect(result.outputs[0]?.files).toEqual([
+        {
+          id: 'arch-file-375',
+          name: '081100-001-0 Hollow Metal Doors - 261104 PMG_NOC.pdf',
+          parentId: 'folder-created-3',
+          parentName: '08 Openings',
+          mimeType: 'application/pdf',
+          uri: 'https://drive.google.com/file/d/arch-file-375/view',
+        },
+      ]);
+      expect(loggedUri).toBe('https://drive.google.com/file/d/arch-file-375/view');
+    });
+
+    it('executes SubmittalSent for submittal-ffe moving into Closed/<specTagGroup>/<specTag.key> without MIME suffix on Google Docs', async () => {
+      const driveService: DriveServicePort = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: 'Original FF&E Submittal',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['inbox-folder'],
+          webViewLink: `https://docs.google.com/document/d/${fileId}/edit`,
+        })),
+        resolveFolderPath: vi.fn().mockResolvedValue({
+          id: 'folder-3-ffe',
+          name: '3 FFE',
+          parents: ['drive-root-1'],
+        }),
+        findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => ({
+          id: `ffe-${name}`,
+          name,
+          parents: [parentId],
+        })),
+        move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, moveOpts?: { newName?: string }) => ({
+          id: fileId,
+          name: moveOpts?.newName ?? 'Original FF&E Submittal',
+          parents: [targetFolderId],
+          mimeType: 'application/vnd.google-apps.document',
+          webViewLink: `https://docs.google.com/document/d/${fileId}/edit`,
+        })),
+        rename: vi.fn(),
+        duplicate: vi.fn(),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
+      };
+
+      const writeLogHandler = {
+        canHandle: (a: Activity) => a.type === 'WRITE_LOG',
+        handle: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const engine = new ActivityEngine([
+        new DriveActivityHandler(driveService),
+        writeLogHandler,
+      ]);
+
+      const registry = createCustomRegistry([submittalFfeSchema]);
+      const compiled = createMockCompiledRegistry(registry);
+      await compiled.initialize();
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        compiled,
+        {
+          validateExistence: vi.fn().mockResolvedValue({
+            status: { isValid: true, status: 'valid', matchedTuple: { key: 'Open' } },
+            specTag: { isValid: true, status: 'valid', matchedTuple: { key: 'ac102', name: 'HOOK' } },
+            vendor: { isValid: true, status: 'valid', matchedTuple: { key: 'BM', name: 'Berman Falk' } },
+            contact: { isValid: true, status: 'valid', matchedTuple: { key: 'BW', name: 'Benjamin West' } },
+            action: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'REF', name: 'Referred', suffix: '_REF', order: '2' },
+            },
+          }),
+        },
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          space: {
+            id: 'proj-1',
+            typeId: 'projects',
+            name: '123 Main',
+            abstractStorageId: 'drive-root-1',
+          },
+          sourceFiles: [{ id: 'ffe-doc-375' }],
+          data: {
+            status: 'Open',
+            specTag: 'ac102',
+            revision: 'A',
+            specTitle: 'HOOK',
+            vendor: 'BM',
+            date: '261104',
+            contact: 'BW',
+            action: 'REF',
+          },
+        },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(1, 'folder-3-ffe', '05 Submittals');
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(2, 'ffe-05 Submittals', 'Closed');
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(3, 'ffe-Closed', 'AC');
+      expect(driveService.findOrCreateFolder).toHaveBeenNthCalledWith(4, 'ffe-AC', 'ac102');
+      expect(driveService.move).toHaveBeenCalledWith('ffe-doc-375', 'ffe-ac102', {
+        newName: 'ac102-A Berman Falk - 261104 BW_REF',
+      });
+      expect(result.outputs[0]?.files?.[0]).toEqual({
+        id: 'ffe-doc-375',
+        name: 'ac102-A Berman Falk - 261104 BW_REF',
+        parentId: 'ffe-ac102',
+        parentName: 'ac102',
+        mimeType: 'application/vnd.google-apps.document',
+        uri: 'https://docs.google.com/document/d/ffe-doc-375/edit',
+      });
     });
   });
 });

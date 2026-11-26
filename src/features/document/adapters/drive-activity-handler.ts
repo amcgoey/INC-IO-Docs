@@ -29,6 +29,90 @@ export interface DriveActivityHandlerOptions {
   isFileSourceEmailAttachments?: boolean | undefined;
 }
 
+const MIME_TYPE_EXTENSION_MAP: Readonly<Record<string, string>> = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'text/plain': '.txt',
+  'text/csv': '.csv',
+  'text/html': '.html',
+  'application/rtf': '.rtf',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/tiff': '.tiff',
+  'image/webp': '.webp',
+  'image/svg+xml': '.svg',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+  'application/acad': '.dwg',
+  'application/dwg': '.dwg',
+  'image/vnd.dwg': '.dwg',
+  'application/dxf': '.dxf',
+  'image/vnd.dxf': '.dxf',
+  'message/rfc822': '.eml',
+  'application/json': '.json',
+  'application/xml': '.xml',
+  'text/xml': '.xml',
+};
+
+function extractValidFileExtension(fileName: string | undefined): string | undefined {
+  if (typeof fileName !== 'string') {
+    return undefined;
+  }
+  const trimmed = fileName.trim();
+  const lastDot = trimmed.lastIndexOf('.');
+  if (lastDot <= 0 || lastDot === trimmed.length - 1) {
+    return undefined;
+  }
+  const basePart = trimmed.slice(0, lastDot);
+  if (basePart.replace(/\./g, '').trim().length === 0) {
+    return undefined;
+  }
+  const extPart = trimmed.slice(lastDot + 1);
+  if (/\s/.test(extPart) || !/^[A-Za-z0-9]{1,15}$/.test(extPart) || !/[A-Za-z]/.test(extPart)) {
+    return undefined;
+  }
+  return `.${extPart}`;
+}
+
+function getMimeFallbackExtension(mimeType: string | undefined): string | undefined {
+  if (typeof mimeType !== 'string') {
+    return undefined;
+  }
+  const normalized = mimeType.split(';')[0].trim().toLowerCase();
+  if (normalized.length === 0 || normalized.startsWith('application/vnd.google-apps.')) {
+    return undefined;
+  }
+  return MIME_TYPE_EXTENSION_MAP[normalized];
+}
+
+/**
+ * Resolves a renamed target filename while preserving a valid source extension
+ * (or falling back to a non-Google-native MIME extension) without doubling extensions.
+ */
+function resolveExtensionPreservingFileName(
+  requestedBaseName: string,
+  sourceName: string | undefined,
+  mimeType: string | undefined
+): string {
+  const trimmedTarget = requestedBaseName.trim();
+  const resolvedExtension =
+    extractValidFileExtension(sourceName) ?? getMimeFallbackExtension(mimeType);
+  if (!resolvedExtension) {
+    return trimmedTarget;
+  }
+  if (trimmedTarget.toLowerCase().endsWith(resolvedExtension.toLowerCase())) {
+    return trimmedTarget;
+  }
+  const cleanTarget = trimmedTarget.replace(/\.+$/, '');
+  return `${cleanTarget}${resolvedExtension}`;
+}
+
 export function parsePathSegments(path: string): string[] {
   if (typeof path !== 'string') {
     throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
@@ -155,11 +239,15 @@ export class DriveActivityHandler implements ActivityHandler {
     );
   }
 
-  private extractSearchQuery(payload: Record<string, unknown>): DriveSearchQuery | undefined {
+  private extractSearchQuery(
+    payload: Record<string, unknown>,
+    options?: { includeFileName?: boolean }
+  ): DriveSearchQuery | undefined {
+    const includeFileName = options?.includeFileName ?? true;
     let targetName =
       typeof payload.targetName === 'string'
         ? payload.targetName
-        : typeof payload.fileName === 'string'
+        : includeFileName && typeof payload.fileName === 'string'
           ? payload.fileName
           : typeof payload.name === 'string'
             ? payload.name
@@ -310,7 +398,9 @@ export class DriveActivityHandler implements ActivityHandler {
       const fileLocator: FileLocator = {
         id: matchedFile.id,
         name: matchedFile.name,
-        ...(matchedFile.parents?.[0] ? { parentName: matchedFile.parents[0] } : {}),
+        ...(matchedFile.parents?.[0]
+          ? { parentId: matchedFile.parents[0], parentName: matchedFile.parents[0] }
+          : {}),
         ...(matchedFile.mimeType ? { mimeType: matchedFile.mimeType } : {}),
         ...(matchedFile.webViewLink ? { uri: matchedFile.webViewLink } : {}),
       };
@@ -358,7 +448,7 @@ export class DriveActivityHandler implements ActivityHandler {
     } else if (payloadFileId) {
       targetSourceFiles = [{ id: payloadFileId }];
     } else {
-      const searchQuery = this.extractSearchQuery(payload);
+      const searchQuery = this.extractSearchQuery(payload, { includeFileName: false });
       if (searchQuery) {
         const results = await this.driveService.searchFiles(searchQuery);
         if (results.length === 0) {
@@ -399,6 +489,18 @@ export class DriveActivityHandler implements ActivityHandler {
       parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
+    let requestedFileName: string | undefined;
+    if (payload.fileName !== undefined) {
+      if (typeof payload.fileName !== 'string' || payload.fileName.trim().length === 0) {
+        throw new DriveServiceError(
+          'DriveActivityHandler: MOVE_FILE payload.fileName must be a non-empty string'
+        );
+      }
+      requestedFileName = payload.fileName.trim();
+    }
+
+    const fileMetadataCache = new Map<string, DriveFileResult>();
+
     let startingId: string;
     if (rootStorageId) {
       startingId = rootStorageId;
@@ -418,9 +520,9 @@ export class DriveActivityHandler implements ActivityHandler {
         'DriveActivityHandler: Cannot create destination folder for unhydrated email item because rootStorageId is missing or unresolved in activity payload'
       );
     } else {
-      startingId =
-        (await this.driveService.getFile(targetSourceFiles[0].id)).parents?.[0] ??
-        'root';
+      const firstFileMeta = await this.driveService.getFile(targetSourceFiles[0].id);
+      fileMetadataCache.set(targetSourceFiles[0].id, firstFileMeta);
+      startingId = firstFileMeta.parents?.[0] ?? 'root';
     }
     const baseFolderId =
       parentPathSegments.length > 0
@@ -467,14 +569,23 @@ export class DriveActivityHandler implements ActivityHandler {
     for (const sourceFile of targetSourceFiles) {
       try {
         if (sourceFile.content instanceof Uint8Array) {
+          const resolvedName =
+            requestedFileName !== undefined
+              ? resolveExtensionPreservingFileName(
+                  requestedFileName,
+                  sourceFile.name,
+                  sourceFile.mimeType
+                )
+              : sourceFile.name || sourceFile.id;
           const file = await this.driveService.saveBuffer(sourceFile.content, {
             action: 'create',
             targetFolderId: leafFolder.id,
-            name: sourceFile.name || sourceFile.id,
+            name: resolvedName,
             ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
           });
           const fileLocator = this.createFileLocator(file, leafFolder.name, {
             fallbackMimeType: sourceFile.mimeType,
+            fallbackParentId: leafFolder.id,
             defaultEmptyUri: true,
           });
           movedFiles.push(fileLocator);
@@ -495,11 +606,30 @@ export class DriveActivityHandler implements ActivityHandler {
             };
           }
 
-          const movedFile = await this.driveService.move(sourceFile.id, leafFolder.id);
+          let newName: string | undefined;
+          if (requestedFileName !== undefined) {
+            let sourceName = sourceFile.name;
+            let sourceMimeType = sourceFile.mimeType;
+            if (sourceName === undefined || sourceMimeType === undefined) {
+              const cachedMeta = await this.getCachedFileMetadata(sourceFile.id, fileMetadataCache);
+              sourceName = sourceName ?? cachedMeta.name;
+              sourceMimeType = sourceMimeType ?? cachedMeta.mimeType;
+            }
+            newName = resolveExtensionPreservingFileName(
+              requestedFileName,
+              sourceName,
+              sourceMimeType
+            );
+          }
+
+          const movedFile =
+            newName !== undefined
+              ? await this.driveService.move(sourceFile.id, leafFolder.id, { newName })
+              : await this.driveService.move(sourceFile.id, leafFolder.id);
 
           let uri = movedFile.webViewLink;
           let mimeType = movedFile.mimeType;
-          let name = movedFile.name;
+          let name = movedFile.name || newName;
 
           if (!uri || !name) {
             try {
@@ -513,9 +643,18 @@ export class DriveActivityHandler implements ActivityHandler {
           }
 
           const fileLocator = this.createFileLocator(
-            { id: movedFile.id, name, mimeType, webViewLink: uri },
+            {
+              id: movedFile.id,
+              name,
+              parents: movedFile.parents,
+              mimeType,
+              webViewLink: uri,
+            },
             leafFolder.name,
-            { fallbackName: sourceFile.name }
+            {
+              fallbackName: newName ?? sourceFile.name,
+              fallbackParentId: leafFolder.id,
+            }
           );
           movedFiles.push(fileLocator);
         }
@@ -551,12 +690,26 @@ export class DriveActivityHandler implements ActivityHandler {
     };
   }
 
+  private async getCachedFileMetadata(
+    fileId: string,
+    cache: Map<string, DriveFileResult>
+  ): Promise<DriveFileResult> {
+    const existing = cache.get(fileId);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const fetched = await this.driveService.getFile(fileId);
+    cache.set(fileId, fetched);
+    return fetched;
+  }
+
   private createFileLocator(
     file:
       | DriveFile
       | {
           id: string;
           name?: string | undefined;
+          parents?: string[] | undefined;
           mimeType?: string | undefined;
           webViewLink?: string | undefined;
         },
@@ -564,15 +717,18 @@ export class DriveActivityHandler implements ActivityHandler {
     options?: {
       fallbackMimeType?: string | undefined;
       fallbackName?: string | undefined;
+      fallbackParentId?: string | undefined;
       defaultEmptyUri?: boolean | undefined;
     }
   ): FileLocator {
     const resolvedMimeType = file.mimeType ?? options?.fallbackMimeType;
     const resolvedName = file.name || options?.fallbackName || '';
+    const resolvedParentId = file.parents?.[0] ?? options?.fallbackParentId;
     const resolvedUri = file.webViewLink ?? (options?.defaultEmptyUri ? '' : undefined);
     return {
       id: file.id,
       name: resolvedName,
+      ...(resolvedParentId !== undefined ? { parentId: resolvedParentId } : {}),
       parentName,
       ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
       ...(resolvedUri !== undefined ? { uri: resolvedUri } : {}),
