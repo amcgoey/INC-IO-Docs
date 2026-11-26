@@ -100,6 +100,7 @@ export const UiProcessRenderResultSchema = Type.Object({
   selectionState: Type.Optional(Type.Union([UiSelectionStateSchema, Type.Undefined()])),
   formData: Type.Optional(Type.Union([Type.Record(Type.String(), Type.Unknown()), Type.Undefined()])),
   hiddenFields: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  lockedFields: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
@@ -323,6 +324,15 @@ export type UiProcessExtractedFieldsResult = Static<typeof UiProcessExtractedFie
 export interface UiProcessSourceParserPort {
   inferRouting(context: UiProcessSourceContext): Promise<UiProcessInferredRoutingResult>;
   extractFields?(request: UiProcessExtractFieldsRequest): Promise<UiProcessExtractedFieldsResult>;
+}
+
+export interface UiProcessLockedFieldsPort {
+  deriveLockedFields(params: {
+    documentTypeKey: string;
+    space?: UiProcessDocumentSpaceDto | undefined;
+    selectedLogId?: string | undefined;
+    formData: Readonly<Record<string, unknown>>;
+  }): Promise<Record<string, string>>;
 }
 
 // --- Driving Port ---

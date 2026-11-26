@@ -1183,5 +1183,72 @@ describe('Document Info Block', () => {
       expect(getDocumentInfoWidgetName('contact', '')).toBe('contact');
     });
   });
+
+  describe('lockedFields LinkedField rendering', () => {
+    const ffeSchema: AbstractDataSchema = {
+      fields: [
+        {
+          key: 'specTag',
+          type: 'string',
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        {
+          key: 'specTitle',
+          type: 'string',
+          linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+        },
+      ],
+    };
+    const ffeUiSchema: UiSchema = {
+      layout: ['specTag', 'specTitle'],
+      fields: {
+        specTag: { widget: 'textInput', label: 'Spec Tag', onChange: true },
+        specTitle: { widget: 'textInput', label: 'Spec Title' },
+      },
+    };
+
+    it('renders LinkedField as read-only decoratedText (label + derived value) when lockedFields provides a non-blank value', () => {
+      const section = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'AC102' },
+        lockedFields: { specTitle: 'HOOK' },
+      });
+
+      expect(Value.Check(UiViewSectionSchema, section)).toBe(true);
+      expect(section.widgets[0].textInput?.name).toBe('specTag_submittal-ffe');
+      expect(section.widgets[1]).toEqual({
+        decoratedText: {
+          topLabel: 'Spec Title',
+          text: 'HOOK',
+          wrapText: true,
+        },
+      });
+    });
+
+    it('renders LinkedField as editable textInput when lockedFields omits the field or has a blank value', () => {
+      const unlockedSection = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'XX999', specTitle: 'Custom Title' },
+        lockedFields: {},
+      });
+      expect(unlockedSection.widgets[1].textInput).toMatchObject({
+        name: 'specTitle_submittal-ffe',
+        label: 'Spec Title',
+        value: 'Custom Title',
+      });
+      expect(unlockedSection.widgets[1].decoratedText).toBeUndefined();
+
+      const blankLockedSection = buildDocumentInfoSection(ffeSchema, ffeUiSchema, {
+        documentTypeKey: 'submittal-ffe',
+        formData: { specTag: 'BLANK1' },
+        lockedFields: { specTitle: '   ' },
+      });
+      expect(blankLockedSection.widgets[1].textInput).toMatchObject({
+        name: 'specTitle_submittal-ffe',
+        label: 'Spec Title',
+      });
+      expect(blankLockedSection.widgets[1].decoratedText).toBeUndefined();
+    });
+  });
 });
 

@@ -1324,5 +1324,32 @@ describe('SchemaDrivenUiService (Guarded Read Domain)', () => {
       ).rejects.toThrow(/UiSchema not found/i);
       expect(uiContextQuery.queryContext).not.toHaveBeenCalled();
     });
+
+    it('accepts explicit lockedFields in GenerateViewRequest and passes it through to adapter.composeView', async () => {
+      const manifestPort = createMockManifestPort();
+      let capturedContext: UiViewAdapterContext | undefined;
+      const adapter: UiViewSchemaAdapterPort = {
+        viewId: 'locked-view',
+        composeView: vi.fn(async (ctx) => {
+          capturedContext = ctx;
+          return {
+            id: 'locked-view',
+            sections: [
+              {
+                widgets: [{ decoratedText: { topLabel: 'Spec Title', text: ctx.lockedFields?.specTitle ?? '' } }],
+              },
+            ],
+          };
+        }),
+      };
+
+      const service = new SchemaDrivenUiService(manifestPort, [adapter]);
+      await service.generateView({
+        viewId: 'locked-view',
+        lockedFields: { specTitle: 'HOOK' },
+      });
+
+      expect(capturedContext?.lockedFields).toEqual({ specTitle: 'HOOK' });
+    });
   });
 });

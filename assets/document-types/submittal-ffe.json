@@ -112,43 +112,6 @@
         "required": false
       }
     ],
-    "options": {
-      "specs": [
-        { "key": "AC102", "name": "HOOK" },
-        { "key": "CG104", "name": "BED - KING" },
-        { "key": "CG126", "name": "BED - DOUBLE QUEEN" },
-        { "key": "CG138", "name": "CREDENZA" },
-        { "key": "CG138M", "name": "CREDENZA - MIRRORED" },
-        { "key": "CP112", "name": "CARPET - CORRIDOR" },
-        { "key": "CP119", "name": "CARPET" },
-        { "key": "FB127", "name": "FABRIC - LEATHER" },
-        { "key": "FB132", "name": "FABRIC - WOVEN" },
-        { "key": "FB132B", "name": "FABRIC - WOVEN" },
-        { "key": "FB135", "name": "FABRIC - LEATHER" },
-        { "key": "FB141", "name": "FABRIC - WOVEN" },
-        { "key": "FB149", "name": "FABRIC - LEATHER" },
-        { "key": "FB156", "name": "FABRIC - LEATHER" },
-        { "key": "FB158", "name": "FABRIC - WOVEN" },
-        { "key": "FB174", "name": "FABRIC - BLACKOUT" },
-        { "key": "FB198", "name": "FABRIC - SHEER" },
-        { "key": "LT108", "name": "SCONCE" },
-        { "key": "LT125", "name": "TABLE LAMP" },
-        { "key": "LT134", "name": "SCONCE" },
-        { "key": "LT136", "name": "SCONCE - HEADBOARD" },
-        { "key": "LT150", "name": "PENDANT" },
-        { "key": "LT159A", "name": "SCONCE - CORRIDOR" },
-        { "key": "LT159B", "name": "SCONCE - CORRIDOR" },
-        { "key": "LT162", "name": "PENDANT" },
-        { "key": "MI132", "name": "MIRROR - VANITY" },
-        { "key": "MI166", "name": "MIRROR - FULL LENGTH" },
-        { "key": "SE145A", "name": "CHAISE" },
-        { "key": "SE145B", "name": "CHAISE - OPEN BACK" },
-        { "key": "SE145C", "name": "CHAISE - HYBRID" },
-        { "key": "SE167", "name": "CHAISE - SMALL" },
-        { "key": "TA139", "name": "TABLE - WORK" },
-        { "key": "TA139B", "name": "TABLE - WORK - SMALL" }
-      ]
-    },
     "optionSources": {
       "statuses": {
         "provider": "document_log",
@@ -163,6 +126,10 @@
         "properties": ["key", "name"]
       },
       "vendors": {
+        "provider": "document_log",
+        "properties": ["key", "name"]
+      },
+      "specs": {
         "provider": "document_log",
         "properties": ["key", "name"]
       }
@@ -358,6 +325,16 @@
         "columns": {
           "Vendor": "key",
           "Name": "name"
+        }
+      },
+      "specs": {
+        "sheetName": "_Config Submittal FF&E",
+        "rangeName": "Options_Submittal_FFE_Specs",
+        "validationRangeName": "Validation_Submittal_FFE_Specs",
+        "endMarker": "---",
+        "columns": {
+          "Spec Tag": "key",
+          "Spec Title": "name"
         }
       }
     }

@@ -18,6 +18,7 @@ import {
   type UiProcessGmailPort,
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
+  type UiProcessLockedFieldsPort,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -296,6 +297,10 @@ export interface UiProcessManagerWiringOptions {
   pdfProcessor?: PdfProcessor | undefined;
   sourceParser?: UiProcessSourceParserPort | undefined;
   createSourceParser?: ((context: WorkspaceExecutionContext) => UiProcessSourceParserPort | Promise<UiProcessSourceParserPort>) | undefined;
+  lockedFieldsResolver?: UiProcessLockedFieldsPort | undefined;
+  createLockedFieldsResolver?:
+    | ((context: WorkspaceExecutionContext) => UiProcessLockedFieldsPort | Promise<UiProcessLockedFieldsPort>)
+    | undefined;
   getLookupOptionsInvalidator?:
     | ((context: WorkspaceExecutionContext) => { invalidate(scope?: { spaceId?: string | undefined }): void })
     | undefined;
@@ -361,6 +366,7 @@ export function createUiProcessRequestWrapper(
       ...(intent.statusMessages !== undefined ? { statusMessages: intent.statusMessages } : {}),
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
       ...(intent.hiddenFields !== undefined ? { hiddenFields: intent.hiddenFields } : {}),
+      ...(intent.lockedFields !== undefined ? { lockedFields: intent.lockedFields } : {}),
       ...(intent.selectionState !== undefined
         ? {
             selectionState: {
@@ -586,6 +592,9 @@ export function createUiProcessManagerWiring(
     formEvaluator,
     gmailPort,
     ...(options.sourceParser !== undefined ? { sourceParser: options.sourceParser } : {}),
+    ...(options.lockedFieldsResolver !== undefined
+      ? { lockedFieldsResolver: options.lockedFieldsResolver }
+      : {}),
   });
 
   const orchestratorResolver: UiProcessOrchestratorResolver = async (
@@ -602,6 +611,7 @@ export function createUiProcessManagerWiring(
       !options.createDocumentSpaceService &&
       !options.createDocumentService &&
       !options.createSourceParser &&
+      !options.createLockedFieldsResolver &&
       !options.createDocumentLogPort &&
       !options.getLookupOptionsInvalidator &&
       !token
@@ -684,6 +694,11 @@ export function createUiProcessManagerWiring(
       ? options.getLookupOptionsInvalidator(context)
       : undefined;
 
+    const reqLockedFieldsResolver: UiProcessLockedFieldsPort | undefined =
+      options.createLockedFieldsResolver
+        ? await options.createLockedFieldsResolver(context)
+        : options.lockedFieldsResolver;
+
     return new WorkspaceAddonAdapter({
       spaceProvider: reqSpaceProvider,
       configProvider,
@@ -693,6 +708,9 @@ export function createUiProcessManagerWiring(
       formEvaluator,
       gmailPort: reqGmailPort,
       ...(reqSourceParser !== undefined ? { sourceParser: reqSourceParser } : {}),
+      ...(reqLockedFieldsResolver !== undefined
+        ? { lockedFieldsResolver: reqLockedFieldsResolver }
+        : {}),
       ...(lookupInvalidator !== undefined
         ? { onLogCopied: (spaceId: string) => lookupInvalidator.invalidate({ spaceId }) }
         : {}),

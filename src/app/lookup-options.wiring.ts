@@ -25,6 +25,7 @@ import type {
   OptionsFetcherPort,
 } from '../features/schema-driven-ui/ports';
 import type { CanonicalOptionsProviderPort } from '../features/source-parser/ports';
+import type { UiProcessLockedFieldsPort } from '../features/ui-process-manager/ports';
 import type { AppConfigurationProviderPort } from '../features/document/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
@@ -54,6 +55,7 @@ export interface LookupOptionsWiring {
   createOptionsFetcher(context: WorkspaceExecutionContext): OptionsFetcherPort;
   createDynamicValidator(context: WorkspaceExecutionContext): DocumentDynamicValidationPort;
   createCanonicalOptionsProvider(context: WorkspaceExecutionContext): CanonicalOptionsProviderPort;
+  createLockedFieldsResolver(context: WorkspaceExecutionContext): UiProcessLockedFieldsPort;
 }
 
 function createLookupManifestPortFromRegistry(
@@ -370,6 +372,38 @@ export function createCanonicalOptionsProviderAdapter(
   };
 }
 
+export function createUiProcessLockedFieldsAdapter(
+  lookupOptions: LookupOptionsPort,
+  resolveSpace?: SpaceLookupResolver
+): UiProcessLockedFieldsPort {
+  return {
+    deriveLockedFields: async ({ documentTypeKey, space, selectedLogId, formData }) => {
+      const explicitSpace: LookupSpaceContext | undefined = space
+        ? {
+            id: space.id,
+            typeId: space.typeId,
+            name: space.name,
+            abstractStorageId: space.abstractStorageId,
+          }
+        : undefined;
+      const resolvedSpace = await resolveLookupSpace(
+        typeof formData.spaceId === 'string' ? formData.spaceId : undefined,
+        explicitSpace,
+        formData,
+        resolveSpace
+      );
+      return lookupOptions.deriveLockedFields(
+        {
+          ...(resolvedSpace !== undefined ? { space: resolvedSpace } : {}),
+          documentTypeKey,
+          ...(selectedLogId !== undefined ? { selectedLogId } : {}),
+        },
+        formData
+      );
+    },
+  };
+}
+
 export function createLookupOptionsService(
   options: LookupOptionsWiringOptions
 ): LookupOptionsPort {
@@ -462,5 +496,7 @@ export function createLookupOptionsWiring(
       createDocumentDynamicValidationAdapter(getPerRequestLookupOptions(context)),
     createCanonicalOptionsProvider: (context) =>
       createCanonicalOptionsProviderAdapter(getPerRequestLookupOptions(context)),
+    createLockedFieldsResolver: (context) =>
+      createUiProcessLockedFieldsAdapter(getPerRequestLookupOptions(context)),
   };
 }

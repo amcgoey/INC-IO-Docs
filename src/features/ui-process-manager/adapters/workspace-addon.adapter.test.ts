@@ -6885,6 +6885,116 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(result.formData?.title).toBe('Gmail Invoice');
     });
   });
+
+  describe('lockedFieldsResolver CQRS integration', () => {
+    it('computes lockedFields on initial render, refreshes on onFormChange and copyDocumentLog, and falls back to unlocked when resolver throws', async () => {
+      const deriveLockedFields = vi
+        .fn()
+        .mockResolvedValueOnce({ specTitle: 'HOOK' })
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('Sheets error'))
+        .mockResolvedValueOnce({ specTitle: 'COPIED LOG TITLE' });
+
+      const documentLogPort: UiProcessDocumentLogPort = {
+        requiresDocumentLog: vi.fn().mockResolvedValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn().mockResolvedValue({
+          created: true,
+          candidate: { id: 'log-new', name: 'Project Main Document Log' },
+          folderPath: '1 Admin',
+        }),
+      };
+
+      const ffeSpaceProvider: UiProcessSpaceProviderPort = {
+        getAllTypes: vi.fn().mockReturnValue([
+          {
+            id: 'projects',
+            displayName: 'Projects',
+            spaceSchema: { allowedDocumentTypes: ['submittal-ffe'] },
+          },
+        ]),
+        getCollection: vi.fn().mockResolvedValue({
+          spaces: [{ id: 'proj-main-1', name: 'Project Main' }],
+        }),
+      };
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: ffeSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: mockManifestPort,
+        documentLogPort,
+        lockedFieldsResolver: { deriveLockedFields },
+      });
+
+      const initialRes = (await adapter.processUiEvent({
+        actionName: 'onDocumentTypeChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-ffe',
+          'specTag_submittal-ffe': 'AC102',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(initialRes.lockedFields).toEqual({ specTitle: 'HOOK' });
+      expect(deriveLockedFields).toHaveBeenCalledWith({
+        documentTypeKey: 'submittal-ffe',
+        space: {
+          id: 'proj-main-1',
+          name: 'Project Main',
+          typeId: 'projects',
+          abstractStorageId: 'proj-main-1',
+        },
+        formData: expect.objectContaining({ specTag: 'AC102' }),
+      });
+
+      const customChangeRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-ffe',
+          SelectDocumentLog: 'log-2',
+          'specTag_submittal-ffe': 'XX999',
+        },
+      })) as UiProcessRenderResult;
+
+      expect(customChangeRes.lockedFields).toBeUndefined();
+      expect(deriveLockedFields).toHaveBeenNthCalledWith(2, {
+        documentTypeKey: 'submittal-ffe',
+        space: {
+          id: 'proj-main-1',
+          name: 'Project Main',
+          typeId: 'projects',
+          abstractStorageId: 'proj-main-1',
+        },
+        selectedLogId: 'log-2',
+        formData: expect.objectContaining({ specTag: 'XX999' }),
+      });
+
+      const errorRes = (await adapter.processUiEvent({
+        actionName: 'onFormChange',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-ffe',
+          'specTag_submittal-ffe': 'AC102',
+        },
+      })) as UiProcessRenderResult;
+      expect(errorRes.lockedFields).toBeUndefined();
+
+      const copyRes = (await adapter.processUiEvent({
+        actionName: 'copyDocumentLog',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-ffe',
+          'specTag_submittal-ffe': 'AC102',
+        },
+      })) as UiProcessRenderResult;
+      expect(copyRes.lockedFields).toEqual({ specTitle: 'COPIED LOG TITLE' });
+    });
+  });
 });
 
 

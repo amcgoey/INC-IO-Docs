@@ -273,6 +273,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     ['---', '', ''],
   ];
 
+  const CONFIG_FFE_SPECS = [
+    ['Spec Tag', 'Spec Title'],
+    ['AC102', 'HOOK'],
+    ['CG104', 'BED - KING'],
+    ['FB127', 'FABRIC - LEATHER'],
+    ['LT159A', 'SCONCE - CORRIDOR'],
+    ['LT159B', 'SCONCE - CORRIDOR'],
+    ['---', ''],
+  ];
+
   const CONFIG_ARCH_NAMED_RANGES = [
     {
       namedRangeId: 'nr-arch-statuses',
@@ -337,6 +347,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       name: 'Validation_Submittal_FFE_Vendors',
       range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_VENDORS.length - 1, startColumnIndex: 11, endColumnIndex: 12 },
     },
+    {
+      namedRangeId: 'nr-ffe-specs',
+      name: 'Options_Submittal_FFE_Specs',
+      range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_SPECS.length, startColumnIndex: 15, endColumnIndex: 17 },
+    },
+    {
+      namedRangeId: 'nr-ffe-specs-val',
+      name: 'Validation_Submittal_FFE_Specs',
+      range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_SPECS.length - 1, startColumnIndex: 15, endColumnIndex: 16 },
+    },
   ];
 
   function buildSubmittalArchOptionBatchGetReply(uri: string) {
@@ -353,6 +373,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
           if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACTS };
           if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDORS };
+          if (range.includes('P1:')) return { range, values: CONFIG_FFE_SPECS };
         }
         return { range, values: [] };
       }),
@@ -6071,9 +6092,18 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(specTagWidget?.value).toBe('CG104');
 
         const specTitleWidget = docInfoSec?.widgets.find(
-          (w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
-        )?.textInput;
-        expect(specTitleWidget?.value).toBe('BED - KING'); // auto-derived LinkedField!
+          (w) => w.decoratedText?.topLabel === 'Spec Title'
+        )?.decoratedText;
+        expect(specTitleWidget).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        }); // auto-derived locked LinkedField!
+        expect(
+          docInfoSec?.widgets.find(
+            (w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+          )
+        ).toBeUndefined();
 
         const revisionWidget = docInfoSec?.widgets.find(
           (w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe')
@@ -6386,8 +6416,15 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
         ).toBe('CG104');
         expect(
-          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
-        ).toBe('BED - KING');
+          docInfoSec?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('A');
@@ -6439,8 +6476,15 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
         ).toBe('CG104');
         expect(
-          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
-        ).toBe('BED - KING');
+          docInfoSec?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(
           docInfoSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('A');
@@ -7078,8 +7122,15 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
         ).toBe('CG104');
         expect(
-          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
-        ).toBe('BED - KING');
+          docSec1?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(
           docSec1?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('1');
@@ -7109,8 +7160,15 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
         ).toBe('LT159A');
         expect(
-          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
-        ).toBe('SCONCE - CORRIDOR');
+          docSec2?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'SCONCE - CORRIDOR',
+          wrapText: true,
+        });
+        expect(
+          docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(
           docSec2?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('0');
@@ -7205,8 +7263,15 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTag', 'submittal-ffe'))?.textInput?.value
         ).toBe('CG104');
         expect(
-          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))?.textInput?.value
-        ).toBe('BED - KING');
+          docSec?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(
           docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('revision', 'submittal-ffe'))?.textInput?.value
         ).toBe('1');
@@ -7642,7 +7707,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(getText('contact')).toBe('BW');
         expect(getText('date')).toBe('261117');
         expect(getText('specTag')).toBe('CG104');
-        expect(getText('specTitle')).toBe('BED - KING');
+        expect(
+          docSec?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          docSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(getText('revision')).toBe('B');
         expect(getText('vendor')).toBe('BM');
         expect(
@@ -8146,7 +8220,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         expect(getFfeText('contact')).toBe('BW');
         expect(getFfeText('date')).toBe('261117');
         expect(getFfeText('specTag')).toBe('CG104');
-        expect(getFfeText('specTitle')).toBe('BED - KING');
+        expect(
+          ffeSec?.widgets.find((w) => w.decoratedText?.topLabel === 'Spec Title')?.decoratedText
+        ).toEqual({
+          topLabel: 'Spec Title',
+          text: 'BED - KING',
+          wrapText: true,
+        });
+        expect(
+          ffeSec?.widgets.find((w) => w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe'))
+        ).toBeUndefined();
         expect(getFfeText('revision')).toBe('B');
         expect(getFfeText('vendor')).toBe('BM');
         expect(

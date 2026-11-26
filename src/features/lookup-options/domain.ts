@@ -317,6 +317,56 @@ export class LookupOptionsService implements LookupOptionsPort {
     return results;
   }
 
+  /**
+   * Derives locked `LinkedField` display values for fields whose sibling `LookupField`
+   * matches a ready option tuple with a non-blank `sourceProperty` value.
+   */
+  async deriveLockedFields(
+    context: LookupOptionsCallContext,
+    formData: Readonly<Record<string, unknown>>
+  ): Promise<Record<string, string>> {
+    const schema = await this.getSchema(context.documentTypeKey);
+    if (!schema) {
+      return {};
+    }
+
+    const linkedFields = schema.fields.filter((f) => f.linkedField !== undefined);
+    if (linkedFields.length === 0) {
+      return {};
+    }
+
+    const fieldMap = new Map(schema.fields.map((f) => [f.key, f]));
+    const lockedFields: Record<string, string> = {};
+
+    await Promise.allSettled(
+      linkedFields.map(async (field) => {
+        const linked = field.linkedField!;
+        const sourceField = fieldMap.get(linked.sourceField);
+        if (!sourceField?.options) {
+          return;
+        }
+        const rawCandidate = formData[sourceField.key];
+        if (typeof rawCandidate !== 'string' || rawCandidate.trim().length === 0) {
+          return;
+        }
+        const internal = await this.resolveSingleSource(context, schema, sourceField.options.source);
+        if (internal.resolution.status !== 'ready') {
+          return;
+        }
+        const match = matchLookupTuple(internal.resolution.tuples, rawCandidate, sourceField.options);
+        if (!match.matched || !match.tuple) {
+          return;
+        }
+        const derivedVal = readTupleProperty(match.tuple, linked.sourceProperty);
+        if (derivedVal !== undefined) {
+          lockedFields[field.key] = derivedVal;
+        }
+      })
+    );
+
+    return lockedFields;
+  }
+
   private async validateSingleField(
     context: LookupOptionsCallContext,
     schema: LookupDocumentSchema | undefined,

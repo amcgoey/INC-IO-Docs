@@ -488,6 +488,18 @@ const CONFIG_FFE_VENDORS: SimCellValue[][] = [
   ['---', '', ''],
 ];
 
+const CONFIG_FFE_SPECS: SimCellValue[][] = [
+  ['Spec Tag', 'Spec Title'],
+  ['AC102', 'HOOK'],
+  ['CG104', 'BED - KING'],
+  ['CP119', 'CARPET'],
+  ['FB127', 'FABRIC - LEATHER'],
+  ['LT108', 'SCONCE'],
+  ['LT159A', 'SCONCE - CORRIDOR'],
+  ['TA139', 'TABLE - WORK'],
+  ['---', ''],
+];
+
 function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
   const archStatusesRows = state.archStatusesRows ?? [
     ['Status'],
@@ -667,6 +679,28 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
             endColumnIndex: 12,
           },
         },
+        {
+          namedRangeId: 'nr-ffe-specs',
+          name: 'Options_Submittal_FFE_Specs',
+          range: {
+            sheetId: 104,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_FFE_SPECS.length,
+            startColumnIndex: 15,
+            endColumnIndex: 17,
+          },
+        },
+        {
+          namedRangeId: 'nr-ffe-specs-val',
+          name: 'Validation_Submittal_FFE_Specs',
+          range: {
+            sheetId: 104,
+            startRowIndex: 1,
+            endRowIndex: CONFIG_FFE_SPECS.length - 1,
+            startColumnIndex: 15,
+            endColumnIndex: 16,
+          },
+        },
         ...(!state.namedRange
           ? [
               {
@@ -701,7 +735,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       return [];
     }
     if (range.includes('_Config Submittal FF&E')) {
-      const bounds = parseA1RangeBounds(range, 30, 15);
+      const bounds = parseA1RangeBounds(range, 30, 17);
       if (bounds.startColumnIndex === 0) {
         return CONFIG_STATUSES;
       }
@@ -713,6 +747,9 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       }
       if (bounds.startColumnIndex === 11) {
         return CONFIG_FFE_VENDORS;
+      }
+      if (bounds.startColumnIndex === 15) {
+        return CONFIG_FFE_SPECS;
       }
       return [];
     }

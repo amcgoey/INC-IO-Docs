@@ -486,6 +486,7 @@ export function buildDocumentTypeSchema(documentType: DocumentType): TSchema {
 
 const validatedDataObjects = new WeakSet<object>();
 const validatedDynamicMatchedTuples = new WeakMap<object, Map<string, Record<string, unknown>>>();
+const validatedDerivedLinkedFields = new WeakMap<object, Map<string, string>>();
 
 function matchStaticOptionTuple(
   optionTuples: readonly Record<string, unknown>[],
@@ -577,6 +578,70 @@ export class DocumentService implements DocumentServicePort {
     this.documentTypes = await this.documentSchemaRegistry.loadAll();
   }
 
+  private formatDynamicFailure(
+    result: { errorMessage?: string | undefined; status?: string | undefined; targetPath?: string | undefined } | undefined
+  ): string {
+    if (result?.errorMessage !== undefined) {
+      return result.errorMessage;
+    }
+    if (result?.status !== undefined && this.validationMessageFormatter) {
+      return this.validationMessageFormatter(
+        result.status as Parameters<DynamicValidationMessageFormatter>[0],
+        result.targetPath
+      );
+    }
+    if (result?.status === 'timeout') {
+      return VALIDATION_TIMEOUT_MSG;
+    }
+    return OPTION_NOT_FOUND_MSG;
+  }
+
+  private collectDynamicQueries(
+    fields: readonly DocumentField[],
+    documentSchema: DocumentSchema,
+    rawData: Record<string, unknown>,
+    skipFieldKeys?: ReadonlySet<string>
+  ): { queries: DynamicValidationQuery[]; queryFieldKeys: Map<string, string> } {
+    const queries: DynamicValidationQuery[] = [];
+    const queryFieldKeys = new Map<string, string>();
+
+    for (const field of fields) {
+      if (skipFieldKeys?.has(field.key) || !isDynamicOptionField(field, documentSchema)) {
+        continue;
+      }
+      const rawValue = rawData[field.key];
+      const valuesToValidate: string[] = [];
+      const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+      for (const item of normalizedValues) {
+        if (typeof item === 'string') {
+          if (!field.required && item.trim() === '') {
+            continue;
+          }
+          valuesToValidate.push(item);
+        }
+      }
+
+      valuesToValidate.forEach((val, index) => {
+        const queryId =
+          valuesToValidate.length > 1
+            ? `${field.key}_${index}`
+            : field.key;
+        queryFieldKeys.set(queryId, field.key);
+        queries.push({
+          sourceKey: field.options.source,
+          fieldKey: field.key,
+          valueToValidate: val,
+          queryId,
+          ...(field.options.allowUserInput !== undefined
+            ? { allowUserInput: field.options.allowUserInput }
+            : {}),
+        });
+      });
+    }
+
+    return { queries, queryFieldKeys };
+  }
+
   public async validateDocument(
     document: DocumentModel
   ): Promise<{ success: boolean; errors?: string[] }> {
@@ -597,7 +662,7 @@ export class DocumentService implements DocumentServicePort {
       };
     }
 
-    if (!compiled.Check(document.data)) {
+    if (typeof document.data !== 'object' || document.data === null || Array.isArray(document.data)) {
       const errors = formatValidationErrors(compiled.Schema(), document.data);
       return {
         success: false,
@@ -606,46 +671,126 @@ export class DocumentService implements DocumentServicePort {
     }
 
     const rawData = document.data as { [key: string]: unknown };
+    const candidateData: { [key: string]: unknown } = { ...rawData };
+    const matchedDynamicTuples = new Map<string, Record<string, unknown>>();
+    const preMatchedStaticTuples = new Map<string, Record<string, unknown>>();
+    const preQueriedFieldKeys = new Set<string>();
+    const derivedLinkedFields = new Map<string, string>();
+    const spaceId = getSpaceStorageId(document.space);
 
-    if (this.dynamicValidator) {
-      const dynamicQueries: DynamicValidationQuery[] = [];
-      const queryFieldKeys = new Map<string, string>();
+    const linkedFields = documentType.documentSchema.fields.filter(
+      (f): f is DocumentField & { linkedField: LinkedField } => f.linkedField !== undefined
+    );
 
-      for (const field of documentType.documentSchema.fields) {
-        if (isDynamicOptionField(field, documentType.documentSchema)) {
-          const rawValue = rawData[field.key];
-          const valuesToValidate: string[] = [];
-          const normalizedValues = Array.isArray(rawValue) ? rawValue : [rawValue];
-          for (const item of normalizedValues) {
-            if (typeof item === 'string') {
-              if (!field.required && item.trim() === '') {
-                continue;
-              }
-              valuesToValidate.push(item);
-            }
+    if (linkedFields.length > 0) {
+      const sourceFieldKeys = new Set(linkedFields.map((f) => f.linkedField.sourceField));
+      const preCandidateFields: DocumentField[] = [];
+
+      for (const sourceKey of sourceFieldKeys) {
+        const sourceField = documentType.documentSchema.fields.find((f) => f.key === sourceKey);
+        if (!sourceField?.options) {
+          continue;
+        }
+        const rawSourceVal = rawData[sourceField.key];
+        if (typeof rawSourceVal !== 'string' || rawSourceVal.trim().length === 0) {
+          continue;
+        }
+        if (isDynamicOptionField(sourceField, documentType.documentSchema)) {
+          if (
+            this.dynamicValidator &&
+            Value.Check(
+              buildFieldSchema(sourceField, documentType.documentSchema, documentType.key),
+              rawSourceVal
+            )
+          ) {
+            preCandidateFields.push(sourceField);
           }
-
-          valuesToValidate.forEach((val, index) => {
-            const queryId =
-              valuesToValidate.length > 1
-                ? `${field.key}_${index}`
-                : field.key;
-            queryFieldKeys.set(queryId, field.key);
-            dynamicQueries.push({
-              sourceKey: field.options.source,
-              fieldKey: field.key,
-              valueToValidate: val,
-              queryId,
-              ...(field.options.allowUserInput !== undefined
-                ? { allowUserInput: field.options.allowUserInput }
-                : {}),
-            });
-          });
+        } else {
+          const optionTuples =
+            documentType.documentSchema.options?.[sourceField.options.source] ?? [];
+          const staticMatch = matchStaticOptionTuple(
+            optionTuples,
+            [rawSourceVal, rawSourceVal.trim()],
+            sourceField.options.key,
+            sourceField.options.name
+          );
+          if (staticMatch) {
+            preMatchedStaticTuples.set(sourceField.key, staticMatch);
+          }
         }
       }
 
+      if (preCandidateFields.length > 0 && this.dynamicValidator) {
+        const { queries: preQueries, queryFieldKeys: preQueryFieldKeys } =
+          this.collectDynamicQueries(preCandidateFields, documentType.documentSchema, rawData);
+
+        if (preQueries.length > 0) {
+          const preResults = await this.dynamicValidator.validateExistence(preQueries, {
+            ...(spaceId !== undefined ? { spaceId } : {}),
+            ...(document.space !== undefined ? { space: document.space } : {}),
+            documentTypeKey: document.type,
+            ...(this.selectedLogId !== undefined ? { selectedLogId: this.selectedLogId } : {}),
+            formData: rawData,
+          });
+
+          const preErrors: string[] = [];
+          for (const query of preQueries) {
+            const fieldKey = preQueryFieldKeys.get(query.queryId);
+            if (fieldKey) {
+              preQueriedFieldKeys.add(fieldKey);
+            }
+            const result = preResults[query.queryId] ?? preResults[query.sourceKey];
+            if (!result || !result.isValid) {
+              preErrors.push(this.formatDynamicFailure(result));
+            } else if (result.matchedTuple && query.queryId === fieldKey) {
+              matchedDynamicTuples.set(fieldKey, result.matchedTuple);
+            }
+          }
+
+          if (preErrors.length > 0) {
+            return {
+              success: false,
+              errors: preErrors,
+            };
+          }
+        }
+      }
+
+      for (const field of linkedFields) {
+        const tuple =
+          matchedDynamicTuples.get(field.linkedField.sourceField) ??
+          preMatchedStaticTuples.get(field.linkedField.sourceField);
+        if (!tuple) {
+          continue;
+        }
+        const rawProp = tuple[field.linkedField.sourceProperty];
+        if (rawProp !== undefined && rawProp !== null) {
+          const trimmedProp = String(rawProp).trim();
+          if (trimmedProp.length > 0) {
+            candidateData[field.key] = trimmedProp;
+            derivedLinkedFields.set(field.key, trimmedProp);
+          }
+        }
+      }
+    }
+
+    if (!compiled.Check(candidateData)) {
+      const errors = formatValidationErrors(compiled.Schema(), candidateData);
+      return {
+        success: false,
+        errors: errors.length > 0 ? errors : ['Invalid document data payload'],
+      };
+    }
+
+    if (this.dynamicValidator) {
+      const { queries: dynamicQueries, queryFieldKeys } = this.collectDynamicQueries(
+        documentType.documentSchema.fields,
+        documentType.documentSchema,
+        rawData,
+        preQueriedFieldKeys
+      );
+
       if (dynamicQueries.length > 0) {
-        const spaceId = getSpaceStorageId(document.space);
         const validationResults = await this.dynamicValidator.validateExistence(
           dynamicQueries,
           {
@@ -658,21 +803,10 @@ export class DocumentService implements DocumentServicePort {
         );
 
         const dynamicErrors: string[] = [];
-        const matchedDynamicTuples = new Map<string, Record<string, unknown>>();
         for (const query of dynamicQueries) {
           const result = validationResults[query.queryId] ?? validationResults[query.sourceKey];
           if (!result || !result.isValid) {
-            if (result?.errorMessage !== undefined) {
-              dynamicErrors.push(result.errorMessage);
-            } else if (result?.status !== undefined && this.validationMessageFormatter) {
-              dynamicErrors.push(
-                this.validationMessageFormatter(result.status, result.targetPath)
-              );
-            } else if (result?.status === 'timeout') {
-              dynamicErrors.push(VALIDATION_TIMEOUT_MSG);
-            } else {
-              dynamicErrors.push(OPTION_NOT_FOUND_MSG);
-            }
+            dynamicErrors.push(this.formatDynamicFailure(result));
           } else if (result.matchedTuple && query.queryId === queryFieldKeys.get(query.queryId)) {
             matchedDynamicTuples.set(queryFieldKeys.get(query.queryId)!, result.matchedTuple);
           }
@@ -684,16 +818,17 @@ export class DocumentService implements DocumentServicePort {
             errors: dynamicErrors,
           };
         }
-
-        if (matchedDynamicTuples.size > 0 && document.data && typeof document.data === 'object') {
-          validatedDynamicMatchedTuples.set(document.data, matchedDynamicTuples);
-        }
       }
     }
 
-    if (document.data && typeof document.data === 'object') {
-      validatedDataObjects.add(document.data);
+    if (matchedDynamicTuples.size > 0) {
+      validatedDynamicMatchedTuples.set(document.data, matchedDynamicTuples);
     }
+    if (derivedLinkedFields.size > 0) {
+      validatedDerivedLinkedFields.set(document.data, derivedLinkedFields);
+    }
+
+    validatedDataObjects.add(document.data);
 
     return { success: true };
   }
@@ -735,6 +870,10 @@ export class DocumentService implements DocumentServicePort {
       document.data && typeof document.data === 'object'
         ? validatedDynamicMatchedTuples.get(document.data)
         : undefined;
+    const derivedLinkedFields =
+      document.data && typeof document.data === 'object'
+        ? validatedDerivedLinkedFields.get(document.data)
+        : undefined;
 
     for (const field of documentType.documentSchema.fields) {
       if (field.options) {
@@ -766,6 +905,28 @@ export class DocumentService implements DocumentServicePort {
           const tupleObj = rawValue as Record<string, unknown>;
           if (field.options.allowUserInput) {
             enrichedData[field.key] = { ...tupleObj };
+          }
+        }
+      }
+    }
+
+    // Authoritatively re-derive non-blank LinkedField values from matched option tuples
+    for (const field of documentType.documentSchema.fields) {
+      if (!field.linkedField) {
+        continue;
+      }
+      const preDerived = derivedLinkedFields?.get(field.key);
+      if (preDerived !== undefined) {
+        enrichedData[field.key] = preDerived;
+        continue;
+      }
+      const sourceTuple = enrichedData[field.linkedField.sourceField];
+      if (sourceTuple && typeof sourceTuple === 'object') {
+        const rawProp = (sourceTuple as Record<string, unknown>)[field.linkedField.sourceProperty];
+        if (rawProp !== undefined && rawProp !== null) {
+          const trimmedProp = String(rawProp).trim();
+          if (trimmedProp.length > 0) {
+            enrichedData[field.key] = trimmedProp;
           }
         }
       }
