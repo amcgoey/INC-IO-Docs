@@ -106,6 +106,16 @@ const CONFIG_ARCH_CONTACT_VALUES = [
   ['---', '', ''],
 ];
 
+const CONFIG_ARCH_CSI_DIVISION_VALUES = [
+  ['Division Number', 'Division Folder'],
+  ['01', '01 General Requirements'],
+  ['03', '03 Concrete'],
+  ['07', '07 Thermal and Moisture Protection'],
+  ['08', '08 Openings'],
+  ['09', '09 Finishes'],
+  ['---', ''],
+];
+
 function mockConfigSubmittalArchBatchGet(
   spreadsheetId: string,
   applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
@@ -137,6 +147,9 @@ function mockConfigSubmittalArchBatchGet(
         }
         if (range.includes('H1:J')) {
           return { range, values: CONFIG_ARCH_CONTACT_VALUES };
+        }
+        if (range.includes('L1:M')) {
+          return { range, values: CONFIG_ARCH_CSI_DIVISION_VALUES };
         }
         return { range, values: [] };
       }),
@@ -185,6 +198,11 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-arch-contacts',
         name: 'Options_Submittal_Arch_Contacts',
         range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-arch-csi-divisions',
+        name: 'Options_Submittal_Arch_CSI_Divisions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length, startColumnIndex: 11, endColumnIndex: 13 },
       },
     ],
   });
@@ -266,6 +284,17 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
             startColumnIndex: 7,
             endColumnIndex: 10,
+          },
+        },
+        {
+          namedRangeId: 'nr-arch-csi-divisions',
+          name: 'Options_Submittal_Arch_CSI_Divisions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length,
+            startColumnIndex: 11,
+            endColumnIndex: 13,
           },
         },
       ],

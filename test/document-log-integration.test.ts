@@ -6,6 +6,7 @@ import { createApp, type AppOptions } from '../src/app/server';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import {
   createDocumentDynamicValidationAdapter,
+  createDocumentOptionTableAdapter,
   createLookupOptionsService,
 } from '../src/app/lookup-options.wiring';
 import {
@@ -26,6 +27,7 @@ import {
 import type {
   ActivityHandler,
   ActivityOutput,
+  DocumentOptionTablePort,
   DocumentSchemaRegistryPort,
 } from '../src/features/document/ports';
 import {
@@ -455,6 +457,34 @@ const CONFIG_ARCH_CONTACTS: SimCellValue[][] = [
   ['---', '', ''],
 ];
 
+const CONFIG_ARCH_CSI_DIVISIONS: SimCellValue[][] = [
+  ['Division Number', 'Division Folder'],
+  ['01', '01 General Requirements'],
+  ['03', '03 Concrete'],
+  ['07', '07 Thermal and Moisture Protection'],
+  ['08', '08 Openings'],
+  ['09', '09 Finishes'],
+  ['90', '90 Commissioning'],
+  ['---', ''],
+];
+
+function createStaticCsiDivisionsOptionTablePort(): DocumentOptionTablePort {
+  return {
+    resolveOptionTables: async () => ({
+      csiDivisions: {
+        status: 'ready',
+        tuples: [
+          { key: '01', folder: '01 General Requirements' },
+          { key: '03', folder: '03 Concrete' },
+          { key: '07', folder: '07 Thermal and Moisture Protection' },
+          { key: '08', folder: '08 Openings' },
+          { key: '09', folder: '09 Finishes' },
+        ],
+      },
+    }),
+  };
+}
+
 const CONFIG_FFE_CONTACTS: SimCellValue[][] = [
   ['Contact', 'Name', 'Contact Type'],
   ['INC', 'INC Architecture & Design', 'INC'],
@@ -603,6 +633,17 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           },
         },
         {
+          namedRangeId: 'nr-arch-csi-divisions',
+          name: 'Options_Submittal_Arch_CSI_Divisions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CSI_DIVISIONS.length,
+            startColumnIndex: 11,
+            endColumnIndex: 13,
+          },
+        },
+        {
           namedRangeId: 'nr-ffe-statuses',
           name: 'Options_Submittal_FFE_Statuses',
           range: {
@@ -731,6 +772,9 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       }
       if (bounds.startColumnIndex === 7) {
         return CONFIG_ARCH_CONTACTS;
+      }
+      if (bounds.startColumnIndex === 11) {
+        return CONFIG_ARCH_CSI_DIVISIONS;
       }
       return [];
     }
@@ -868,6 +912,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     sourceFiles?: Array<{ id: string; name?: string }>;
     selectedLogId?: string;
     manifestProviderOverride?: RawManifestProviderPort;
+    optionTablePortOverride?: DocumentOptionTablePort;
   }) {
     const driveSdk = createMockDriveSdk(params.driveState);
     const sheetsSdk = createMockSheetsSdk(params.sheetsState);
@@ -940,7 +985,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       compiledRegistry,
       createDocumentDynamicValidationAdapter(lookupOptions),
       undefined,
-      params.selectedLogId
+      params.selectedLogId,
+      params.optionTablePortOverride ?? createDocumentOptionTableAdapter(lookupOptions)
     );
     await documentService.initialize();
 
@@ -1219,7 +1265,16 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         archiveHandler,
         logWiring.createActivityHandler(),
       ]);
-      const service = new DocumentService(engine, customRegistry, handlebars, compiled);
+      const service = new DocumentService(
+        engine,
+        customRegistry,
+        handlebars,
+        compiled,
+        undefined,
+        undefined,
+        undefined,
+        createStaticCsiDivisionsOptionTablePort()
+      );
       await service.initialize();
 
       return service.processDocument(
@@ -1356,6 +1411,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       compiledSchemaRegistry: compiledRegistry,
       configProvider: manifestProvider,
       driveClient,
+      optionTablePort: createStaticCsiDivisionsOptionTablePort(),
       createAdditionalActivityHandlers: (context) => [
         logWiring.createPerRequestActivityHandler(context),
       ],
@@ -1408,6 +1464,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       driveState: emptyDriveState,
       sheetsState: emptySheetsState,
       sourceFiles: [],
+      optionTablePortOverride: createStaticCsiDivisionsOptionTablePort(),
     });
 
     const missingResult = await missingCtx.documentService.processDocument(
@@ -1516,6 +1573,16 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
             tuples: [
               { key: 'INC', name: 'INC Architecture and Design' },
               { key: 'MB', name: 'Meridian Builders' },
+            ],
+          },
+          csiDivisions: {
+            status: 'ready',
+            tuples: [
+              { key: '01', folder: '01 General Requirements' },
+              { key: '03', folder: '03 Concrete' },
+              { key: '07', folder: '07 Thermal and Moisture Protection' },
+              { key: '08', folder: '08 Openings' },
+              { key: '09', folder: '09 Finishes' },
             ],
           },
         },
@@ -3386,7 +3453,11 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       activityEngine,
       docSchemaRegistry,
       handlebars,
-      compiledRegistry
+      compiledRegistry,
+      undefined,
+      undefined,
+      'harborview-log-1',
+      createStaticCsiDivisionsOptionTablePort()
     );
     await documentService.initialize();
 

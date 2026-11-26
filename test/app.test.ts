@@ -29,6 +29,7 @@ function createArchOptionTablesSheetsMock(
       statuses: string[][];
       actions: string[][];
       contacts?: string[][];
+      csiDivisions?: string[][];
     };
   }
 ): {
@@ -54,14 +55,23 @@ function createArchOptionTablesSheetsMock(
     ['PMG', 'Pavarini McGovern', 'Contractor'],
     ['---', '', ''],
   ];
+  const defaultCsiDivisions = [
+    ['Division Number', 'Division Folder'],
+    ['01', '01 General Requirements'],
+    ['07', '07 Thermal and Moisture Protection'],
+    ['08', '08 Openings'],
+    ['---', ''],
+  ];
 
   const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
     const tables = options?.getTables?.(spreadsheetId) ?? {
       statuses: defaultStatuses,
       actions: defaultActions,
       contacts: defaultContacts,
+      csiDivisions: defaultCsiDivisions,
     };
     const contacts = tables.contacts ?? defaultContacts;
+    const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
     return {
       data: {
         spreadsheetId,
@@ -114,6 +124,17 @@ function createArchOptionTablesSheetsMock(
               endColumnIndex: 10,
             },
           },
+          {
+            namedRangeId: 'nr-csi-divisions',
+            name: 'Options_Submittal_Arch_CSI_Divisions',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: csiDivisions.length,
+              startColumnIndex: 11,
+              endColumnIndex: 13,
+            },
+          },
         ],
       },
     };
@@ -125,8 +146,10 @@ function createArchOptionTablesSheetsMock(
         statuses: defaultStatuses,
         actions: defaultActions,
         contacts: defaultContacts,
+        csiDivisions: defaultCsiDivisions,
       };
       const contacts = tables.contacts ?? defaultContacts;
+      const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
       return {
         data: {
           spreadsheetId,
@@ -136,7 +159,9 @@ function createArchOptionTablesSheetsMock(
               ? tables.statuses
               : r.includes('C1:')
                 ? tables.actions
-                : contacts,
+                : r.includes('L1:')
+                  ? csiDivisions
+                  : contacts,
           })),
         },
       };
@@ -873,6 +898,7 @@ describe('App integration tests', () => {
         expect(body.data.idDocument).toBe('071200-001-A');
         expect(body.data.idGroup).toBe('071200-001');
         expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
+        expect(body.data.calculated.csiDivisionFolder).toBe('07 Thermal and Moisture Protection');
         expect(body.activities).toEqual([
           {
             type: 'MOVE_FILE',
@@ -980,6 +1006,7 @@ describe('App integration tests', () => {
         expect(body.data.idDocument).toBe('CG104-A');
         expect(body.data.idGroup).toBe('CG104');
         expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
+        expect(body.data.calculated.specTagGroup).toBe('CG');
         expect(body.activities).toEqual([
           {
             type: 'MOVE_FILE',
@@ -2155,6 +2182,106 @@ describe('App integration tests', () => {
         const rejectedBody = JSON.parse(rejectedRes.payload);
         expect(rejectedBody.success).toBe(false);
         expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2); // only request 1 dispatched MOVE_FILE + WRITE_LOG
+
+        // 3. Unknown or unnormalized CSI division in submittal-arch -> HTTP 400 with zero activities dispatched
+        const missingDivRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Closed',
+              section: '990000',
+              number: '002',
+              revision: 'A',
+              title: 'Unknown Division',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+            },
+          },
+        });
+        expect(missingDivRes.statusCode).toBe(400);
+        const missingDivBody = JSON.parse(missingDivRes.payload);
+        expect(missingDivBody.success).toBe(false);
+        expect(JSON.stringify(missingDivBody.errors)).toContain('csiDivisionFolder');
+        expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+      } finally {
+        searchSpy.mockRestore();
+      }
+    });
+
+    it('POST /documents returns HTTP 400 when _Config Submittal Arch CSI division key is unnormalized ("1" vs "01") (#374)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath, {
+        getTables: () => ({
+          statuses: [['Status'], ['Open'], ['---']],
+          actions: [
+            ['Action', 'Name', 'Suffix', 'Order'],
+            ['REC', 'Received', '', '1'],
+            ['---', '', '', ''],
+          ],
+          csiDivisions: [
+            ['Division Number', 'Division Folder'],
+            ['1', '01 General Requirements'],
+            ['---', ''],
+          ],
+        }),
+      });
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-unnorm',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+      });
+      await prodApp.initialize();
+
+      try {
+        const res = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Open',
+              section: '011000',
+              number: '001',
+              revision: '0',
+              title: 'Submittal Procedures',
+              date: '261020',
+              contact: 'PMG',
+              action: 'REC',
+            },
+          },
+        });
+        expect(res.statusCode).toBe(400);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(false);
+        expect(JSON.stringify(body.errors)).toContain('csiDivisionFolder');
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
       } finally {
         searchSpy.mockRestore();
       }

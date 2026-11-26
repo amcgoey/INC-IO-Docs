@@ -10,6 +10,8 @@ import type {
   DocumentDynamicValidationPort,
   DynamicValidationQuery,
   DynamicValidationMessageFormatter,
+  DocumentOptionTablePort,
+  DocumentOptionTableResolution,
 } from './ports';
 
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
@@ -176,11 +178,55 @@ export const DocumentIdentitySchemaType = Type.Object(
 
 export type DocumentIdentitySchema = Static<typeof DocumentIdentitySchemaType>;
 
+export const CalculatedFieldPrefixTransformSchema = Type.Object(
+  {
+    type: Type.Literal('prefix'),
+    length: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldPrefixTransform = Static<typeof CalculatedFieldPrefixTransformSchema>;
+
+export const CalculatedFieldUppercaseTransformSchema = Type.Object(
+  {
+    type: Type.Literal('uppercase'),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldUppercaseTransform = Static<typeof CalculatedFieldUppercaseTransformSchema>;
+
+export const CalculatedFieldTransformSchema = Type.Union([
+  CalculatedFieldPrefixTransformSchema,
+  CalculatedFieldUppercaseTransformSchema,
+]);
+
+export type CalculatedFieldTransform = Static<typeof CalculatedFieldTransformSchema>;
+
+export const CalculatedFieldLookupSchema = Type.Object(
+  {
+    source: Type.String({ minLength: 1 }),
+    matchProperty: Type.String({ minLength: 1 }),
+    resultProperty: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldLookup = Static<typeof CalculatedFieldLookupSchema>;
+
 export const CalculatedFieldType = Type.Object({
   key: Type.String(),
   name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
+  transforms: Type.Optional(
+    Type.Union([Type.Array(CalculatedFieldTransformSchema, { minItems: 1 }), Type.Undefined()])
+  ),
+  lookup: Type.Optional(
+    Type.Union([CalculatedFieldLookupSchema, Type.Undefined()])
+  ),
+  required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 
 export type CalculatedField = Static<typeof CalculatedFieldType>;
@@ -329,6 +375,115 @@ function sanitizeStringsDeepForPath(value: unknown): unknown {
   return value;
 }
 
+function resolveCalculatedFieldLookup(params: {
+  calcFieldKey: string;
+  lookupKey: string;
+  lookup: CalculatedFieldLookup;
+  documentSchema: DocumentSchema;
+  dynamicTables: Readonly<Record<string, DocumentOptionTableResolution>>;
+}): { ok: true; value: string } | { ok: false; error: string } {
+  const { calcFieldKey, lookupKey, lookup, documentSchema, dynamicTables } = params;
+  const trimmedKey = lookupKey.trim();
+  if (trimmedKey.length === 0) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" could not resolve lookup in "${lookup.source}": lookup key is blank.`,
+    };
+  }
+
+  let tuples: readonly Record<string, unknown>[];
+  const staticOptions = documentSchema.options?.[lookup.source];
+  if (staticOptions !== undefined) {
+    tuples = staticOptions;
+  } else {
+    const resolution = dynamicTables[lookup.source];
+    if (!resolution) {
+      return {
+        ok: false,
+        error: `CalculatedField "${calcFieldKey}" could not resolve option table "${lookup.source}".`,
+      };
+    }
+    if (resolution.status !== 'ready') {
+      return {
+        ok: false,
+        error:
+          resolution.errorMessage ??
+          `CalculatedField "${calcFieldKey}" failed to load option table "${lookup.source}" (${resolution.status}).`,
+      };
+    }
+    const { tuples: resolvedTuples } = resolution;
+    tuples = resolvedTuples;
+  }
+
+  const normalizedKey = trimmedKey.toLowerCase();
+  const matches = tuples.filter((tuple) => {
+    const rawMatch = tuple[lookup.matchProperty];
+    if (rawMatch === undefined || rawMatch === null) {
+      return false;
+    }
+    return String(rawMatch).trim().toLowerCase() === normalizedKey;
+  });
+
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" could not find matching "${lookup.matchProperty}" = "${trimmedKey}" in option source "${lookup.source}".`,
+    };
+  }
+
+  const distinctResults = new Set<string>();
+  let firstRawResult: unknown;
+  for (const match of matches) {
+    const val = match[lookup.resultProperty];
+    if (firstRawResult === undefined && val !== undefined && val !== null) {
+      firstRawResult = val;
+    }
+    if (val !== undefined && val !== null) {
+      const s = String(val).trim();
+      if (s.length > 0) {
+        distinctResults.add(s);
+      }
+    }
+  }
+
+  if (distinctResults.size > 1) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" found ambiguous "${lookup.matchProperty}" = "${trimmedKey}" in option source "${lookup.source}".`,
+    };
+  }
+
+  if (distinctResults.size === 0 || firstRawResult === undefined || firstRawResult === null) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" matched "${trimmedKey}" in "${lookup.source}", but "${lookup.resultProperty}" is blank.`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: String(firstRawResult),
+  };
+}
+
+function applyCalculatedFieldTransforms(
+  initialValue: string,
+  transforms: readonly CalculatedFieldTransform[] | undefined
+): string {
+  let result = initialValue;
+  if (!transforms) {
+    return result;
+  }
+  for (const transform of transforms) {
+    if (transform.type === 'prefix') {
+      result = result.slice(0, transform.length);
+    } else if (transform.type === 'uppercase') {
+      result = result.toUpperCase();
+    }
+  }
+  return result;
+}
+
 function createPathSafeDocument(
   document: Document,
   documentType: DocumentType,
@@ -340,22 +495,27 @@ function createPathSafeDocument(
   if (documentType.documentSchema.calculatedFields) {
     const pathBasePayload: Record<string, unknown> = {
       ...sanitizedData,
-      ...(document.space !== undefined
-        ? {
-            space: document.space,
-            Document: {
-              ...document,
-              data: sanitizedData,
-              space: document.space,
-            },
-          }
-        : {}),
+      ...(document.space !== undefined ? { space: document.space } : {}),
+      Document: {
+        ...document,
+        data: sanitizedData,
+        ...(document.space !== undefined ? { space: document.space } : {}),
+      },
     };
     sanitizedCalculated = {};
     for (const calcField of documentType.documentSchema.calculatedFields) {
-      sanitizedCalculated[calcField.key] = sanitizeFilePath(
-        evaluator.evaluate(calcField.template, pathBasePayload)
-      );
+      const hasPostProcessing =
+        (calcField.transforms !== undefined && calcField.transforms.length > 0) ||
+        calcField.lookup !== undefined;
+      if (hasPostProcessing && document.calculated?.[calcField.key] !== undefined) {
+        sanitizedCalculated[calcField.key] = sanitizeStringsDeepForPath(
+          document.calculated[calcField.key]
+        );
+      } else {
+        const rawEvaluated = evaluator.evaluate(calcField.template, pathBasePayload);
+        const transformed = applyCalculatedFieldTransforms(rawEvaluated, calcField.transforms);
+        sanitizedCalculated[calcField.key] = sanitizeFilePath(transformed);
+      }
     }
   } else if (document.calculated !== undefined) {
     sanitizedCalculated = sanitizeStringsDeepForPath(document.calculated) as Record<string, unknown>;
@@ -570,7 +730,8 @@ export class DocumentService implements DocumentServicePort {
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
     private readonly dynamicValidator?: DocumentDynamicValidationPort,
     private readonly validationMessageFormatter?: DynamicValidationMessageFormatter,
-    private readonly selectedLogId?: string
+    private readonly selectedLogId?: string,
+    private readonly optionTablePort?: DocumentOptionTablePort
   ) {}
 
   async initialize(): Promise<void> {
@@ -937,25 +1098,83 @@ export class DocumentService implements DocumentServicePort {
     const basePayload: { [key: string]: unknown } = {
       ...systemContext,
       ...enrichedData,
-      ...(document.space !== undefined
-        ? {
-            space: document.space,
-            Document: {
-              ...document,
-              space: document.space,
-            },
-          }
-        : {}),
+      ...(document.space !== undefined ? { space: document.space } : {}),
+      Document: {
+        ...document,
+        data: enrichedData,
+        ...(document.space !== undefined ? { space: document.space } : {}),
+      },
     };
 
     const calculatedValues: { [key: string]: unknown } = {};
+    const calculatedErrors: string[] = [];
     if (documentType.documentSchema.calculatedFields) {
+      const dynamicLookupSources = Array.from(
+        new Set(
+          documentType.documentSchema.calculatedFields
+            .map((cf) => cf.lookup?.source)
+            .filter(
+              (src): src is string =>
+                typeof src === 'string' &&
+                src.length > 0 &&
+                documentType.documentSchema.options?.[src] === undefined
+            )
+        )
+      );
+
+      let dynamicTables: Record<string, DocumentOptionTableResolution> = {};
+      if (dynamicLookupSources.length > 0) {
+        if (!this.optionTablePort) {
+          return {
+            success: false,
+            errors: [
+              `CalculatedField lookup source "${dynamicLookupSources[0]}" requires DocumentOptionTablePort to be configured.`,
+            ],
+          };
+        }
+        const spaceId = getSpaceStorageId(document.space);
+        dynamicTables = await this.optionTablePort.resolveOptionTables(dynamicLookupSources, {
+          ...(spaceId !== undefined ? { spaceId } : {}),
+          ...(document.space !== undefined ? { space: document.space } : {}),
+          documentTypeKey: document.type,
+          ...(this.selectedLogId !== undefined ? { selectedLogId: this.selectedLogId } : {}),
+        });
+      }
+
       for (const calculatedField of documentType.documentSchema.calculatedFields) {
-        calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
+        const templated = this.templateEvaluator.evaluate(
           calculatedField.template,
           basePayload
         );
+        let finalValue = applyCalculatedFieldTransforms(templated, calculatedField.transforms);
+        if (calculatedField.lookup) {
+          const lookupResult = resolveCalculatedFieldLookup({
+            calcFieldKey: calculatedField.key,
+            lookupKey: finalValue,
+            lookup: calculatedField.lookup,
+            documentSchema: documentType.documentSchema,
+            dynamicTables,
+          });
+          if (!lookupResult.ok) {
+            calculatedErrors.push(lookupResult.error);
+            continue;
+          }
+          finalValue = String(lookupResult.value);
+        }
+        if (calculatedField.required && finalValue.trim().length === 0) {
+          calculatedErrors.push(
+            `CalculatedField "${calculatedField.key}" evaluated to a blank value.`
+          );
+          continue;
+        }
+        calculatedValues[calculatedField.key] = finalValue;
       }
+    }
+    if (calculatedErrors.length > 0) {
+      return {
+        success: false,
+        errors: calculatedErrors,
+      };
     }
 
     const identityUpdates: Partial<Document> = {};
@@ -1451,6 +1670,147 @@ function validateOptionSourcesAndFields(
   }
 }
 
+function validateCalculatedFields(
+  documentSchema: DocumentSchema,
+  evaluator: TemplateEvaluatorPort,
+  baseVariables: string[],
+  errors: string[]
+): void {
+  const { calculatedFields: calcFields } = documentSchema;
+  if (!calcFields) {
+    return;
+  }
+
+  const seenKeys = new Set<string>();
+  calcFields.forEach((calcField, index) => {
+    const basePath = `documentSchema.calculatedFields[${index}]`;
+    const templatePath = `${basePath}.template`;
+
+    if (calcField.key.trim().length === 0) {
+      errors.push(`Invalid key at "${basePath}.key": must be a non-empty string.`);
+    } else if (seenKeys.has(calcField.key)) {
+      errors.push(`Duplicate CalculatedField key "${calcField.key}" at "${basePath}.key".`);
+    } else {
+      seenKeys.add(calcField.key);
+    }
+
+    if (!evaluator.validate(calcField.template, baseVariables)) {
+      errors.push(`Invalid template at "${templatePath}": references unknown fields or is malformed.`);
+    }
+
+    const requiresNonBlankTemplate =
+      calcField.required === true ||
+      calcField.lookup !== undefined ||
+      calcField.transforms !== undefined;
+    if (requiresNonBlankTemplate && calcField.template.trim().length === 0) {
+      errors.push(`Invalid template at "${templatePath}": must not be blank.`);
+    }
+
+    if (calcField.transforms !== undefined) {
+      if (!Array.isArray(calcField.transforms) || calcField.transforms.length === 0) {
+        errors.push(`Invalid transforms at "${basePath}.transforms": must be a non-empty array.`);
+      } else {
+        calcField.transforms.forEach((transform, tIndex) => {
+          const tPath = `${basePath}.transforms[${tIndex}]`;
+          if (transform.type === 'prefix') {
+            if (
+              typeof transform.length !== 'number' ||
+              !Number.isInteger(transform.length) ||
+              transform.length < 1
+            ) {
+              errors.push(
+                `Invalid prefix transform at "${tPath}": length must be an integer >= 1.`
+              );
+            }
+          } else if (transform.type !== 'uppercase') {
+            errors.push(`Unsupported transform type at "${tPath}".`);
+          }
+        });
+      }
+    }
+
+    if (calcField.lookup !== undefined) {
+      const { lookup } = calcField;
+      const { source, matchProperty, resultProperty } = lookup;
+      const optionSource = documentSchema.optionSources?.[source];
+      const staticOptions = documentSchema.options?.[source];
+      if (source.trim().length === 0 || (optionSource === undefined && staticOptions === undefined)) {
+        errors.push(
+          `Invalid lookup at "${basePath}.lookup.source": unknown option source "${source}".`
+        );
+      } else {
+        const checkProperty = (propName: string, propLabel: 'matchProperty' | 'resultProperty') => {
+          const propPath = `${basePath}.lookup.${propLabel}`;
+          if (propName.trim().length === 0) {
+            errors.push(`Invalid lookup at "${propPath}": must be a non-empty string.`);
+            return;
+          }
+          if (optionSource?.properties !== undefined) {
+            if (!optionSource.properties.includes(propName)) {
+              errors.push(
+                `Invalid lookup at "${propPath}": property "${propName}" is not declared in OptionSource "${source}".`
+              );
+            }
+          } else if (staticOptions && staticOptions.length > 0) {
+            const existsInTuples = staticOptions.some(
+              (tuple) => typeof tuple === 'object' && tuple !== null && propName in tuple
+            );
+            if (!existsInTuples) {
+              errors.push(
+                `Invalid lookup at "${propPath}": property "${propName}" does not exist in options "${source}".`
+              );
+            }
+          }
+        };
+        checkProperty(matchProperty, 'matchProperty');
+        checkProperty(resultProperty, 'resultProperty');
+      }
+    }
+  });
+}
+
+function validateWorkflowPathPayloads(
+  manifest: DocumentType,
+  errors: string[]
+): void {
+  const { workflows } = manifest.documentWorkflowConfig ?? {};
+  if (!workflows) {
+    return;
+  }
+
+  const blankTemplateCalcKeys = new Set(
+    (manifest.documentSchema.calculatedFields ?? [])
+      .filter((cf) => cf.template.trim().length === 0)
+      .map((cf) => cf.key)
+  );
+
+  workflows.forEach((workflow, workflowIndex) => {
+    const activitySequence = workflow.activitySequence ?? [];
+    activitySequence.forEach((activity, activityIndex) => {
+      if (!activity.payload || typeof activity.payload !== 'object' || Array.isArray(activity.payload)) {
+        return;
+      }
+      for (const [key, val] of Object.entries(activity.payload)) {
+        if (!FILE_PATH_PAYLOAD_KEYS.has(key) || typeof val !== 'string') {
+          continue;
+        }
+        const payloadPath = `documentWorkflowConfig.workflows[${workflowIndex}].activitySequence[${activityIndex}].payload.${key}`;
+        if (val.trim().length === 0) {
+          errors.push(`Blank folder-routing path at "${payloadPath}": must not be empty or whitespace-only.`);
+          continue;
+        }
+        for (const blankKey of blankTemplateCalcKeys) {
+          if (val.includes(`Document.calculated.${blankKey}`)) {
+            errors.push(
+              `Folder-routing path at "${payloadPath}" references CalculatedField "${blankKey}" with a blank template.`
+            );
+          }
+        }
+      }
+    });
+  });
+}
+
 /**
  * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
@@ -1465,15 +1825,7 @@ export function validateManifestTemplates(
   const executionVariables = getExecutionVariables(manifest, baseVariables);
 
   validateOptionSourcesAndFields(manifest.documentSchema, errors);
-
-  if (manifest.documentSchema.calculatedFields) {
-    manifest.documentSchema.calculatedFields.forEach((calcField, index) => {
-      const path = `documentSchema.calculatedFields[${index}].template`;
-      if (!evaluator.validate(calcField.template, baseVariables)) {
-        errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
-      }
-    });
-  }
+  validateCalculatedFields(manifest.documentSchema, evaluator, baseVariables, errors);
 
   if (manifest.documentSchema.identity) {
     for (const [propKey, template] of Object.entries(manifest.documentSchema.identity)) {
@@ -1496,6 +1848,7 @@ export function validateManifestTemplates(
 
   if (manifest.documentWorkflowConfig) {
     validateWorkflowSteps(manifest.documentWorkflowConfig.workflows, errors);
+    validateWorkflowPathPayloads(manifest, errors);
 
     walkTemplates(manifest.documentWorkflowConfig, 'documentWorkflowConfig', (path, template) => {
       if (!evaluator.validate(template, executionVariables)) {
