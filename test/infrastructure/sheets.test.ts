@@ -244,7 +244,9 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
     expect(insertResult).toEqual({
       rowNumber: 6,
       action: 'inserted',
+      sheetId: expect.any(Number),
     });
+    expect(Number.isInteger(insertResult.sheetId) && (insertResult.sheetId ?? -1) >= 0).toBe(true);
 
     const after = await sheetsClient.readTable({ target });
     expect(after.rows).toHaveLength(1);
@@ -291,6 +293,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
     expect(scenarioResults[0]).toEqual({
       rowNumber: 6,
       action: 'inserted',
+      sheetId: expect.any(Number),
     });
 
     const table = await sheetsClient.readTable({ target });
@@ -409,7 +412,9 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
     expect(firstInsert).toEqual({
       rowNumber: 6,
       action: 'inserted',
+      sheetId: expect.any(Number),
     });
+    expect(Number.isInteger(firstInsert.sheetId) && (firstInsert.sheetId ?? -1) >= 0).toBe(true);
 
     const afterFirst = await sheetsClient.readTable({ target });
     expect(afterFirst.rows).toHaveLength(1);

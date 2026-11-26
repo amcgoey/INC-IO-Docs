@@ -2817,6 +2817,17 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           'Filed via <b>SubmittalReceived</b>'
         );
         expect(pushCard?.sections[0].widgets[1].textParagraph?.text).toContain('Fallback notice');
+        const summarySec = pushCard?.sections.find((s) => s.header === 'Summary');
+        expect(summarySec?.widgets[0].decoratedText?.text).toBe('<b>Comm Log</b> • Row 12');
+        expect(summarySec?.widgets[0].decoratedText?.button).toEqual({
+          text: 'Open Log',
+          onClick: {
+            openLink: {
+              url: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=12:12',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        });
         const filesSec = pushCard?.sections.find((s) => s.header === 'Created & Filed');
         expect(filesSec?.widgets[0].decoratedText?.text).toBe('Filed.pdf');
         expect(filesSec?.widgets[0].decoratedText?.button?.onClick).toEqual({

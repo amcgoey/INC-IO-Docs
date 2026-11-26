@@ -253,7 +253,7 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
   return {
     insertRow: async (request) => {
       try {
-        return await sheetsClient.insertIntoGroupedList({
+        const res = await sheetsClient.insertIntoGroupedList({
           target: request.target,
           rowData: request.rowData,
           ...(request.rowKeyExtractor !== undefined
@@ -277,6 +277,11 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
             ? { templateSpreadsheetId: request.templateSpreadsheetId }
             : {}),
         });
+        return {
+          rowNumber: res.rowNumber,
+          action: res.action,
+          ...(res.sheetId !== undefined ? { sheetId: res.sheetId } : {}),
+        };
       } catch (error) {
         if (error instanceof GoogleSheetsOptionTableConfigError) {
           throw new DocumentLogConfigurationError(sanitizeSheetsErrorMessage(error), {

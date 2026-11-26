@@ -110,7 +110,7 @@ describe('document-log.wiring', () => {
   it('wires LogSchemaRegistryAdapter, default DocumentLogService, and per-request createDocumentLogService with overrides', async () => {
     const mockSheetsClient: SheetsClient = {
       readTable: vi.fn(),
-      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' }),
+      insertIntoGroupedList: vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted', sheetId: 0 }),
       readNamedRange: vi.fn(),
       writeNamedRange: vi.fn(),
     };
@@ -161,8 +161,10 @@ describe('document-log.wiring', () => {
     expect(result).toEqual({
       spreadsheetId: 'log-sheet-1',
       sheetName: 'Submittal Arch',
+      sheetId: 0,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/log-sheet-1/edit#gid=0&range=6:6',
     });
     expect(mockSheetsClient.insertIntoGroupedList).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -195,7 +197,14 @@ describe('document-log.wiring', () => {
       { driveClient: mockDriveClient, sheetsClient: overrideSheets }
     );
     const reqResult = await reqService.writeLog({ document: doc });
-    expect(reqResult.rowNumber).toBe(9);
+    expect(reqResult).toEqual({
+      spreadsheetId: 'log-sheet-1',
+      sheetName: 'Submittal Arch',
+      rowNumber: 9,
+      action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/log-sheet-1/edit',
+    });
+    expect('sheetId' in reqResult).toBe(false);
   });
 
   it('honors options.documentLogService override across default and per-request factory', () => {
@@ -308,8 +317,10 @@ describe('document-log.wiring', () => {
     expect(result).toEqual({
       spreadsheetId: 'auth-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 1,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/auth-log-1/edit#gid=1&range=6:6',
     });
     expect(nock.isDone()).toBe(true);
   });
@@ -730,6 +741,7 @@ describe('document-log.wiring', () => {
       sheetName: 'Submittal Arch',
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/default-sheet/edit',
     });
     const defaultReadLog = vi.fn().mockResolvedValue({
       spreadsheetId: 'default-sheet',
@@ -810,8 +822,10 @@ describe('document-log.wiring', () => {
     const overrideWriteLog = vi.fn().mockResolvedValue({
       spreadsheetId: 'override-req-sheet',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 12,
       action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/override-req-sheet/edit#gid=101&range=12:12',
     });
     const overrideHandler = wiring.createPerRequestActivityHandler(
       { selectedLogId: 'override-ctx-3' },
@@ -833,8 +847,10 @@ describe('document-log.wiring', () => {
         documentLogWrite: {
           spreadsheetId: 'override-req-sheet',
           sheetName: 'Submittal Arch',
+          sheetId: 101,
           rowNumber: 12,
           action: 'updated',
+          uri: 'https://docs.google.com/spreadsheets/d/override-req-sheet/edit#gid=101&range=12:12',
         },
       },
     });

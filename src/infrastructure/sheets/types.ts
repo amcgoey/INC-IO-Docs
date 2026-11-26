@@ -75,6 +75,7 @@ export type RowKey = Static<typeof RowKeySchema>;
 export const InsertGroupedRowResultSchema = Type.Object({
   rowNumber: Type.Number(),
   action: Type.Union([Type.Literal('inserted'), Type.Literal('updated')]),
+  sheetId: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
 });
 export type InsertGroupedRowResult = Static<typeof InsertGroupedRowResultSchema>;
 
