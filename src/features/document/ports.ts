@@ -275,6 +275,13 @@ export class FileNotFoundError extends DriveServiceError {
   }
 }
 
+export class DriveFileTooLargeError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DriveFileTooLargeError';
+  }
+}
+
 export interface DriveSearchQuery {
   targetName: string;
   exactMatch?: boolean | undefined;
@@ -288,8 +295,15 @@ export interface DriveFileResult {
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?:
+    | {
+        targetId?: string | undefined;
+        targetMimeType?: string | undefined;
+      }
+    | undefined;
 }
 
 export type DriveFile = DriveFileResult;
@@ -303,6 +317,7 @@ export interface DriveConfiguration {
 
 export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
+  getMaxInMemoryFileBytes?(): Promise<number | undefined>;
 }
 
 export interface DriveDuplicateOptions {

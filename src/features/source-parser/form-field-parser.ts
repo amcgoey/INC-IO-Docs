@@ -34,6 +34,9 @@ export const PDF_FORM_ENCRYPTED_ERROR_MESSAGE =
 export const DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE =
   'Could not read document form fields because the file could not be parsed; you can enter them manually.';
 
+export const PDF_FORM_FILE_TOO_LARGE_ERROR_MESSAGE =
+  'Could not read document form fields because the file exceeds the maximum in-memory size limit; you can enter them manually.';
+
 export type FormFieldMatcherKind = 'lookup' | 'sixDigitCode' | 'numericSequence' | 'revision';
 
 export function classifyFormFieldMatcher(
@@ -679,6 +682,7 @@ export async function extractFormExtractorFields(params: {
     const outcome = await formExtractor.extractFormFields({
       id: hierarchy.item.id,
       mimeType,
+      ...(hierarchy.item.size !== undefined ? { size: hierarchy.item.size } : {}),
     });
 
     if (outcome.status === 'encrypted') {
@@ -687,6 +691,10 @@ export async function extractFormExtractorFields(params: {
     }
     if (outcome.status === 'corrupted') {
       statusMessages.push(DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE);
+      continue;
+    }
+    if (outcome.status === 'file_too_large') {
+      statusMessages.push(PDF_FORM_FILE_TOO_LARGE_ERROR_MESSAGE);
       continue;
     }
     if (outcome.status === 'source_error') {

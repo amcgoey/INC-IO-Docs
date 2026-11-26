@@ -435,4 +435,67 @@ describe('source-parser.wiring', () => {
       docsSpy.mockRestore();
     }
   });
+
+  it('wires configProvider.getMaxInMemoryFileBytes into fallback PdfProcessor and DriveFormExtractorAdapter (#372)', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]);
+    const pdfBytes = await doc.save();
+
+    const mockManifestProvider = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./types/submittal-arch.json'],
+      }),
+      readParsedSchema: vi.fn().mockResolvedValue({
+        key: 'submittal-arch',
+        documentSchema: {
+          fields: [
+            { key: 'section', type: 'string', pattern: '^\\d{6}$' },
+            { key: 'number', type: 'string', pattern: '^\\d{3,}$' },
+          ],
+        },
+        documentFormSchema: {
+          fields: {
+            'Submittal No': { template: '{{section}}-{{number}}' },
+          },
+        },
+        documentParseSchema: {
+          extractors: [{ source: 'form' }],
+        },
+      }),
+    };
+
+    const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
+      id: 'oversized-pdf-1',
+      name: '071200-001_Huge.pdf',
+      mimeType: 'application/pdf',
+      parents: [],
+    });
+    const downloadMediaSpy = vi
+      .spyOn(GoogleDriveClient.prototype, 'downloadFileMedia')
+      .mockResolvedValue(pdfBytes);
+
+    try {
+      const wiring = createSourceParserWiring({
+        spaceTypesProvider: mockSpaceTypesProvider,
+        manifestProvider: mockManifestProvider,
+        configProvider: {
+          getDriveConfig: vi.fn().mockResolvedValue(undefined),
+          getMaxInMemoryFileBytes: vi.fn().mockResolvedValue(pdfBytes.byteLength - 1),
+        },
+      });
+      await wiring.parseSchemaRegistry.initialize();
+
+      const res = await wiring.createSourceParser({}).extractFields({
+        documentTypeKey: 'submittal-arch',
+        context: { items: [{ id: 'oversized-pdf-1' }] },
+      });
+
+      expect(res.statusMessages).toEqual([
+        'Could not read document form fields because the file exceeds the maximum in-memory size limit; you can enter them manually.',
+      ]);
+    } finally {
+      getFileSpy.mockRestore();
+      downloadMediaSpy.mockRestore();
+    }
+  });
 });

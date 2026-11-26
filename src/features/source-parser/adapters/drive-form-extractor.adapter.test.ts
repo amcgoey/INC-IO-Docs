@@ -11,7 +11,9 @@ import {
   PdfProcessorError,
   PdfEncryptionError,
   PdfCorruptedError,
+  PdfFileTooLargeError,
 } from '../../../infrastructure/pdf/errors';
+import { GoogleDriveFileTooLargeError } from '../../../infrastructure/drive/drive-client';
 import {
   GoogleDocsApiError,
   GoogleDocsCorruptedError,
@@ -361,5 +363,53 @@ describe('DriveFormExtractorAdapter', () => {
       mimeType: 'application/vnd.google-apps.document',
     });
     expect(otherMime).toEqual({ status: 'ok', widgetCount: 0, fields: {} });
+  });
+
+  it('classifies PdfFileTooLargeError, GoogleDriveFileTooLargeError, and oversized item.size as file_too_large outside corrupted status', async () => {
+    const driveMediaClient: DriveFormMediaClientPort = {
+      downloadFileMedia: vi
+        .fn()
+        .mockResolvedValueOnce(new Uint8Array([1, 2, 3]))
+        .mockRejectedValueOnce(
+          new GoogleDriveFileTooLargeError('Too large stream', { maxBytes: 100 })
+        ),
+    };
+    const pdfProcessor: PdfFormExtractorPort = {
+      extractFormData: vi
+        .fn()
+        .mockRejectedValueOnce(new PdfFileTooLargeError('Too large PDF')),
+    };
+
+    const adapter = new DriveFormExtractorAdapter({
+      driveMediaClient,
+      pdfProcessor,
+      getMaxInMemoryFileBytes: vi.fn().mockResolvedValue(100),
+    });
+
+    // 1. Pre-download size metadata check avoids downloadFileMedia & PdfProcessor
+    await expect(
+      adapter.extractFormFields({
+        id: 'oversized-meta-pdf',
+        mimeType: 'application/pdf',
+        size: 101,
+      })
+    ).resolves.toEqual({ status: 'file_too_large' });
+    expect(driveMediaClient.downloadFileMedia).not.toHaveBeenCalled();
+
+    // 2. PdfFileTooLargeError from PdfProcessor classifies as file_too_large (not corrupted)
+    await expect(
+      adapter.extractFormFields({
+        id: 'oversized-pdf-proc',
+        mimeType: 'application/pdf',
+      })
+    ).resolves.toEqual({ status: 'file_too_large' });
+
+    // 3. GoogleDriveFileTooLargeError from downloadFileMedia classifies as file_too_large (not source_error)
+    await expect(
+      adapter.extractFormFields({
+        id: 'oversized-drive-stream',
+        mimeType: 'application/pdf',
+      })
+    ).resolves.toEqual({ status: 'file_too_large' });
   });
 });

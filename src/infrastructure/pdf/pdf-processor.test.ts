@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PDFDocument, PDFName, PDFPage, StandardFonts } from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
 import type { EmailPdfRenderInput } from './types';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
+  PdfFileTooLargeError,
   PdfOutOfBoundsError,
 } from './errors';
 
@@ -1366,6 +1367,68 @@ describe('PdfProcessor', () => {
       expect(doc.getPageCount()).toBe(1);
 
       drawImageSpy.mockRestore();
+    });
+  });
+
+  describe('centralized in-memory file-size guard', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('enforces async size-limit provider across single-buffer operations and cumulative mergeDocuments', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      const limit = pdfBytes.byteLength + 10;
+      const getMaxInMemoryFileBytes = vi.fn().mockResolvedValue(limit);
+      const guarded = new PdfProcessor({ getMaxInMemoryFileBytes });
+
+      // Single buffer within limit passes
+      await expect(guarded.extractPages(pdfBytes, [1])).resolves.toBeInstanceOf(Uint8Array);
+      await expect(guarded.extractFormData(pdfBytes)).resolves.toEqual({});
+
+      // Cumulative mergeDocuments exceeds limit even though each buffer is below limit
+      await expect(guarded.mergeDocuments([pdfBytes, pdfBytes])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
+
+      // Strict lower limit rejects single-buffer operations before parsing
+      const tightGuarded = new PdfProcessor({
+        getMaxInMemoryFileBytes: async () => pdfBytes.byteLength - 1,
+      });
+      await expect(tightGuarded.extractPages(pdfBytes, [1])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(tightGuarded.extractFormData(pdfBytes)).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(
+        tightGuarded.processFormSubmission(pdfBytes, { Field: 'val' })
+      ).rejects.toThrow(PdfFileTooLargeError);
+      await expect(tightGuarded.extractTextFromPages(pdfBytes, [1])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(
+        tightGuarded.generateEmailPdf({
+          messageId: 'msg-oversized',
+          inlineImages: [
+            {
+              cid: 'img-1',
+              mimeType: 'image/png',
+              data: new Uint8Array(pdfBytes.byteLength),
+            },
+          ],
+        })
+      ).rejects.toThrow(PdfFileTooLargeError);
+    });
+
+    it('honors MAX_IN_MEMORY_FILE_BYTES environment override when no custom provider is passed', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', String(pdfBytes.byteLength - 1));
+
+      const defaultProcessor = new PdfProcessor();
+      await expect(defaultProcessor.extractFormData(pdfBytes)).rejects.toThrow(
+        PdfFileTooLargeError
+      );
     });
   });
 });

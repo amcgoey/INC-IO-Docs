@@ -5365,10 +5365,12 @@ describe('SourceParserService Pass 1 (inferRouting)', () => {
       const expectedMessages = {
         encrypted: PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
         corrupted: DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+        file_too_large:
+          'Could not read document form fields because the file exceeds the maximum in-memory size limit; you can enter them manually.',
         source_error: DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
       } as const;
 
-      for (const status of ['encrypted', 'corrupted', 'source_error'] as const) {
+      for (const status of ['encrypted', 'corrupted', 'file_too_large', 'source_error'] as const) {
         const formExtractor: FormExtractorPort = {
           extractFormFields: vi.fn().mockResolvedValue({ status }),
         };
