@@ -1,13 +1,26 @@
-import type { UiView, UiViewHeader, UiViewSection, UiViewWidget } from '../domain';
+import type { UiView, UiViewButton, UiViewHeader, UiViewSection, UiViewWidget } from '../domain';
 import type {
   DocumentTypeDisplayNameResolverPort,
   ExecutionFileLocator,
+  ExecutionLogWrite,
   UiViewAdapterContext,
   UiViewSchemaAdapterPort,
 } from '../ports';
 import { escapeCardHtml } from '../blocks/common';
 
 export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
+
+function buildOpenLinkButton(text: string, url: string): UiViewButton {
+  return {
+    text,
+    onClick: {
+      openLink: {
+        url,
+        openAs: 'FULL_SIZE' as const,
+      },
+    },
+  };
+}
 
 const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 
@@ -103,39 +116,13 @@ function collectCreatedAndFiledFiles(
   return files;
 }
 
-function buildOpenButton(rawUri: string | undefined):
-  | {
-      text: string;
-      onClick: {
-        openLink: {
-          url: string;
-          openAs: 'FULL_SIZE';
-        };
-      };
-    }
-  | undefined {
-  const trimmedUri = rawUri?.trim();
-  if (!trimmedUri) {
-    return undefined;
-  }
-  return {
-    text: 'Open',
-    onClick: {
-      openLink: {
-        url: trimmedUri,
-        openAs: 'FULL_SIZE' as const,
-      },
-    },
-  };
-}
-
 function buildFolderWidget(folder: FolderDisplayEntry): UiViewWidget {
-  const button = buildOpenButton(folder.uri);
+  const trimmedUri = folder.uri?.trim();
   return {
     decoratedText: {
       text: escapeCardHtml(folder.name),
       wrapText: true,
-      ...(button ? { button } : {}),
+      ...(trimmedUri ? { button: buildOpenLinkButton('Open', trimmedUri) } : {}),
     },
   };
 }
@@ -144,15 +131,41 @@ function buildFileWidget(file: ExecutionFileLocator): UiViewWidget {
   const trimmedName = file.name.trim();
   const displayName = trimmedName.length > 0 ? trimmedName : 'Unnamed File';
   const trimmedParentName = file.parentName?.trim();
-  const button = buildOpenButton(file.uri);
+  const trimmedUri = file.uri?.trim();
 
   return {
     decoratedText: {
       text: escapeCardHtml(displayName),
       wrapText: true,
       ...(trimmedParentName ? { bottomLabel: trimmedParentName } : {}),
-      ...(button ? { button } : {}),
+      ...(trimmedUri ? { button: buildOpenLinkButton('Open', trimmedUri) } : {}),
     },
+  };
+}
+
+function buildFallbackLogSummarySection(logWrite: ExecutionLogWrite): UiViewSection {
+  const trimmedSheetName = logWrite.sheetName?.trim();
+  const rowNumber =
+    typeof logWrite.rowNumber === 'number' && Number.isFinite(logWrite.rowNumber)
+      ? logWrite.rowNumber
+      : undefined;
+  const text =
+    trimmedSheetName && trimmedSheetName.length > 0 && rowNumber !== undefined
+      ? `<b>${escapeCardHtml(trimmedSheetName)}</b> \u2022 Row ${rowNumber}`
+      : 'Document Log Entry';
+  const trimmedUri = logWrite.uri?.trim();
+
+  return {
+    header: 'Summary',
+    widgets: [
+      {
+        decoratedText: {
+          text,
+          wrapText: true,
+          ...(trimmedUri ? { button: buildOpenLinkButton('Open Log', trimmedUri) } : {}),
+        },
+      },
+    ],
   };
 }
 
@@ -211,6 +224,10 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     }
 
     const sections: UiViewSection[] = [{ widgets: bannerWidgets }];
+
+    if (outcome.logWrite !== undefined) {
+      sections.push(buildFallbackLogSummarySection(outcome.logWrite));
+    }
 
     const folders = collectFolders(outcome.stepResults);
     if (folders.length > 0) {

@@ -179,8 +179,10 @@ export class DocumentLogActivityHandler implements ActivityHandler {
           documentLogWrite: {
             spreadsheetId: result.spreadsheetId,
             sheetName: result.sheetName,
+            ...(result.sheetId !== undefined ? { sheetId: result.sheetId } : {}),
             rowNumber: result.rowNumber,
             action: result.action,
+            ...(result.uri !== undefined ? { uri: result.uri } : {}),
           },
         },
       };

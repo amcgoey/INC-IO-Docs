@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
+import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { Value } from '@sinclair/typebox/value';
 import { DocumentLogService } from './domain';
 import {
@@ -9,6 +10,7 @@ import {
   DocumentLogMissingError,
   DocumentLogUiContextResultSchema,
   LogResolutionCandidateSchema,
+  WriteDocumentLogResultSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDocument,
   type DocumentLogSchema,
@@ -1226,6 +1228,7 @@ describe('DocumentLogService', () => {
         sheetName: 'Submittal Arch',
         rowNumber: 7,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/log-1/edit',
       });
       expect(insertRow).toHaveBeenCalledWith({
         target: {
@@ -1304,6 +1307,7 @@ describe('DocumentLogService', () => {
         sheetName: 'Submittal Arch',
         rowNumber: 6,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/selected-log-999/edit',
       });
       expect(insertRow).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1311,6 +1315,78 @@ describe('DocumentLogService', () => {
           rowData: expect.objectContaining({ 'Calc Link': null }),
         })
       );
+    });
+
+    it('builds row deep-link uri with #gid=<sheetId>&range=<rowNumber>:<rowNumber> (including sheetId === 0) and falls back to /edit when sheetId is undefined', async () => {
+      const insertRowZero = vi.fn().mockResolvedValue({ rowNumber: 12, action: 'inserted', sheetId: 0 });
+      const { service: svcZero } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-zero', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { insertRow: insertRowZero },
+      });
+
+      const zeroRes = await svcZero.writeLog({ document: sampleDoc });
+      expect(zeroRes).toEqual({
+        spreadsheetId: 'log-zero',
+        sheetName: 'Submittal Arch',
+        sheetId: 0,
+        rowNumber: 12,
+        action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/log-zero/edit#gid=0&range=12:12',
+      });
+
+      const insertRowNonZero = vi.fn().mockResolvedValue({ rowNumber: 15, action: 'updated', sheetId: 202 });
+      const { service: svcNonZero } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-202', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { insertRow: insertRowNonZero },
+      });
+
+      const nonZeroRes = await svcNonZero.writeLog({ document: sampleDoc });
+      expect(nonZeroRes).toEqual({
+        spreadsheetId: 'log-202',
+        sheetName: 'Submittal Arch',
+        sheetId: 202,
+        rowNumber: 15,
+        action: 'updated',
+        uri: 'https://docs.google.com/spreadsheets/d/log-202/edit#gid=202&range=15:15',
+      });
+
+      const insertRowUndefined = vi.fn().mockResolvedValue({ rowNumber: 8, action: 'inserted' });
+      const { service: svcUndefined } = createService({
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-fallback', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: { insertRow: insertRowUndefined },
+      });
+
+      const fallbackRes = await svcUndefined.writeLog({ document: sampleDoc });
+      expect(fallbackRes).toEqual({
+        spreadsheetId: 'log-fallback',
+        sheetName: 'Submittal Arch',
+        rowNumber: 8,
+        action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/log-fallback/edit',
+      });
+      expect('sheetId' in fallbackRes).toBe(false);
+
+      const prevPolicy = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(Value.Check(WriteDocumentLogResultSchema, zeroRes)).toBe(true);
+        expect(Value.Check(WriteDocumentLogResultSchema, nonZeroRes)).toBe(true);
+        expect(Value.Check(WriteDocumentLogResultSchema, fallbackRes)).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prevPolicy;
+      }
     });
 
     it('fails fast with DocumentLogMissingError naming space.name and preferredFolderPath when 0 matches', async () => {
@@ -1465,6 +1541,7 @@ describe('DocumentLogService', () => {
         sheetName: 'Submittal Arch',
         rowNumber: 10,
         action: 'updated',
+        uri: 'https://docs.google.com/spreadsheets/d/log-upsert-1/edit',
       });
       expect(insertRow).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1578,6 +1655,7 @@ describe('DocumentLogService', () => {
         sheetName: 'Submittal FF&E',
         rowNumber: 8,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/log-ffe-1/edit',
       });
 
       expect(insertRow).toHaveBeenCalledWith({
