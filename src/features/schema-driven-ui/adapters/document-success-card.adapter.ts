@@ -1,7 +1,15 @@
-import type { UiView, UiViewHeader, UiViewSection, UiViewWidget } from '../domain';
+import type {
+  DocumentUiSuccessArtifact,
+  DocumentUiSuccessSummary,
+  UiView,
+  UiViewHeader,
+  UiViewSection,
+  UiViewWidget,
+} from '../domain';
 import type {
   DocumentTypeDisplayNameResolverPort,
   ExecutionFileLocator,
+  TemplateParserPort,
   UiViewAdapterContext,
   UiViewSchemaAdapterPort,
 } from '../ports';
@@ -9,32 +17,162 @@ import { escapeCardHtml } from '../blocks/common';
 
 export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
 
-function collectCreatedAndFiledFiles(
-  stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults']
-): ExecutionFileLocator[] {
+interface CollectedArtifactItem {
+  file: ExecutionFileLocator;
+  roleLabel?: string | undefined;
+}
+
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r?\n|\r/g, ' ');
+}
+
+function resolveTokenString(
+  data: Readonly<Record<string, unknown>>,
+  parts: readonly string[]
+): string {
+  let current: unknown = data;
+  for (const part of parts) {
+    if (
+      current === null ||
+      current === undefined ||
+      typeof current !== 'object' ||
+      Array.isArray(current)
+    ) {
+      return '';
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+  if (typeof current === 'string') {
+    return current;
+  }
+  if (typeof current === 'number' || typeof current === 'boolean') {
+    return String(current);
+  }
+  return '';
+}
+
+function stitchTemplate(
+  parser: TemplateParserPort,
+  template: string,
+  data: Readonly<Record<string, unknown>>,
+  options: { escapeHtml: boolean }
+): string {
+  const parsed = parser.parseMustacheTemplate(template);
+  let result = normalizeNewlines(parsed.literals[0] ?? '');
+  for (let i = 0; i < parsed.tokens.length; i++) {
+    const rawValue = normalizeNewlines(resolveTokenString(data, parsed.tokens[i]!.parts));
+    const interpolated = options.escapeHtml ? escapeCardHtml(rawValue) : rawValue;
+    const nextLiteral = normalizeNewlines(parsed.literals[i + 1] ?? '');
+    result += interpolated + nextLiteral;
+  }
+  return result.trim();
+}
+
+function buildSummarySection(
+  summary: DocumentUiSuccessSummary,
+  documentData: Readonly<Record<string, unknown>>,
+  templateParser?: TemplateParserPort
+): UiViewSection {
+  if (!templateParser) {
+    throw new Error('TemplateParserPort is required to evaluate successView.summary');
+  }
+
+  const stitchedText = stitchTemplate(templateParser, summary.text, documentData, {
+    escapeHtml: true,
+  });
+  const visibleText = stitchedText.replace(/<[^>]*>/g, '').trim();
+  const text = visibleText.length > 0 ? stitchedText : '—';
+
+  const topLabel =
+    summary.topLabel !== undefined
+      ? stitchTemplate(templateParser, summary.topLabel, documentData, { escapeHtml: false })
+      : '';
+  const bottomLabel =
+    summary.bottomLabel !== undefined
+      ? stitchTemplate(templateParser, summary.bottomLabel, documentData, { escapeHtml: false })
+      : '';
+
+  return {
+    header: 'Summary',
+    widgets: [
+      {
+        decoratedText: {
+          ...(topLabel.length > 0 ? { topLabel } : {}),
+          text,
+          wrapText: true,
+          ...(bottomLabel.length > 0 ? { bottomLabel } : {}),
+        },
+      },
+    ],
+  };
+}
+
+function resolveArtifactLabel(
+  spec: DocumentUiSuccessArtifact,
+  stepHasNotices: boolean,
+  workflowName: string | undefined
+): string {
+  if (stepHasNotices && spec.fallbackLabel?.trim()) {
+    return spec.fallbackLabel.trim();
+  }
+  if (workflowName && spec.whenWorkflow?.[workflowName]?.trim()) {
+    return spec.whenWorkflow[workflowName].trim();
+  }
+  return spec.label.trim();
+}
+
+function collectCreatedAndFiledItems(
+  stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults'],
+  artifactSpecs: readonly DocumentUiSuccessArtifact[] | undefined,
+  workflowName: string | undefined
+): CollectedArtifactItem[] {
   const seenIds = new Set<string>();
-  const files: ExecutionFileLocator[] = [];
+  const items: CollectedArtifactItem[] = [];
+
+  const pushUnique = (file: ExecutionFileLocator, roleLabel?: string) => {
+    const idKey = file.id.trim();
+    if (idKey.length > 0 && seenIds.has(idKey)) {
+      return;
+    }
+    if (idKey.length > 0) {
+      seenIds.add(idKey);
+    }
+    items.push({
+      file,
+      ...(roleLabel !== undefined && roleLabel.length > 0 ? { roleLabel } : {}),
+    });
+  };
+
+  if (artifactSpecs && artifactSpecs.length > 0) {
+    for (const spec of artifactSpecs) {
+      for (const step of stepResults) {
+        if (step.activityType === 'WRITE_LOG' || step.stepId !== spec.stepId) {
+          continue;
+        }
+        const stepHasNotices =
+          step.notices?.some((notice) => notice.trim().length > 0) ?? false;
+        const roleLabel = resolveArtifactLabel(spec, stepHasNotices, workflowName);
+        for (const file of step.files) {
+          pushUnique(file, roleLabel);
+        }
+      }
+    }
+  }
 
   for (const step of stepResults) {
     if (step.activityType === 'WRITE_LOG') {
       continue;
     }
     for (const file of step.files) {
-      const idKey = file.id.trim();
-      if (idKey.length > 0 && seenIds.has(idKey)) {
-        continue;
-      }
-      if (idKey.length > 0) {
-        seenIds.add(idKey);
-      }
-      files.push(file);
+      pushUnique(file);
     }
   }
 
-  return files;
+  return items;
 }
 
-function buildFileWidget(file: ExecutionFileLocator): UiViewWidget {
+function buildFileWidget(item: CollectedArtifactItem): UiViewWidget {
+  const { file, roleLabel } = item;
   const trimmedName = file.name.trim();
   const displayName = trimmedName.length > 0 ? trimmedName : 'Unnamed File';
   const trimmedParentName = file.parentName?.trim();
@@ -42,6 +180,7 @@ function buildFileWidget(file: ExecutionFileLocator): UiViewWidget {
 
   return {
     decoratedText: {
+      ...(roleLabel ? { topLabel: roleLabel } : {}),
       text: escapeCardHtml(displayName),
       wrapText: true,
       ...(trimmedParentName ? { bottomLabel: trimmedParentName } : {}),
@@ -72,7 +211,8 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
   public readonly requiresUiSchema = 'optional' as const;
 
   constructor(
-    private readonly displayNameResolver?: DocumentTypeDisplayNameResolverPort
+    private readonly displayNameResolver?: DocumentTypeDisplayNameResolverPort,
+    private readonly templateParser?: TemplateParserPort
   ) {}
 
   async composeView(context: UiViewAdapterContext): Promise<UiView> {
@@ -95,7 +235,7 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     };
 
     const bannerWidgets: UiViewWidget[] = [];
-    const trimmedWorkflowName = outcome.workflowName?.trim();
+    const trimmedWorkflowName = outcome.workflowName?.trim() || undefined;
     const bannerText = trimmedWorkflowName
       ? `Filed via <b>${escapeCardHtml(trimmedWorkflowName)}</b>`
       : 'Filed.';
@@ -118,11 +258,22 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
 
     const sections: UiViewSection[] = [{ widgets: bannerWidgets }];
 
-    const filedFiles = collectCreatedAndFiledFiles(outcome.stepResults);
-    if (filedFiles.length > 0) {
+    const successView = context.uiSchema?.successView;
+    if (successView?.summary) {
+      sections.push(
+        buildSummarySection(successView.summary, outcome.documentData, this.templateParser)
+      );
+    }
+
+    const filedItems = collectCreatedAndFiledItems(
+      outcome.stepResults,
+      successView?.artifacts,
+      trimmedWorkflowName
+    );
+    if (filedItems.length > 0) {
       sections.push({
         header: 'Created & Filed',
-        widgets: filedFiles.map(buildFileWidget),
+        widgets: filedItems.map(buildFileWidget),
       });
     }
 

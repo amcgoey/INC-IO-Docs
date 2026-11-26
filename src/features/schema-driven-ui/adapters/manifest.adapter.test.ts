@@ -150,4 +150,78 @@ describe('ManifestUiAdapter', () => {
 
     expect(displayName).toBeUndefined();
   });
+
+  it('retains valid documentUiSchema.successView through Value.Clean while stripping unknown keys (#385)', async () => {
+    const manifestWithSuccessView: RawManifestProviderPort = {
+      getRawManifest: vi.fn().mockResolvedValue({
+        documentTypes: ['./doc-sv.json', './doc-sv-invalid.json'],
+      }),
+      readParsedSchema: vi.fn().mockImplementation(async (relPath: string) => {
+        if (relPath === './doc-sv.json') {
+          return {
+            key: 'doc-sv',
+            name: 'Doc Success View',
+            documentSchema: { fields: [{ key: 'title', type: 'string' }] },
+            documentUiSchema: {
+              layout: ['title'],
+              extraRootProp: 'strip-me',
+              successView: {
+                extraSuccessProp: 'strip-me',
+                summary: {
+                  topLabel: 'Top',
+                  text: '<b>{{title}}</b>',
+                  bottomLabel: 'Bottom',
+                  extraSummaryProp: 99,
+                },
+                artifacts: [
+                  {
+                    stepId: 'moveOriginal',
+                    label: 'Filed Original',
+                    whenWorkflow: { SubmittalReceived: 'Archived Original' },
+                    fallbackLabel: 'Fallback',
+                    extraArtifactProp: false,
+                  },
+                ],
+              },
+            },
+          };
+        }
+        if (relPath === './doc-sv-invalid.json') {
+          return {
+            key: 'doc-sv-invalid',
+            documentSchema: { fields: [{ key: 'title', type: 'string' }] },
+            documentUiSchema: {
+              successView: {
+                summary: { text: 123 },
+              },
+            },
+          };
+        }
+        return undefined;
+      }),
+    };
+
+    const adapter = new ManifestUiAdapter(manifestWithSuccessView);
+    const uiSchema = await adapter.getUiSchema('doc-sv');
+    expect(uiSchema).toEqual({
+      layout: ['title'],
+      successView: {
+        summary: {
+          topLabel: 'Top',
+          text: '<b>{{title}}</b>',
+          bottomLabel: 'Bottom',
+        },
+        artifacts: [
+          {
+            stepId: 'moveOriginal',
+            label: 'Filed Original',
+            whenWorkflow: { SubmittalReceived: 'Archived Original' },
+            fallbackLabel: 'Fallback',
+          },
+        ],
+      },
+    });
+
+    expect(await adapter.getUiSchema('doc-sv-invalid')).toBeUndefined();
+  });
 });

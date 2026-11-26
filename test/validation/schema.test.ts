@@ -19,6 +19,9 @@ import {
   DocumentFormSchemaSchema as SourceParserFormSchemaSchema,
 } from '../../src/features/source-parser/ports';
 import { UiSchema, type UiSchema as UiSchemaType } from '../../src/features/schema-driven-ui/domain';
+import { ManifestUiAdapter } from '../../src/features/schema-driven-ui/adapters/manifest.adapter';
+import { createSchemaDrivenUiWiring } from '../../src/app/schema-driven-ui.wiring';
+import { DOCUMENT_SUCCESS_CARD_VIEW_ID } from '../../src/features/schema-driven-ui/adapters/document-success-card.adapter';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceService,
@@ -1278,6 +1281,194 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
     expect(ffeDoc?.documentFormSchema?.fields['Submittal No']?.writable).toBe(true);
     expect(ffeDoc?.documentFormSchema?.fields['Submittal Response']?.writable).toBeUndefined();
     expect(ffeDoc?.documentFormSchema?.fields.Date?.writable).toBeUndefined();
+  });
+});
+
+describe('Declarative documentUiSchema.successView across all 4 production DocumentTypes (#385)', () => {
+  it('retains configured successView across DocumentSchemaRegistryAdapter and ManifestUiAdapter and renders Summary + Created & Filed for all 4 DocumentTypes', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const handlebars = new HandlebarsAdapter();
+    const docRegistry = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const manifestUiAdapter = new ManifestUiAdapter(
+      manifestProvider,
+      (uiSchema, docSchema) => ensureEvaluationOrder<UiSchemaType>(uiSchema, docSchema) ?? uiSchema
+    );
+
+    const docTypes = await docRegistry.loadAll();
+    const byKey = new Map(docTypes.map((d) => [d.key, d]));
+
+    expect(byKey.get('communication-project')?.documentWorkflowConfig?.workflows[0]?.activitySequence?.[0]?.id).toBe('moveFiles');
+    expect(byKey.get('communication-proposal')?.documentWorkflowConfig?.workflows[0]?.activitySequence?.[0]?.id).toBe('moveFiles');
+
+    const expectedSubmittalArtifacts = [
+      {
+        stepId: 'insertCoverSheet',
+        label: 'Review Copy (with Cover Sheet)',
+        fallbackLabel: 'Transmittal Cover Sheet',
+      },
+      {
+        stepId: 'duplicateForReview',
+        label: 'Review Copy',
+      },
+      {
+        stepId: 'moveOriginal',
+        label: 'Filed Original',
+        whenWorkflow: {
+          SubmittalReceived: 'Archived Original',
+          SubmittalSent: 'Filed Submittal',
+        },
+      },
+    ];
+
+    const expectedSuccessViews: Record<string, UiSchemaType['successView']> = {
+      'submittal-arch': {
+        summary: {
+          topLabel: '{{section}}-{{number}}-{{revision}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> • {{date}} ({{contact.key}})',
+          bottomLabel: '{{title}}',
+        },
+        artifacts: expectedSubmittalArtifacts,
+      },
+      'submittal-ffe': {
+        summary: {
+          topLabel: '{{specTag.key}}-{{revision}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> • {{date}} ({{contact.key}})',
+          bottomLabel: '{{vendor.name}} — {{specTitle}}',
+        },
+        artifacts: expectedSubmittalArtifacts,
+      },
+      'communication-project': {
+        summary: {
+          topLabel: '{{contact.name}} • {{direction.name}}',
+          text: '<b>{{date}}</b> — {{description}}',
+        },
+        artifacts: [{ stepId: 'moveFiles', label: 'Filed File' }],
+      },
+      'communication-proposal': {
+        summary: {
+          topLabel: '{{contact.name}} • {{direction.name}}',
+          text: '<b>{{date}}</b> — {{description}}',
+        },
+        artifacts: [{ stepId: 'moveFiles', label: 'Filed File' }],
+      },
+    };
+
+    for (const [docKey, expectedSv] of Object.entries(expectedSuccessViews)) {
+      expect(byKey.get(docKey)?.documentUiSchema?.successView).toEqual(expectedSv);
+      const uiSchema = await manifestUiAdapter.getUiSchema(docKey);
+      expect(uiSchema?.successView).toEqual(expectedSv);
+    }
+
+    const { schemaDrivenUiService } = createSchemaDrivenUiWiring({ manifestProvider });
+
+    const archView = await schemaDrivenUiService.generateView({
+      viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+      documentTypeKey: 'submittal-arch',
+      executionOutcome: {
+        success: true,
+        workflowName: 'SubmittalReceived',
+        completedStepCount: 3,
+        spaceName: 'Harborview',
+        documentData: {
+          section: '071200',
+          number: '001',
+          revision: '0',
+          status: { key: 'Open' },
+          action: { name: 'Received' },
+          date: '260920',
+          contact: { key: 'ACME' },
+          title: 'Waterproofing',
+        },
+        stepResults: [
+          { stepId: 'moveOriginal', activityType: 'MOVE_FILE', files: [{ id: 'orig', name: 'Orig.pdf' }] },
+          { stepId: 'duplicateForReview', activityType: 'DUPLICATE_FILE', files: [{ id: 'rev', name: '_Rev.pdf' }] },
+          { stepId: 'insertCoverSheet', activityType: 'INSERT_PAGES', files: [{ id: 'rev', name: '_Rev.pdf' }] },
+        ],
+        notices: [],
+        errors: [],
+      },
+    });
+    expect(archView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+      topLabel: '071200-001-0 • Open',
+      text: '<b>Received</b> • 260920 (ACME)',
+      wrapText: true,
+      bottomLabel: 'Waterproofing',
+    });
+    expect(
+      archView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+    ).toEqual(['Review Copy (with Cover Sheet)', 'Archived Original']);
+
+    const ffeView = await schemaDrivenUiService.generateView({
+      viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+      documentTypeKey: 'submittal-ffe',
+      executionOutcome: {
+        success: true,
+        workflowName: 'SubmittalSent',
+        completedStepCount: 1,
+        spaceName: 'Harborview',
+        documentData: {
+          specTag: { key: 'PL001' },
+          revision: '1',
+          status: { key: 'Closed' },
+          action: { name: 'Approved' },
+          date: '260921',
+          contact: { key: 'VEND' },
+          vendor: { name: 'Kohler' },
+          specTitle: 'Plumbing Fixture',
+        },
+        stepResults: [
+          { stepId: 'moveOriginal', activityType: 'MOVE_FILE', files: [{ id: 'orig', name: 'Sent.pdf' }] },
+        ],
+        notices: [],
+        errors: [],
+      },
+    });
+    expect(ffeView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+      topLabel: 'PL001-1 • Closed',
+      text: '<b>Approved</b> • 260921 (VEND)',
+      wrapText: true,
+      bottomLabel: 'Kohler — Plumbing Fixture',
+    });
+    expect(
+      ffeView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+    ).toEqual(['Filed Submittal']);
+
+    for (const commKey of ['communication-project', 'communication-proposal']) {
+      const commView = await schemaDrivenUiService.generateView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: commKey,
+        executionOutcome: {
+          success: true,
+          workflowName: commKey === 'communication-project' ? 'FileCommProject' : 'FileCommProposal',
+          completedStepCount: 1,
+          spaceName: 'Space A',
+          documentData: {
+            contact: { name: 'Acme Client' },
+            direction: { name: 'Incoming' },
+            date: '260922',
+            description: 'RFI <01> & Notes',
+          },
+          stepResults: [
+            { stepId: 'moveFiles', activityType: 'MOVE_FILE', files: [{ id: 'f1', name: 'Email.pdf' }] },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+      expect(commView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+        topLabel: 'Acme Client • Incoming',
+        text: '<b>260922</b> — RFI &lt;01&gt; &amp; Notes',
+        wrapText: true,
+      });
+      expect(
+        commView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+      ).toEqual(['Filed File']);
+    }
   });
 });
 

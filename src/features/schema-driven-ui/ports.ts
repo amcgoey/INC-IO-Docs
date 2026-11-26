@@ -309,6 +309,20 @@ export interface DocumentTypeDisplayNameResolverPort {
   getDisplayName(documentTypeKey: string): Promise<string | undefined>;
 }
 
+export interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
+}
+
+export interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
+  literals: string[];
+}
+
+export interface TemplateParserPort {
+  parseMustacheTemplate(template: string): ParsedMustacheTemplate;
+}
+
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;
