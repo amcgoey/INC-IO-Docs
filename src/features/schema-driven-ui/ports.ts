@@ -31,6 +31,7 @@ export const GenerateViewRequestSchema = Type.Object({
   statusMessages: Type.Optional(Type.Array(Type.String())),
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   hiddenFields: Type.Optional(Type.Array(Type.String())),
+  lockedFields: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
 });
 
 export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;

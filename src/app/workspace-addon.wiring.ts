@@ -390,6 +390,7 @@ export function wireWorkspaceAddonRoutes(
       ...(options.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
       ...(sourceParser !== undefined ? { sourceParser } : {}),
       ...(createSourceParser !== undefined ? { createSourceParser } : {}),
+      createLockedFieldsResolver: (ctx) => lookupOptionsWiring.createLockedFieldsResolver(ctx),
       getLookupOptionsInvalidator: (ctx) => lookupOptionsWiring.getPerRequestLookupOptions(ctx),
       evaluateFormChange,
     });

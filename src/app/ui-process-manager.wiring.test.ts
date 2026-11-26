@@ -2646,6 +2646,38 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         { text: 'In Review', value: 'In Review' },
       ]);
     });
+
+    it('forwards intent.lockedFields from UiProcessOrchestrator into SchemaDrivenUiService.generateView', async () => {
+      const mockOrchestrator = {
+        processUiEvent: vi.fn().mockResolvedValue({
+          type: 'render',
+          viewId: 'drive-document-process-card',
+          documentTypeKey: 'submittal-ffe',
+          formData: { specTag: 'AC102' },
+          lockedFields: { specTitle: 'HOOK' },
+          isUpdateCard: true,
+        }),
+      };
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'drive-document-process-card',
+          sections: [
+            {
+              widgets: [{ decoratedText: { topLabel: 'Spec Title', text: 'HOOK', wrapText: true } }],
+            },
+          ],
+        }),
+      } as unknown as SchemaDrivenUiService;
+
+      const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
+      await wrapper({ formData: {} });
+
+      expect(mockSchemaDrivenUi.generateView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lockedFields: { specTitle: 'HOOK' },
+        })
+      );
+    });
   });
 });
 

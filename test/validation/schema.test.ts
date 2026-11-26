@@ -433,12 +433,13 @@ describe('DocumentType JSON files schema validation', () => {
         actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
         contacts: { provider: 'document_log', properties: ['key', 'name'] },
         vendors: { provider: 'document_log', properties: ['key', 'name'] },
+        specs: { provider: 'document_log', properties: ['key', 'name'] },
       });
       expect(ffeTargetSchema?.options?.statuses).toBeUndefined();
       expect(ffeTargetSchema?.options?.actions).toBeUndefined();
       expect(ffeTargetSchema?.options?.contacts).toBeUndefined();
       expect(ffeTargetSchema?.options?.vendors).toBeUndefined();
-      expect(ffeTargetSchema?.options?.specs?.length).toBeGreaterThan(0);
+      expect(ffeTargetSchema?.options?.specs).toBeUndefined();
 
       const archTargetSchema = registry.getTargetSchema('submittal-arch');
       expect(archTargetSchema?.optionSources).toEqual({
@@ -611,6 +612,16 @@ describe('DocumentType JSON files schema validation', () => {
             columns: {
               Vendor: 'key',
               Name: 'name',
+            },
+          },
+          specs: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            validationRangeName: 'Validation_Submittal_FFE_Specs',
+            endMarker: '---',
+            columns: {
+              'Spec Tag': 'key',
+              'Spec Title': 'name',
             },
           },
         },

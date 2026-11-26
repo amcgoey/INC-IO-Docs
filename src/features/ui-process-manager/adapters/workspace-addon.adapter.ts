@@ -13,6 +13,7 @@ import type {
   UiProcessGmailPort,
   UiProcessGmailMessageDescriptor,
   UiProcessSourceParserPort,
+  UiProcessLockedFieldsPort,
   UiProcessInferredRoutingResult,
   UiProcessSourceContext,
   UiProcessSourceContextItem,
@@ -207,6 +208,7 @@ export interface WorkspaceAddonAdapterOptions {
   formEvaluator?: UiProcessFormEvaluatorPort | undefined;
   gmailPort?: UiProcessGmailPort | undefined;
   sourceParser?: UiProcessSourceParserPort | undefined;
+  lockedFieldsResolver?: UiProcessLockedFieldsPort | undefined;
   onLogCopied?: ((spaceId: string) => void) | undefined;
 }
 
@@ -753,7 +755,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         ? { ...effectiveContext, formData: normalizedFormData }
         : effectiveContext;
 
-    const createRenderResult = (options: {
+    const createRenderResult = async (options: {
       formData?: Record<string, unknown> | undefined;
       validationErrors?: string[] | undefined;
       statusMessages?: string[] | undefined;
@@ -761,7 +763,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       hiddenFields?: string[] | undefined;
       clearPreviousSelectedLogId?: boolean | undefined;
       notification?: string | undefined;
-    }): UiProcessResult => {
+    }): Promise<UiProcessResult> => {
       const combinedValidationErrors = [
         ...(options.validationErrors ?? normalizedContext.validationErrors ?? []),
         ...collectionErrors,
@@ -792,6 +794,39 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         isResetOrInitial,
       });
 
+      let lockedFields: Record<string, string> | undefined;
+      if (state.documentTypeKey && this.options.lockedFieldsResolver) {
+        const matchedSpace = state.spaceId
+          ? spaces.find((s) => s.id === state.spaceId)
+          : undefined;
+        const spaceDto: UiProcessDocumentSpaceDto | undefined = matchedSpace
+          ? {
+              id: matchedSpace.id,
+              name: matchedSpace.name,
+              typeId: matchedSpace.typeId ?? currentSpaceType,
+              abstractStorageId: matchedSpace.abstractStorageId ?? matchedSpace.id,
+            }
+          : undefined;
+        const rawSelectedLogId = state.formData?.[SELECT_DOCUMENT_LOG_KEY];
+        const selectedLogId =
+          typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+            ? rawSelectedLogId.trim()
+            : undefined;
+        try {
+          const derived = await this.options.lockedFieldsResolver.deriveLockedFields({
+            documentTypeKey: state.documentTypeKey,
+            ...(spaceDto !== undefined ? { space: spaceDto } : {}),
+            ...(selectedLogId !== undefined ? { selectedLogId } : {}),
+            formData: state.formData ?? {},
+          });
+          if (Object.keys(derived).length > 0) {
+            lockedFields = derived;
+          }
+        } catch {
+          lockedFields = undefined;
+        }
+      }
+
       return {
         type: 'render',
         viewId: state.viewId,
@@ -801,13 +836,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
+        ...(lockedFields !== undefined ? { lockedFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
         ...(state.statusMessages ? { statusMessages: state.statusMessages } : {}),
         ...(options.notification !== undefined ? { notification: options.notification } : {}),
       };
     };
 
-    const createErrorRenderResult = (validationErrors: string[]): UiProcessResult =>
+    const createErrorRenderResult = (validationErrors: string[]): Promise<UiProcessResult> =>
       createRenderResult({ validationErrors, isUpdateCard: true });
 
     if (actionName === 'copyDocumentLog') {

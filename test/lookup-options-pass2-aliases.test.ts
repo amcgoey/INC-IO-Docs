@@ -51,6 +51,13 @@ function findTextInputValue(
   return section?.widgets.find((w) => w.textInput?.name === widgetName)?.textInput?.value;
 }
 
+function findDecoratedTextValue(
+  section: GoogleWorkspaceSection | undefined,
+  topLabel: string
+): string | undefined {
+  return section?.widgets.find((w) => w.decoratedText?.topLabel === topLabel)?.decoratedText?.text;
+}
+
 function findSelectedValue(
   section: GoogleWorkspaceSection | undefined,
   fieldKey: string,
@@ -392,7 +399,8 @@ describe('SourceParser Pass 2 Live DocumentLog Options & Alias Integration at Wo
     expect(findTextInputValue(docData, 'contact', 'submittal-ffe')).toBe('CUST');
     expect(findTextInputValue(docData, 'vendor', 'submittal-ffe')).toBe('CARN');
     expect(findTextInputValue(docData, 'specTag', 'submittal-ffe')).toBe('CG104');
-    expect(findTextInputValue(docData, 'specTitle', 'submittal-ffe')).toBe('BED - KING');
+    expect(findDecoratedTextValue(docData, 'Spec Title')).toBe('BED - KING');
+    expect(findTextInputValue(docData, 'specTitle', 'submittal-ffe')).toBeUndefined();
     expect(findTextInputValue(docData, 'revision', 'submittal-ffe')).toBe('A');
     expect(findSelectedValue(docData, 'action', 'submittal-ffe')).toBe('REC');
     expect(findSelectedValue(docData, 'status', 'submittal-ffe')).toBe('Open');
@@ -484,7 +492,8 @@ describe('SourceParser Pass 2 Live DocumentLog Options & Alias Integration at Wo
 
     expect(findTextInputValue(tier2DocData, 'vendor', 'submittal-ffe')).toBe('CUSTV');
     expect(findTextInputValue(tier2DocData, 'specTag', 'submittal-ffe')).toBe('CG104');
-    expect(findTextInputValue(tier2DocData, 'specTitle', 'submittal-ffe')).toBe('BED - KING');
+    expect(findDecoratedTextValue(tier2DocData, 'Spec Title')).toBe('BED - KING');
+    expect(findTextInputValue(tier2DocData, 'specTitle', 'submittal-ffe')).toBeUndefined();
     expect(findTextInputValue(tier2DocData, 'revision', 'submittal-ffe')).toBe('A');
     expect(nock.isDone()).toBe(true);
 
@@ -535,7 +544,8 @@ describe('SourceParser Pass 2 Live DocumentLog Options & Alias Integration at Wo
 
     expect(findTextInputValue(tier3DocData, 'vendor', 'submittal-ffe')).toBe('CARN');
     expect(findTextInputValue(tier3DocData, 'specTag', 'submittal-ffe')).toBe('CG104');
-    expect(findTextInputValue(tier3DocData, 'specTitle', 'submittal-ffe')).toBe('BED - KING');
+    expect(findDecoratedTextValue(tier3DocData, 'Spec Title')).toBe('BED - KING');
+    expect(findTextInputValue(tier3DocData, 'specTitle', 'submittal-ffe')).toBeUndefined();
     expect(nock.isDone()).toBe(true);
   });
 });

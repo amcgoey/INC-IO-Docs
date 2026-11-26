@@ -4041,6 +4041,197 @@ describe('DocumentLogService', () => {
       ]);
     });
 
+    it('writes blank Spec Title for new relatedTag, backfills blank Spec Title on existing key, and allows distinct Spec Tags sharing the same Spec Title', async () => {
+      const ffeLogSchema: DocumentLogSchema = {
+        ...logSchema,
+        target: {
+          sheetName: 'Submittal FF&E',
+          rangeName: 'Log_Submittal_FFE',
+          extentMarker: '<--->',
+          groupDividerMarker: '---',
+        },
+        columns: {
+          Status: { template: '{{status.key}}' },
+          'Spec Tag': { template: '{{specTag.key}}' },
+          'Related Tag': { template: '{{relatedTag.key}}' },
+          Revision: { template: '{{revision}}' },
+          'Spec Title': { template: '{{specTitle}}', readOnly: true },
+          Date: { template: '{{date}}' },
+          Contact: { template: '{{contact.key}}' },
+          Action: { template: '{{action.name}}' },
+        },
+        optionBindings: {
+          specs: {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            validationRangeName: 'Validation_Submittal_FFE_Specs',
+            endMarker: '---',
+            columns: { 'Spec Tag': 'key', 'Spec Title': 'name' },
+          },
+        },
+      };
+
+      const ffeTargetSchema: LogTargetDocumentSchema = {
+        fields: [
+          { key: 'status', name: 'Status', type: 'string', required: true },
+          {
+            key: 'specTag',
+            name: 'Spec Tag',
+            type: 'string',
+            required: true,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          {
+            key: 'relatedTag',
+            name: 'Related Tag',
+            type: 'string',
+            required: false,
+            options: { source: 'specs', key: 'key', allowUserInput: true },
+          },
+          { key: 'revision', name: 'Revision', type: 'string', required: true },
+          {
+            key: 'specTitle',
+            name: 'Spec Title',
+            type: 'string',
+            required: true,
+            linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+          },
+          { key: 'date', name: 'Date', type: 'string', required: true },
+          { key: 'contact', name: 'Contact', type: 'string', required: true },
+          { key: 'action', name: 'Action', type: 'string', required: true },
+        ],
+        identity: {
+          idGroup: '{{specTag.key}}',
+          idDocument: '{{specTag.key}}-{{revision}}',
+          id: '{{specTag.key}}-{{revision}}-{{date}}',
+        },
+        optionSources: {
+          specs: { provider: 'document_log', properties: ['key', 'name'] },
+        },
+      };
+
+      const readNamedRanges = vi
+        .fn()
+        // 1. Existing AC102 & FB127, new relatedTag REL-NEW
+        .mockResolvedValueOnce({
+          specs: {
+            status: 'found',
+            values: [
+              ['Spec Tag', 'Spec Title'],
+              ['AC102', 'HOOK'],
+              ['FB127', 'FABRIC - LEATHER'],
+              ['---', ''],
+            ],
+          },
+        })
+        // 2. Existing REL-NEW with blank Spec Title -> backfill
+        .mockResolvedValueOnce({
+          specs: {
+            status: 'found',
+            values: [
+              ['Spec Tag', 'Spec Title'],
+              ['AC102', 'HOOK'],
+              ['FB127', 'FABRIC - LEATHER'],
+              ['REL-NEW', ''],
+              ['---', ''],
+            ],
+          },
+        })
+        // 3. New key FB999 sharing 'FABRIC - LEATHER' title with FB127
+        .mockResolvedValueOnce({
+          specs: {
+            status: 'found',
+            values: [
+              ['Spec Tag', 'Spec Title'],
+              ['FB127', 'FABRIC - LEATHER'],
+              ['---', ''],
+            ],
+          },
+        });
+      const insertRow = vi.fn().mockResolvedValue({ rowNumber: 6, action: 'inserted' });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(ffeLogSchema),
+          getTargetSchema: vi.fn().mockReturnValue(ffeTargetSchema),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([{ id: 'log-ffe', name: 'Harborview Hotel Document Log' }]),
+        },
+        storage: { readNamedRanges, insertRow },
+      });
+
+      // 1. Known specTag + new relatedTag -> only relatedTag written, with blank Spec Title
+      await service.writeLog({
+        document: {
+          type: 'submittal-ffe',
+          space: sampleSpace,
+          data: {
+            status: 'Open',
+            specTag: 'AC102',
+            relatedTag: 'REL-NEW',
+            revision: '0',
+            specTitle: 'HOOK',
+            date: '260204',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+      });
+      expect(insertRow.mock.calls[0][0].optionWrites).toEqual([
+        expect.objectContaining({
+          rangeName: 'Options_Submittal_FFE_Specs',
+          items: [{ key: 'REL-NEW', values: { key: 'REL-NEW' } }],
+        }),
+      ]);
+
+      // 2. Later submittal with specTag='rel-new' + non-blank specTitle -> backfills Spec Title
+      await service.writeLog({
+        document: {
+          type: 'submittal-ffe',
+          space: sampleSpace,
+          data: {
+            status: 'Open',
+            specTag: 'rel-new',
+            revision: '0',
+            specTitle: 'Backfilled Related Spec',
+            date: '260205',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+      });
+      expect(insertRow.mock.calls[1][0].optionWrites).toEqual([
+        expect.objectContaining({
+          rangeName: 'Options_Submittal_FFE_Specs',
+          items: [{ key: 'REL-NEW', values: { key: 'REL-NEW', name: 'Backfilled Related Spec' } }],
+        }),
+      ]);
+
+      // 3. Distinct Spec Tag FB999 sharing 'FABRIC - LEATHER' title with FB127 -> allowed as new row
+      await service.writeLog({
+        document: {
+          type: 'submittal-ffe',
+          space: sampleSpace,
+          data: {
+            status: 'Open',
+            specTag: 'FB999',
+            revision: '0',
+            specTitle: 'FABRIC - LEATHER',
+            date: '260206',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+      });
+      expect(insertRow.mock.calls[2][0].optionWrites).toEqual([
+        expect.objectContaining({
+          rangeName: 'Options_Submittal_FFE_Specs',
+          items: [{ key: 'FB999', values: { key: 'FB999', name: 'FABRIC - LEATHER' } }],
+        }),
+      ]);
+    });
+
     it('fails fast with config_error before logStorage.insertRow if a target option table lacks "---"', async () => {
       const readNamedRanges = vi.fn().mockResolvedValue({
         statuses: { status: 'found', values: [['Status'], ['Open'], ['---']] },

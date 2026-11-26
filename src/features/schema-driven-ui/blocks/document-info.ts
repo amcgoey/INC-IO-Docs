@@ -22,6 +22,7 @@ export interface DocumentInfoOptions {
   sectionHeader?: string | undefined;
   formData?: Record<string, unknown> | undefined;
   hiddenFields?: string[] | undefined;
+  lockedFields?: Record<string, string> | undefined;
   onProcessAction?: UiViewAction | string | undefined;
   processDisabled?: boolean | undefined;
   documentTypeKey?: string | undefined;
@@ -287,6 +288,23 @@ export function buildDocumentInfoSection(
 
     const uiField = uiSchema?.fields?.[fieldKey];
     const label = uiField?.label ?? camelCaseToTitleCase(field.key);
+    const rawLockedValue = options?.lockedFields?.[field.key];
+    const lockedValue =
+      typeof rawLockedValue === 'string' && rawLockedValue.trim().length > 0
+        ? rawLockedValue.trim()
+        : undefined;
+
+    if (lockedValue !== undefined) {
+      widgets.push({
+        decoratedText: {
+          topLabel: label,
+          text: lockedValue,
+          wrapText: true,
+        },
+      });
+      continue;
+    }
+
     const widgetType = uiField?.widget ?? inferDefaultWidget(field);
     const customProps = (uiField?.props as StandardWidgetCustomProps | undefined) ?? {};
 

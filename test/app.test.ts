@@ -188,6 +188,12 @@ function createFfeOptionTablesSheetsMock(manifestPath: string): {
     ['AL', 'Ashley Lighting', 'Lighting'],
     ['---', '', ''],
   ];
+  const specs = [
+    ['Spec Tag', 'Spec Title'],
+    ['AC102', 'HOOK'],
+    ['CG104', 'BED - KING'],
+    ['---', ''],
+  ];
 
   const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
     data: {
@@ -222,6 +228,11 @@ function createFfeOptionTablesSheetsMock(manifestPath: string): {
           name: 'Options_Submittal_FFE_Vendors',
           range: { sheetId: 104, startRowIndex: 0, endRowIndex: vendors.length, startColumnIndex: 11, endColumnIndex: 14 },
         },
+        {
+          namedRangeId: 'nr-ffe-specs',
+          name: 'Options_Submittal_FFE_Specs',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: specs.length, startColumnIndex: 15, endColumnIndex: 17 },
+        },
       ],
     },
   }));
@@ -238,7 +249,9 @@ function createFfeOptionTablesSheetsMock(manifestPath: string): {
               ? actions
               : r.includes('H1:')
                 ? contacts
-                : vendors,
+                : r.includes('P1:')
+                  ? specs
+                  : vendors,
         })),
       },
     })

@@ -537,4 +537,139 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
       expect(timeoutRes.statuses.targetPath).toBeUndefined();
     });
   });
+
+  describe('deriveLockedFields (non-blank-only LinkedField locking)', () => {
+    const ffeSchema: LookupDocumentSchema = {
+      fields: [
+        {
+          key: 'specTag',
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        {
+          key: 'relatedTag',
+          options: { source: 'specs', key: 'key', allowUserInput: true },
+        },
+        {
+          key: 'specTitle',
+          linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+        },
+      ],
+      optionSources: {
+        specs: { provider: 'document_log', properties: ['key', 'name'] },
+      },
+    };
+
+    it('locks LinkedField only when sibling LookupField matches strictly on key AND derived sourceProperty is non-blank', async () => {
+      const readOptionTables = vi.fn().mockResolvedValue({
+        status: 'ready',
+        spreadsheetId: 'log-ffe',
+        tables: {
+          specs: {
+            status: 'ready',
+            tuples: [
+              { key: 'AC102', name: 'HOOK' },
+              { key: 'BLANK1', name: '   ' },
+              { key: 'EMPTY1', name: '' },
+              { key: 'NO_TITLE' },
+            ],
+          },
+        },
+      });
+
+      const service: LookupOptionsPort = new LookupOptionsService(
+        createManifestPort({ 'submittal-ffe': ffeSchema }),
+        { documentLogOptionSource: { readOptionTables } }
+      );
+      const ctx = { space: { id: 'sp-1', abstractStorageId: 'drive-1' }, documentTypeKey: 'submittal-ffe' };
+
+      // Trimmed case-insensitive key match with non-blank name -> locked
+      await expect(service.deriveLockedFields(ctx, { specTag: ' ac102 ' })).resolves.toEqual({
+        specTitle: 'HOOK',
+      });
+
+      // Strict key-only matching when options.name is absent: passing "HOOK" must NOT match AC102
+      await expect(service.deriveLockedFields(ctx, { specTag: 'HOOK' })).resolves.toEqual({});
+
+      // Custom / unknown key -> unlocked
+      await expect(service.deriveLockedFields(ctx, { specTag: 'XX999' })).resolves.toEqual({});
+
+      // Blank lookup value -> unlocked
+      await expect(service.deriveLockedFields(ctx, { specTag: '   ' })).resolves.toEqual({});
+      await expect(service.deriveLockedFields(ctx, {})).resolves.toEqual({});
+
+      // Matched tuple with blank / whitespace / missing sourceProperty -> unlocked
+      await expect(service.deriveLockedFields(ctx, { specTag: 'BLANK1' })).resolves.toEqual({});
+      await expect(service.deriveLockedFields(ctx, { specTag: 'EMPTY1' })).resolves.toEqual({});
+      await expect(service.deriveLockedFields(ctx, { specTag: 'NO_TITLE' })).resolves.toEqual({});
+
+      // Memoized across calls for same context
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps LinkedField unlocked on missing_log, config_error, timeout, and error, and refreshes on selectedLogId change', async () => {
+      const readOptionTables = vi
+        .fn()
+        .mockResolvedValueOnce({ status: 'missing_log', expectedFolderPath: '1 Admin', tables: {} })
+        .mockResolvedValueOnce({
+          status: 'ready',
+          spreadsheetId: 'log-a',
+          tables: {
+            specs: { status: 'config_error', tuples: [], errorMessage: 'Missing ---' },
+          },
+        })
+        .mockImplementationOnce(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return { status: 'missing_space', tables: {} };
+        })
+        .mockRejectedValueOnce(new Error('Sheets unavailable'))
+        .mockResolvedValueOnce({
+          status: 'ready',
+          spreadsheetId: 'log-b',
+          tables: {
+            specs: { status: 'ready', tuples: [{ key: 'AC102', name: 'HOOK LOG B' }] },
+          },
+        });
+
+      const service: LookupOptionsPort = new LookupOptionsService(
+        createManifestPort({ 'submittal-ffe': ffeSchema }),
+        { documentLogOptionSource: { readOptionTables }, timeoutMs: 15 }
+      );
+
+      await expect(
+        service.deriveLockedFields(
+          { space: { id: 'sp-missing' }, documentTypeKey: 'submittal-ffe' },
+          { specTag: 'AC102' }
+        )
+      ).resolves.toEqual({});
+
+      await expect(
+        service.deriveLockedFields(
+          { space: { id: 'sp-cfg' }, documentTypeKey: 'submittal-ffe', selectedLogId: 'log-a' },
+          { specTag: 'AC102' }
+        )
+      ).resolves.toEqual({});
+
+      await expect(
+        service.deriveLockedFields(
+          { space: { id: 'sp-timeout' }, documentTypeKey: 'submittal-ffe' },
+          { specTag: 'AC102' }
+        )
+      ).resolves.toEqual({});
+
+      await expect(
+        service.deriveLockedFields(
+          { space: { id: 'sp-err' }, documentTypeKey: 'submittal-ffe' },
+          { specTag: 'AC102' }
+        )
+      ).resolves.toEqual({});
+
+      // Switching selectedLogId loads fresh options and locks specTitle from log-b
+      await expect(
+        service.deriveLockedFields(
+          { space: { id: 'sp-cfg' }, documentTypeKey: 'submittal-ffe', selectedLogId: 'log-b' },
+          { specTag: 'AC102' }
+        )
+      ).resolves.toEqual({ specTitle: 'HOOK LOG B' });
+    });
+  });
 });

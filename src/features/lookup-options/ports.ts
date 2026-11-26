@@ -254,5 +254,10 @@ export interface LookupOptionsPort {
     queries: readonly LookupFieldValidationQuery[]
   ): Promise<Record<string, LookupFieldValidationResult>>;
 
+  deriveLockedFields(
+    context: LookupOptionsCallContext,
+    formData: Readonly<Record<string, unknown>>
+  ): Promise<Record<string, string>>;
+
   invalidate(scope?: LookupInvalidationScope): void;
 }

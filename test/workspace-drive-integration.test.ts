@@ -211,6 +211,16 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     ['---', '', ''],
   ];
 
+  const CONFIG_FFE_SPECS = [
+    ['Spec Tag', 'Spec Title'],
+    ['AC102', 'HOOK'],
+    ['CG104', 'BED - KING'],
+    ['FB127', 'FABRIC - LEATHER'],
+    ['LT159A', 'SCONCE - CORRIDOR'],
+    ['LT159B', 'SCONCE - CORRIDOR'],
+    ['---', ''],
+  ];
+
   function buildConfigOptionBatchGetReply(uri: string) {
     const requestedRanges = new URL(uri, 'https://sheets.googleapis.com').searchParams.getAll('ranges');
     return {
@@ -225,6 +235,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
           if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACTS };
           if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDORS };
+          if (range.includes('P1:')) return { range, values: CONFIG_FFE_SPECS };
         }
         return { range, values: [] };
       }),
@@ -320,6 +331,16 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           namedRangeId: 'nr-ffe-vendors-val',
           name: 'Validation_Submittal_FFE_Vendors',
           range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_VENDORS.length - 1, startColumnIndex: 11, endColumnIndex: 12 },
+        },
+        {
+          namedRangeId: 'nr-ffe-specs',
+          name: 'Options_Submittal_FFE_Specs',
+          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_SPECS.length, startColumnIndex: 15, endColumnIndex: 17 },
+        },
+        {
+          namedRangeId: 'nr-ffe-specs-val',
+          name: 'Validation_Submittal_FFE_Specs',
+          range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_SPECS.length - 1, startColumnIndex: 15, endColumnIndex: 16 },
         },
       ],
     });
@@ -3478,7 +3499,21 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
 
       expect(getTextVal('specTag')).toBe('CG104');
-      expect(getTextVal('specTitle')).toBe('BED - KING');
+      const specTitleDecorated = docDataSec.widgets.find(
+        (w: { decoratedText?: { topLabel?: string; text?: string; wrapText?: boolean } }) =>
+          w.decoratedText?.topLabel === 'Spec Title'
+      )?.decoratedText;
+      expect(specTitleDecorated).toEqual({
+        topLabel: 'Spec Title',
+        text: 'BED - KING',
+        wrapText: true,
+      });
+      expect(
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        )
+      ).toBeUndefined();
       expect(getTextVal('revision')).toBe('1');
       expect(getTextVal('vendor')).toBe('FDT');
       expect(getTextVal('date')).toBe('261118');
@@ -3571,7 +3606,22 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           )?.textInput?.value;
 
         expect(getTextVal('specTag'), tc.name).toBe(tc.specTag);
-        expect(getTextVal('specTitle'), tc.name).toBe(tc.specTitle);
+        const specTitleDecorated = docDataSec.widgets.find(
+          (w: { decoratedText?: { topLabel?: string; text?: string; wrapText?: boolean } }) =>
+            w.decoratedText?.topLabel === 'Spec Title'
+        )?.decoratedText;
+        expect(specTitleDecorated, tc.name).toEqual({
+          topLabel: 'Spec Title',
+          text: tc.specTitle,
+          wrapText: true,
+        });
+        expect(
+          docDataSec.widgets.find(
+            (w: { textInput?: { name: string } }) =>
+              w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+          ),
+          tc.name
+        ).toBeUndefined();
         expect(getTextVal('revision'), tc.name).toBe(tc.revision);
         expect(getTextVal('vendor'), tc.name).toBe(tc.vendor);
         expect(getTextVal('date'), tc.name).toBe(tc.date);
@@ -4755,7 +4805,21 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
 
       expect(getTextVal('specTag')).toBe('CG104');
-      expect(getTextVal('specTitle')).toBe('BED - KING');
+      const specTitleDecorated = docDataSec.widgets.find(
+        (w: { decoratedText?: { topLabel?: string; text?: string; wrapText?: boolean } }) =>
+          w.decoratedText?.topLabel === 'Spec Title'
+      )?.decoratedText;
+      expect(specTitleDecorated).toEqual({
+        topLabel: 'Spec Title',
+        text: 'BED - KING',
+        wrapText: true,
+      });
+      expect(
+        docDataSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        )
+      ).toBeUndefined();
       expect(getTextVal('revision')).toBe('A');
       expect(getSelVal('action')).toBe('RR');
       expect(getTextVal('date')).toBe('260508');
@@ -4870,7 +4934,25 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
             ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
 
         expect(getTextVal('specTag'), tc.id).toBe(tc.expectedSpecTag);
-        expect(getTextVal('specTitle'), tc.id).toBe(tc.expectedSpecTitle);
+        const specTitleDecorated = docDataSec.widgets.find(
+          (w: { decoratedText?: { topLabel?: string; text?: string; wrapText?: boolean } }) =>
+            w.decoratedText?.topLabel === 'Spec Title'
+        )?.decoratedText;
+        const specTitleTextInput = docDataSec.widgets.find(
+          (w: { textInput?: { name: string; value?: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        );
+        if (tc.expectedSpecTitle !== undefined) {
+          expect(specTitleDecorated, tc.id).toEqual({
+            topLabel: 'Spec Title',
+            text: tc.expectedSpecTitle,
+            wrapText: true,
+          });
+          expect(specTitleTextInput, tc.id).toBeUndefined();
+        } else {
+          expect(specTitleDecorated, tc.id).toBeUndefined();
+          expect(specTitleTextInput?.textInput?.value, tc.id).toBeUndefined();
+        }
         expect(getTextVal('revision'), tc.id).toBe(tc.expectedRevision);
         expect(getSelVal('action'), tc.id).toBe(tc.expectedAction);
         expect(getTextVal('date'), tc.id).toBe('261121');
@@ -5146,7 +5228,21 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
           ?.selectionInput?.items.find((i: { selected?: boolean }) => i.selected)?.value;
 
       expect(getFfeText('specTag')).toBe('CG104');
-      expect(getFfeText('specTitle')).toBe('BED - KING');
+      const specTitleDecorated = ffeSec.widgets.find(
+        (w: { decoratedText?: { topLabel?: string; text?: string; wrapText?: boolean } }) =>
+          w.decoratedText?.topLabel === 'Spec Title'
+      )?.decoratedText;
+      expect(specTitleDecorated).toEqual({
+        topLabel: 'Spec Title',
+        text: 'BED - KING',
+        wrapText: true,
+      });
+      expect(
+        ffeSec.widgets.find(
+          (w: { textInput?: { name: string } }) =>
+            w.textInput?.name === getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        )
+      ).toBeUndefined();
       expect(getFfeText('revision')).toBe('A');
       expect(getFfeText('vendor')).toBe('BM');
       expect(getFfeText('date')).toBe('261118');
@@ -5950,7 +6046,23 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         const ffeCard = JSON.parse(ffeRes.payload).action.navigations[0].pushCard;
         expect(readSelectedValue(ffeCard, 'action', 'submittal-ffe'), ffeId).toBe(tc.expectedAction);
         expect(readTextValue(ffeCard, 'specTag', 'submittal-ffe'), ffeId).toBe('CG104');
-        expect(readTextValue(ffeCard, 'specTitle', 'submittal-ffe'), ffeId).toBe('BED - KING');
+        const ffeDocSec = (ffeCard as { sections: Array<{ header?: string; widgets: Array<Record<string, unknown>> }> }).sections.find(
+          (s) => s.header === 'Document Data'
+        );
+        expect(
+          ffeDocSec?.widgets.find(
+            (w) => (w.decoratedText as { topLabel?: string } | undefined)?.topLabel === 'Spec Title'
+          )?.decoratedText,
+          ffeId
+        ).toEqual({ topLabel: 'Spec Title', text: 'BED - KING', wrapText: true });
+        expect(
+          ffeDocSec?.widgets.find(
+            (w) =>
+              (w.textInput as { name?: string } | undefined)?.name ===
+              getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+          ),
+          ffeId
+        ).toBeUndefined();
         expect(readTextValue(ffeCard, 'revision', 'submittal-ffe'), ffeId).toBe('A');
         expect(readStatusText(ffeCard)).not.toContain(
           formatAmbiguousFormFieldMessage('Submittal Response')
@@ -6582,7 +6694,23 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         expect(res.statusCode).toBe(200);
         const card = JSON.parse(res.payload).action.navigations[0].pushCard;
         expect(readText(card, 'specTag', 'submittal-ffe'), tc.rawDate).toBe('CG104');
-        expect(readText(card, 'specTitle', 'submittal-ffe'), tc.rawDate).toBe('BED - KING');
+        const cardDocSec = (card as { sections: Array<{ header?: string; widgets: Array<Record<string, unknown>> }> }).sections.find(
+          (s) => s.header === 'Document Data'
+        );
+        expect(
+          cardDocSec?.widgets.find(
+            (w) => (w.decoratedText as { topLabel?: string } | undefined)?.topLabel === 'Spec Title'
+          )?.decoratedText,
+          tc.rawDate
+        ).toEqual({ topLabel: 'Spec Title', text: 'BED - KING', wrapText: true });
+        expect(
+          cardDocSec?.widgets.find(
+            (w) =>
+              (w.textInput as { name?: string } | undefined)?.name ===
+              getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+          ),
+          tc.rawDate
+        ).toBeUndefined();
         expect(readText(card, 'revision', 'submittal-ffe'), tc.rawDate).toBe('A');
         expect(readSelected(card, 'action', 'submittal-ffe'), tc.rawDate).toBe('RR');
         expect(readText(card, 'date', 'submittal-ffe'), tc.rawDate).toBe(tc.expectedYymmdd);
@@ -6617,7 +6745,21 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       expect(readSelected(unreviewedCard, 'action', 'submittal-ffe')).toBe('REC');
       expect(readText(unreviewedCard, 'date', 'submittal-ffe')).toBe('261118');
       expect(readText(unreviewedCard, 'specTag', 'submittal-ffe')).toBe('CG104');
-      expect(readText(unreviewedCard, 'specTitle', 'submittal-ffe')).toBe('BED - KING');
+      const unreviewedDocSec = (unreviewedCard as { sections: Array<{ header?: string; widgets: Array<Record<string, unknown>> }> }).sections.find(
+        (s) => s.header === 'Document Data'
+      );
+      expect(
+        unreviewedDocSec?.widgets.find(
+          (w) => (w.decoratedText as { topLabel?: string } | undefined)?.topLabel === 'Spec Title'
+        )?.decoratedText
+      ).toEqual({ topLabel: 'Spec Title', text: 'BED - KING', wrapText: true });
+      expect(
+        unreviewedDocSec?.widgets.find(
+          (w) =>
+            (w.textInput as { name?: string } | undefined)?.name ===
+            getDocumentInfoWidgetName('specTitle', 'submittal-ffe')
+        )
+      ).toBeUndefined();
       expect(readText(unreviewedCard, 'vendor', 'submittal-ffe')).toBe('BM');
       expect(nock.isDone()).toBe(true);
     });

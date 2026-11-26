@@ -7238,6 +7238,11 @@ describe('Document domain', () => {
           { key: 'BM', name: 'Berman Falk' },
           { key: 'AL', name: 'Ashley Lighting' },
         ],
+        specs: [
+          { key: 'AC102', name: 'HOOK' },
+          { key: 'CG104', name: 'BED - KING' },
+          { key: 'BLANK-TAG', name: '' },
+        ],
       };
 
       return {
@@ -7257,7 +7262,9 @@ describe('Document domain', () => {
             const match = tuples.find(
               (t) =>
                 String(t.key ?? '').toLowerCase() === norm ||
-                (query.sourceKey !== 'statuses' && String(t.name ?? '').toLowerCase() === norm)
+                (query.sourceKey !== 'statuses' &&
+                  query.sourceKey !== 'specs' &&
+                  String(t.name ?? '').toLowerCase() === norm)
             );
             if (match) {
               out[query.queryId] = { isValid: true, status: 'valid', matchedTuple: match };
@@ -7531,12 +7538,12 @@ describe('Document domain', () => {
         expect(revisionResult.errors.some((err) => err.includes('/revision:'))).toBe(true);
       }
 
-      // Whitespace specTitle
+      // Whitespace specTitle on custom specTag
       const whitespaceTitleDoc: Document = {
         type: 'submittal-ffe',
         data: {
           status: 'Open',
-          specTag: 'AC102',
+          specTag: 'CUSTOM-99',
           revision: '1',
           specTitle: '   ',
           vendor: 'BM',
@@ -7549,6 +7556,118 @@ describe('Document domain', () => {
       expect(titleResult.success).toBe(false);
       if (!titleResult.success) {
         expect(titleResult.errors.some((err) => err.includes('/specTitle:'))).toBe(true);
+      }
+    });
+
+    it('authoritatively re-derives non-blank LinkedField specTitle when known specTag is submitted (omitted or overridden) and requires specTitle when custom or blank-property', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const customRegistry = createCustomRegistry([submittalFfeSchema]);
+      const service = createDocumentService(
+        mockDispatcher,
+        customRegistry,
+        handlebarsEvaluator,
+        undefined,
+        createSubmittalFfeDynamicValidator()
+      );
+      await service.initialize();
+
+      // 1. Omitted specTitle (e.g. decoratedText in UI or minimal POST /documents) with known specTag
+      const omittedTitleRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'AC102',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+          space: {
+            id: 'proj-001',
+            name: '123 Main Street',
+            typeId: 'projects',
+            abstractStorageId: 'drive-folder-root',
+          },
+        },
+        'onSubmit'
+      );
+      expect(omittedTitleRes.success).toBe(true);
+      if (!omittedTitleRes.success) return;
+      expect(omittedTitleRes.data.data.specTitle).toBe('HOOK');
+      expect(omittedTitleRes.data.data.specTag).toEqual({ key: 'AC102', name: 'HOOK' });
+
+      // 2. Mismatched specTitle submitted alongside lowercase known specTag -> authoritatively overwritten
+      const overriddenTitleRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'cg104',
+            revision: '0',
+            specTitle: 'Caller Supplied Override',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+          space: {
+            id: 'proj-001',
+            name: '123 Main Street',
+            typeId: 'projects',
+            abstractStorageId: 'drive-folder-root',
+          },
+        },
+        'onSubmit'
+      );
+      expect(overriddenTitleRes.success).toBe(true);
+      if (!overriddenTitleRes.success) return;
+      expect(overriddenTitleRes.data.data.specTitle).toBe('BED - KING');
+      expect(overriddenTitleRes.data.data.specTag).toEqual({ key: 'CG104', name: 'BED - KING' });
+
+      // 3. Known specTag with blank Spec Title in table + omitted specTitle -> fails validation
+      const blankPropRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'BLANK-TAG',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+      expect(blankPropRes.success).toBe(false);
+      if (!blankPropRes.success) {
+        expect(blankPropRes.errors.some((err) => err.includes('/specTitle'))).toBe(true);
+      }
+
+      // 4. Custom specTag + omitted specTitle -> fails validation
+      const customOmittedRes = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          data: {
+            status: 'Open',
+            specTag: 'NEW-999',
+            revision: '0',
+            vendor: 'BM',
+            date: '261102',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+      expect(customOmittedRes.success).toBe(false);
+      if (!customOmittedRes.success) {
+        expect(customOmittedRes.errors.some((err) => err.includes('/specTitle'))).toBe(true);
       }
     });
 
