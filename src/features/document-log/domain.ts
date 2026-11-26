@@ -1571,11 +1571,19 @@ export class DocumentLogService implements DocumentLogPort {
       }
     }
 
+    const hasValidSheetId =
+      insertResult.sheetId !== undefined && Number.isFinite(insertResult.sheetId);
+    const uri = hasValidSheetId
+      ? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${insertResult.sheetId}&range=${insertResult.rowNumber}:${insertResult.rowNumber}`
+      : `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
     return {
       spreadsheetId,
       sheetName: logSchema.target.sheetName,
+      ...(hasValidSheetId ? { sheetId: insertResult.sheetId } : {}),
       rowNumber: insertResult.rowNumber,
       action: insertResult.action,
+      uri,
     };
   }
 }

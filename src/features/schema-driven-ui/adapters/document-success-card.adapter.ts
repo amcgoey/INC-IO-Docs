@@ -1,13 +1,26 @@
-import type { UiView, UiViewHeader, UiViewSection, UiViewWidget } from '../domain';
+import type { UiView, UiViewButton, UiViewHeader, UiViewSection, UiViewWidget } from '../domain';
 import type {
   DocumentTypeDisplayNameResolverPort,
   ExecutionFileLocator,
+  ExecutionLogWrite,
   UiViewAdapterContext,
   UiViewSchemaAdapterPort,
 } from '../ports';
 import { escapeCardHtml } from '../blocks/common';
 
 export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
+
+function buildOpenLinkButton(text: string, url: string): UiViewButton {
+  return {
+    text,
+    onClick: {
+      openLink: {
+        url,
+        openAs: 'FULL_SIZE' as const,
+      },
+    },
+  };
+}
 
 function collectCreatedAndFiledFiles(
   stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults']
@@ -45,20 +58,34 @@ function buildFileWidget(file: ExecutionFileLocator): UiViewWidget {
       text: escapeCardHtml(displayName),
       wrapText: true,
       ...(trimmedParentName ? { bottomLabel: trimmedParentName } : {}),
-      ...(trimmedUri
-        ? {
-            button: {
-              text: 'Open',
-              onClick: {
-                openLink: {
-                  url: trimmedUri,
-                  openAs: 'FULL_SIZE' as const,
-                },
-              },
-            },
-          }
-        : {}),
+      ...(trimmedUri ? { button: buildOpenLinkButton('Open', trimmedUri) } : {}),
     },
+  };
+}
+
+function buildFallbackLogSummarySection(logWrite: ExecutionLogWrite): UiViewSection {
+  const trimmedSheetName = logWrite.sheetName?.trim();
+  const rowNumber =
+    typeof logWrite.rowNumber === 'number' && Number.isFinite(logWrite.rowNumber)
+      ? logWrite.rowNumber
+      : undefined;
+  const text =
+    trimmedSheetName && trimmedSheetName.length > 0 && rowNumber !== undefined
+      ? `<b>${escapeCardHtml(trimmedSheetName)}</b> \u2022 Row ${rowNumber}`
+      : 'Document Log Entry';
+  const trimmedUri = logWrite.uri?.trim();
+
+  return {
+    header: 'Summary',
+    widgets: [
+      {
+        decoratedText: {
+          text,
+          wrapText: true,
+          ...(trimmedUri ? { button: buildOpenLinkButton('Open Log', trimmedUri) } : {}),
+        },
+      },
+    ],
   };
 }
 
@@ -117,6 +144,10 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     }
 
     const sections: UiViewSection[] = [{ widgets: bannerWidgets }];
+
+    if (outcome.logWrite !== undefined) {
+      sections.push(buildFallbackLogSummarySection(outcome.logWrite));
+    }
 
     const filedFiles = collectCreatedAndFiledFiles(outcome.stepResults);
     if (filedFiles.length > 0) {

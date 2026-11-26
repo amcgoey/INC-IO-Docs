@@ -214,4 +214,157 @@ describe('DocumentSuccessCardAdapter (#382)', () => {
     expect(view.sections.find((s) => s.header === 'Created & Filed')).toBeUndefined();
     expect(view.sections).toHaveLength(2); // Banner + Start Over
   });
+
+  describe('fallback Summary row and Open Log button (#383)', () => {
+    it('renders Summary section with HTML-escaped <b>sheetName</b> • Row N and trailing Open Log (FULL_SIZE) button before Created & Filed', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      const view = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'submittal-arch',
+        executionOutcome: {
+          success: true,
+          workflowName: 'SubmittalSent',
+          completedStepCount: 2,
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [
+            {
+              stepId: 'moveOriginal',
+              activityType: 'MOVE_FILE',
+              files: [
+                {
+                  id: 'file-1',
+                  name: 'Submittal.pdf',
+                  uri: 'https://drive.google.com/file/d/file-1/view',
+                },
+              ],
+            },
+            {
+              stepId: 'writeLog',
+              activityType: 'WRITE_LOG',
+              files: [
+                {
+                  id: 'sheet-ignored',
+                  name: 'Ignored Log File',
+                  uri: 'https://docs.google.com/spreadsheets/d/log-1/edit',
+                },
+              ],
+            },
+          ],
+          notices: [],
+          logWrite: {
+            sheetName: 'Submittal <Arch & FF&E>',
+            sheetId: 0,
+            rowNumber: 12,
+            action: 'inserted',
+            uri: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=12:12',
+          },
+          errors: [],
+        },
+      });
+
+      assertValidUiView(view);
+      expect(view.sections.map((s) => s.header)).toEqual([
+        undefined,
+        'Summary',
+        'Created & Filed',
+        undefined,
+      ]);
+
+      const summarySection = view.sections[1];
+      expect(summarySection.widgets).toEqual([
+        {
+          decoratedText: {
+            text: '<b>Submittal &lt;Arch &amp; FF&amp;E&gt;</b> • Row 12',
+            wrapText: true,
+            button: {
+              text: 'Open Log',
+              onClick: {
+                openLink: {
+                  url: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=12:12',
+                  openAs: 'FULL_SIZE',
+                },
+              },
+            },
+          },
+        },
+      ]);
+
+      const filesSection = view.sections[2];
+      expect(filesSection.widgets).toHaveLength(1);
+      expect(filesSection.widgets[0].decoratedText?.text).toBe('Submittal.pdf');
+    });
+
+    it('renders "Document Log Entry" when sheet metadata is absent and omits Open Log button on blank or missing uri', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      const missingMetaWithUriView = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          completedStepCount: 1,
+          spaceName: 'Project 1',
+          documentData: {},
+          stepResults: [],
+          notices: [],
+          logWrite: {
+            sheetName: '   ',
+            uri: 'https://docs.google.com/spreadsheets/d/log-fallback/edit',
+          },
+          errors: [],
+        },
+      });
+
+      assertValidUiView(missingMetaWithUriView);
+      const summaryWithUri = missingMetaWithUriView.sections.find((s) => s.header === 'Summary');
+      expect(summaryWithUri?.widgets).toEqual([
+        {
+          decoratedText: {
+            text: 'Document Log Entry',
+            wrapText: true,
+            button: {
+              text: 'Open Log',
+              onClick: {
+                openLink: {
+                  url: 'https://docs.google.com/spreadsheets/d/log-fallback/edit',
+                  openAs: 'FULL_SIZE',
+                },
+              },
+            },
+          },
+        },
+      ]);
+
+      const blankUriView = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          completedStepCount: 1,
+          spaceName: 'Project 1',
+          documentData: {},
+          stepResults: [],
+          notices: [],
+          logWrite: {
+            sheetName: 'Submittal Arch',
+            rowNumber: 6,
+            uri: '   ',
+          },
+          errors: [],
+        },
+      });
+
+      assertValidUiView(blankUriView);
+      const summaryWithoutUri = blankUriView.sections.find((s) => s.header === 'Summary');
+      expect(summaryWithoutUri?.widgets).toEqual([
+        {
+          decoratedText: {
+            text: '<b>Submittal Arch</b> • Row 6',
+            wrapText: true,
+          },
+        },
+      ]);
+      expect('button' in (summaryWithoutUri?.widgets[0].decoratedText ?? {})).toBe(false);
+    });
+  });
 });

@@ -64,6 +64,7 @@ describe('DocumentLogActivityHandler', () => {
       sheetName: 'Submittal Arch',
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/sheet-log-1/edit',
     });
     const handler = new DocumentLogActivityHandler(
       {
@@ -90,14 +91,54 @@ describe('DocumentLogActivityHandler', () => {
           sheetName: 'Submittal Arch',
           rowNumber: 6,
           action: 'inserted',
+          uri: 'https://docs.google.com/spreadsheets/d/sheet-log-1/edit',
         },
       },
     });
+    expect('sheetId' in (output.contextVariables?.documentLogWrite as Record<string, unknown>)).toBe(
+      false
+    );
     expect(writeLog).toHaveBeenCalledWith({
       document: baseContext.document,
       fileUri: 'https://drive.google.com/file/d/moved-file-1/view',
       selectedLogId: 'sheet-log-1',
     });
+  });
+
+  it('forwards sheetId === 0 and uri in contextVariables.documentLogWrite while keeping ActivityOutput.files unset', async () => {
+    const writeLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'sheet-zero-1',
+      sheetName: 'Submittal Arch',
+      sheetId: 0,
+      rowNumber: 12,
+      action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/sheet-zero-1/edit#gid=0&range=12:12',
+    });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
+
+    const output = await handler.handle({ type: 'WRITE_LOG', payload: {} }, baseContext);
+
+    expect(output).toEqual({
+      success: true,
+      contextVariables: {
+        documentLogWrite: {
+          spreadsheetId: 'sheet-zero-1',
+          sheetName: 'Submittal Arch',
+          sheetId: 0,
+          rowNumber: 12,
+          action: 'updated',
+          uri: 'https://docs.google.com/spreadsheets/d/sheet-zero-1/edit#gid=0&range=12:12',
+        },
+      },
+    });
+    expect('files' in output).toBe(false);
   });
 
   it('selects context.stepOutputs[fileSourceStepId].files[0].uri when fileSourceStepId is specified', async () => {
