@@ -5373,6 +5373,81 @@ describe('Document domain', () => {
       expect(result.data?.data).toEqual({ title: 'Comm' });
       expect(result.files).toEqual([movedLocator]);
     });
+
+    it('preserves partial files in stepResults and files while keeping completedStepCount: 0 on Step 1 multi-file batch failure (#386)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'batch-fail-doc',
+          name: 'Batch Fail Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'BatchFlow' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'BatchFlow',
+                activitySequence: [
+                  { id: 'moveFiles', type: 'MOVE_FILE', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const movedLocator: FileLocator = {
+        id: 'moved-1',
+        name: 'First.pdf',
+        parentId: 'dest-folder',
+        parentName: 'Destination',
+        parentUri: 'https://drive.google.com/drive/folders/dest-folder',
+        uri: 'https://drive.google.com/file/d/moved-1/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue({
+          success: false,
+          error: 'Permission denied on second file',
+          files: [movedLocator],
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'batch-fail-doc', data: { title: 'Batch' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.failedStepId).toBe('moveFiles');
+      expect(result.completedStepCount).toBe(0);
+      expect(result.outputs).toEqual([]);
+      expect(result.files).toEqual([movedLocator]);
+      expect(result.stepResults).toEqual([
+        {
+          stepId: 'moveFiles',
+          activityType: 'MOVE_FILE',
+          output: {
+            success: false,
+            error: 'Permission denied on second file',
+            files: [movedLocator],
+          },
+        },
+      ]);
+    });
   });
 
   describe('walkTemplates', () => {

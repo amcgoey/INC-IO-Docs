@@ -18,6 +18,8 @@ import type {
 import { escapeCardHtml } from '../blocks/common';
 
 export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
+const MAX_GOOGLE_WORKSPACE_CARD_WIDGETS = 100;
+const UNCOLLAPSIBLE_ARTIFACT_COUNT = 5;
 
 interface CollectedArtifactItem {
   file: ExecutionFileLocator;
@@ -294,6 +296,94 @@ function collectCreatedAndFiledItems(
   return items;
 }
 
+function allocateSuccessCardBudget(params: {
+  fixedWidgetCount: number;
+  totalFolders: number;
+  totalArtifacts: number;
+}): {
+  renderedFoldersCount: number;
+  renderedArtifactsCount: number;
+  hasOverflow: boolean;
+} {
+  const { fixedWidgetCount, totalFolders, totalArtifacts } = params;
+  const remainingBudget = Math.max(0, MAX_GOOGLE_WORKSPACE_CARD_WIDGETS - fixedWidgetCount);
+
+  if (totalFolders + totalArtifacts <= remainingBudget) {
+    return {
+      renderedFoldersCount: totalFolders,
+      renderedArtifactsCount: totalArtifacts,
+      hasOverflow: false,
+    };
+  }
+
+  if (remainingBudget === 0) {
+    return {
+      renderedFoldersCount: 0,
+      renderedArtifactsCount: 0,
+      hasOverflow: false,
+    };
+  }
+
+  const itemBudget = Math.max(0, remainingBudget - 1);
+  const reservedForArtifacts = Math.min(totalArtifacts, Math.ceil(itemBudget / 2));
+  const renderedFoldersCount = Math.min(
+    totalFolders,
+    Math.max(0, itemBudget - reservedForArtifacts)
+  );
+  const renderedArtifactsCount = Math.min(
+    totalArtifacts,
+    Math.max(0, itemBudget - renderedFoldersCount)
+  );
+
+  return {
+    renderedFoldersCount,
+    renderedArtifactsCount,
+    hasOverflow: true,
+  };
+}
+
+function buildOverflowNoticeSection(params: {
+  renderedFoldersCount: number;
+  totalFolders: number;
+  renderedArtifactsCount: number;
+  totalArtifacts: number;
+  primaryFolderUri: string | undefined;
+}): UiViewSection {
+  const {
+    renderedFoldersCount,
+    totalFolders,
+    renderedArtifactsCount,
+    totalArtifacts,
+    primaryFolderUri,
+  } = params;
+  const foldersTruncated = renderedFoldersCount < totalFolders;
+  const artifactsTruncated = renderedArtifactsCount < totalArtifacts;
+
+  let text: string;
+  if (foldersTruncated && artifactsTruncated) {
+    text = `Showing ${renderedFoldersCount} of ${totalFolders} folders and ${renderedArtifactsCount} of ${totalArtifacts} filed items`;
+  } else if (artifactsTruncated) {
+    text = `Showing ${renderedArtifactsCount} of ${totalArtifacts} filed items`;
+  } else {
+    text = `Showing ${renderedFoldersCount} of ${totalFolders} folders`;
+  }
+
+  const trimmedFolderUri = primaryFolderUri?.trim();
+  return {
+    widgets: [
+      {
+        decoratedText: {
+          text,
+          wrapText: true,
+          ...(trimmedFolderUri
+            ? { button: buildOpenLinkButton('Open Folder', trimmedFolderUri) }
+            : {}),
+        },
+      },
+    ],
+  };
+}
+
 function buildFileWidget(item: CollectedArtifactItem): UiViewWidget {
   const { file, roleLabel } = item;
   const trimmedName = file.name.trim();
@@ -339,26 +429,58 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     const docTypeDisplayName =
       resolvedDocTypeName?.trim() || context.documentTypeKey?.trim() || 'Document';
     const trimmedSpaceName = outcome.spaceName.trim();
+    const trimmedNotices = outcome.notices
+      .map((n) => n.trim())
+      .filter((n) => n.length > 0);
+    const status: 'partial_failure' | 'warning' | 'success' = !outcome.success
+      ? 'partial_failure'
+      : trimmedNotices.length > 0
+        ? 'warning'
+        : 'success';
+
+    const headerTitle =
+      status === 'partial_failure'
+        ? `${docTypeDisplayName} \u2014 Partial Failure`
+        : status === 'warning'
+          ? `${docTypeDisplayName} Filed (with Warnings)`
+          : `${docTypeDisplayName} Filed`;
 
     const header: UiViewHeader = {
-      title: `${docTypeDisplayName} Filed`,
+      title: headerTitle,
       ...(trimmedSpaceName.length > 0 ? { subtitle: trimmedSpaceName } : {}),
     };
 
     const bannerWidgets: UiViewWidget[] = [];
     const trimmedWorkflowName = outcome.workflowName?.trim() || undefined;
-    const bannerText = trimmedWorkflowName
-      ? `Filed via <b>${escapeCardHtml(trimmedWorkflowName)}</b>`
-      : 'Filed.';
-    bannerWidgets.push({
-      textParagraph: {
-        text: bannerText,
-      },
-    });
+    if (status === 'partial_failure') {
+      const failedStepId = outcome.failedStepId?.trim();
+      const trimmedErrors = outcome.errors
+        .map((e) => e.trim())
+        .filter((e) => e.length > 0);
+      const errorMessage =
+        trimmedErrors.length > 0
+          ? trimmedErrors.map(escapeCardHtml).join('<br>')
+          : 'Workflow failed partway through.';
+      const stepNoun = outcome.completedStepCount === 1 ? 'step' : 'steps';
+      const failedPrefix = failedStepId
+        ? `Failed at ${escapeCardHtml(failedStepId)}:`
+        : 'Partial failure:';
+      bannerWidgets.push({
+        textParagraph: {
+          text: `<font color="#c5221f"><b>${failedPrefix}</b></font> ${errorMessage}<br><i>${outcome.completedStepCount} completed ${stepNoun} before failure.</i>`,
+        },
+      });
+    } else {
+      const bannerText = trimmedWorkflowName
+        ? `Filed via <b>${escapeCardHtml(trimmedWorkflowName)}</b>`
+        : 'Filed.';
+      bannerWidgets.push({
+        textParagraph: {
+          text: bannerText,
+        },
+      });
+    }
 
-    const trimmedNotices = outcome.notices
-      .map((n) => n.trim())
-      .filter((n) => n.length > 0);
     if (trimmedNotices.length > 0) {
       bannerWidgets.push({
         textParagraph: {
@@ -367,43 +489,20 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
       });
     }
 
-    const sections: UiViewSection[] = [{ widgets: bannerWidgets }];
-
+    const bannerSection: UiViewSection = { widgets: bannerWidgets };
     const successView = context.uiSchema?.successView;
-    if (successView?.summary) {
-      sections.push(
-        buildSummarySection(
+    const summarySection: UiViewSection | undefined = successView?.summary
+      ? buildSummarySection(
           successView.summary,
           outcome.documentData,
           this.templateParser,
           outcome.logWrite
         )
-      );
-    } else if (outcome.logWrite !== undefined) {
-      sections.push(buildFallbackLogSummarySection(outcome.logWrite));
-    }
+      : outcome.logWrite !== undefined
+        ? buildFallbackLogSummarySection(outcome.logWrite)
+        : undefined;
 
-    const folders = collectFolders(outcome.stepResults);
-    if (folders.length > 0) {
-      sections.push({
-        header: 'Folders',
-        widgets: folders.map(buildFolderWidget),
-      });
-    }
-
-    const filedItems = collectCreatedAndFiledItems(
-      outcome.stepResults,
-      successView?.artifacts,
-      trimmedWorkflowName
-    );
-    if (filedItems.length > 0) {
-      sections.push({
-        header: 'Created & Filed',
-        widgets: filedItems.map(buildFileWidget),
-      });
-    }
-
-    sections.push({
+    const actionsSection: UiViewSection = {
       widgets: [
         {
           buttonList: {
@@ -418,7 +517,66 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
           },
         },
       ],
+    };
+
+    const fixedWidgetCount =
+      bannerSection.widgets.length +
+      (summarySection?.widgets.length ?? 0) +
+      actionsSection.widgets.length;
+
+    const folders = collectFolders(outcome.stepResults);
+    const filedItems = collectCreatedAndFiledItems(
+      outcome.stepResults,
+      successView?.artifacts,
+      trimmedWorkflowName
+    );
+
+    const budget = allocateSuccessCardBudget({
+      fixedWidgetCount,
+      totalFolders: folders.length,
+      totalArtifacts: filedItems.length,
     });
+
+    const sections: UiViewSection[] = [bannerSection];
+    if (summarySection) {
+      sections.push(summarySection);
+    }
+
+    const renderedFolders = folders.slice(0, budget.renderedFoldersCount);
+    if (renderedFolders.length > 0) {
+      sections.push({
+        header: 'Folders',
+        widgets: renderedFolders.map(buildFolderWidget),
+      });
+    }
+
+    const renderedArtifacts = filedItems.slice(0, budget.renderedArtifactsCount);
+    if (renderedArtifacts.length > 0) {
+      sections.push({
+        header: 'Created & Filed',
+        widgets: renderedArtifacts.map(buildFileWidget),
+        ...(renderedArtifacts.length > UNCOLLAPSIBLE_ARTIFACT_COUNT
+          ? {
+              collapsible: true,
+              uncollapsibleWidgetsCount: UNCOLLAPSIBLE_ARTIFACT_COUNT,
+            }
+          : {}),
+      });
+    }
+
+    if (budget.hasOverflow) {
+      sections.push(
+        buildOverflowNoticeSection({
+          renderedFoldersCount: renderedFolders.length,
+          totalFolders: folders.length,
+          renderedArtifactsCount: renderedArtifacts.length,
+          totalArtifacts: filedItems.length,
+          primaryFolderUri: folders[0]?.uri,
+        })
+      );
+    }
+
+    sections.push(actionsSection);
 
     return {
       id: this.viewId,

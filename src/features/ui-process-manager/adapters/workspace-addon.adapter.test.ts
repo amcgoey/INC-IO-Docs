@@ -7475,6 +7475,113 @@ describe('WorkspaceAddonAdapter in ui-process-manager', () => {
       expect(startOverRes.isUpdateCard).toBe(true);
       expect(startOverRes.formData?.title).toBeUndefined();
     });
+
+    it('enforces partial-failure routing threshold: pushes document-success-card when completedStepCount >= 1 or producedFiles.length >= 1, and keeps inline validationErrors when both are 0 (#386)', async () => {
+      const processDocument = vi
+        .fn()
+        // Case 1: completedStepCount === 1, 0 files (e.g., Step 1 WRITE_LOG succeeded, Step 2 failed)
+        .mockResolvedValueOnce({
+          success: false,
+          errors: ['Step 2 failed'],
+          executionOutcome: {
+            success: false,
+            workflowName: 'SubmittalSent',
+            completedStepCount: 1,
+            failedStepId: 'moveOriginal',
+            spaceName: 'Project Main',
+            documentData: {},
+            stepResults: [],
+            notices: ['Early notice'],
+            errors: ['Step 2 failed'],
+          },
+        })
+        // Case 2: completedStepCount === 0, producedFiles.length === 1 (Step 1 multi-file batch failure)
+        .mockResolvedValueOnce({
+          success: false,
+          errors: ['Failed on file 2'],
+          executionOutcome: {
+            success: false,
+            workflowName: 'FileCommProject',
+            completedStepCount: 0,
+            failedStepId: 'moveFiles',
+            spaceName: 'Project Main',
+            documentData: {},
+            stepResults: [
+              {
+                stepId: 'moveFiles',
+                activityType: 'MOVE_FILE',
+                files: [
+                  {
+                    id: 'moved-1',
+                    name: 'First.pdf',
+                    parentId: 'dest-1',
+                    parentName: 'Communications',
+                    uri: 'https://drive.google.com/file/d/moved-1/view',
+                  },
+                ],
+              },
+            ],
+            notices: [],
+            errors: ['Failed on file 2'],
+          },
+        })
+        // Case 3: completedStepCount === 0 && producedFiles.length === 0 (zero-effect failure)
+        .mockResolvedValueOnce({
+          success: false,
+          errors: ['Validation failed before Step 1'],
+          contextVariables: { notices: ['Preflight notice'] },
+          executionOutcome: {
+            success: false,
+            workflowName: 'SubmittalReceived',
+            completedStepCount: 0,
+            failedStepId: 'moveOriginal',
+            spaceName: 'Project Main',
+            documentData: {},
+            stepResults: [],
+            notices: ['Preflight notice'],
+            errors: ['Validation failed before Step 1'],
+          },
+        });
+
+      const adapter = new WorkspaceAddonAdapter({
+        spaceProvider: submittalSpaceProvider,
+        configProvider: mockConfigProvider,
+        manifestPort: createSubmittalManifestPort(2),
+        documentRunner: { processDocument },
+      });
+
+      const baseEvent = {
+        hostApp: 'DRIVE' as const,
+        actionName: 'processDocument',
+        selectedItems: [{ id: 'file-1', title: 'A.pdf' }],
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace_projects: 'Project Main',
+          SelectDocumentType_projects: 'submittal-arch',
+          SelectFiles: ['file-1'],
+        },
+      };
+
+      const step1CompleteFail = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
+      expect(step1CompleteFail.viewId).toBe('document-success-card');
+      expect(step1CompleteFail.isUpdateCard).toBe(false);
+      expect(step1CompleteFail.notification).toBeUndefined();
+      expect(step1CompleteFail.executionOutcome?.completedStepCount).toBe(1);
+      expect(step1CompleteFail.executionOutcome?.failedStepId).toBe('moveOriginal');
+
+      const batchFail = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
+      expect(batchFail.viewId).toBe('document-success-card');
+      expect(batchFail.isUpdateCard).toBe(false);
+      expect(batchFail.notification).toBeUndefined();
+      expect(batchFail.executionOutcome?.completedStepCount).toBe(0);
+      expect(batchFail.executionOutcome?.stepResults[0]?.files).toHaveLength(1);
+
+      const zeroEffectFail = (await adapter.processUiEvent(baseEvent)) as UiProcessRenderResult;
+      expect(zeroEffectFail.viewId).toBe('drive-document-process-card');
+      expect(zeroEffectFail.isUpdateCard).toBe(true);
+      expect(zeroEffectFail.validationErrors).toEqual(['Validation failed before Step 1']);
+      expect(zeroEffectFail.statusMessages).toEqual(['Preflight notice']);
+    });
   });
 });
 
