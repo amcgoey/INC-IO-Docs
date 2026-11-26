@@ -40,3 +40,31 @@ export class PdfFileTooLargeError extends PdfProcessorError {
     this.maxBytes = options?.maxBytes ?? 0;
   }
 }
+
+export type PdfUnsupportedFormReason = 'xfa' | 'signed' | 'unsupported';
+
+export class PdfUnsupportedFormError extends PdfProcessorError {
+  readonly reason: PdfUnsupportedFormReason;
+
+  constructor(
+    message: string = 'PDF contains an unsupported interactive form or cryptographic signature',
+    options?: { reason?: PdfUnsupportedFormReason | undefined; cause?: unknown }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'PdfUnsupportedFormError';
+    this.reason = options?.reason ?? 'unsupported';
+  }
+}
+
+export class PdfFormFieldError extends PdfProcessorError {
+  readonly fieldName: string | undefined;
+
+  constructor(
+    message: string = 'Invalid PDF form field operation or value',
+    options?: { fieldName?: string | undefined; cause?: unknown }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'PdfFormFieldError';
+    this.fieldName = options?.fieldName;
+  }
+}
