@@ -113,6 +113,13 @@ function resolveExtensionPreservingFileName(
   return `${cleanTarget}${resolvedExtension}`;
 }
 
+function applyNonDoublingPrefix(fileName: string, prefix: string | undefined): string {
+  if (prefix === undefined || prefix.length === 0) {
+    return fileName;
+  }
+  return fileName.startsWith(prefix) ? fileName : `${prefix}${fileName}`;
+}
+
 export function parsePathSegments(path: string): string[] {
   if (typeof path !== 'string') {
     throw new DriveServiceError('DriveActivityHandler: Resolved folder path segment must be a non-empty string');
@@ -233,6 +240,7 @@ export class DriveActivityHandler implements ActivityHandler {
   canHandle(activity: Activity): boolean {
     return (
       activity.type === 'MOVE_FILE' ||
+      activity.type === 'DUPLICATE_FILE' ||
       activity.type === 'SEARCH_DRIVE_FILE' ||
       activity.type === 'FIND_DRIVE_FILE' ||
       activity.type === 'RESOLVE_DRIVE_FILE'
@@ -352,6 +360,9 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     try {
+      if (activity.type === 'DUPLICATE_FILE') {
+        return await this.handleDuplicate(payload, context);
+      }
       return await this.handleMove(payload, context);
     } catch (error) {
       if (
@@ -366,8 +377,9 @@ export class DriveActivityHandler implements ActivityHandler {
         };
       }
 
+      const verb = activity.type === 'DUPLICATE_FILE' ? 'duplicate' : 'move';
       throw new Error(
-        `DriveActivityHandler failed to move file: ${error instanceof Error ? error.message : String(error)}`,
+        `DriveActivityHandler failed to ${verb} file: ${error instanceof Error ? error.message : String(error)}`,
         { cause: error }
       );
     }
@@ -428,11 +440,186 @@ export class DriveActivityHandler implements ActivityHandler {
     }
   }
 
+  private resolveStepSourceFiles(
+    activityType: string,
+    payload: Record<string, unknown>,
+    context?: ActivityExecutionContext
+  ): SourceFile[] {
+    const rawStepId = payload.fileSourceStepId;
+    if (typeof rawStepId !== 'string' || rawStepId.trim().length === 0) {
+      throw new DriveServiceError(
+        `DriveActivityHandler: ${activityType} payload.fileSourceStepId must be a non-empty string`
+      );
+    }
+    const stepId = rawStepId.trim();
+    if (!context) {
+      throw new DriveServiceError(
+        `DriveActivityHandler: ${activityType} fileSourceStepId "${stepId}" requires an ActivityExecutionContext.`
+      );
+    }
+    const stepOutput = context.stepOutputs[stepId];
+    if (stepOutput === undefined) {
+      throw new DriveServiceError(
+        `DriveActivityHandler: ${activityType} fileSourceStepId "${stepId}" references an unexecuted step.`
+      );
+    }
+    const stepFiles = stepOutput.files ?? [];
+    if (stepFiles.length === 0) {
+      throw new DriveServiceError(
+        `DriveActivityHandler: ${activityType} fileSourceStepId "${stepId}" resolved zero files.`
+      );
+    }
+    return stepFiles.map((file) => ({
+      id: file.id,
+      name: file.name,
+      ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+    }));
+  }
+
+  private async resolveDestinationFolder(
+    payload: Record<string, unknown>,
+    firstSourceFile: SourceFile | undefined,
+    fileMetadataCache: Map<string, DriveFileResult>,
+    options: { defaultToUnfiled: boolean }
+  ): Promise<DriveFileResult | undefined> {
+    const rootStorageId =
+      typeof payload.rootStorageId === 'string' && payload.rootStorageId.trim().length > 0
+        ? payload.rootStorageId.trim()
+        : undefined;
+
+    let parentPathSegments: string[] = [];
+    if (payload.parentPath !== undefined) {
+      parentPathSegments = parsePathSegments(payload.parentPath as string);
+    }
+
+    let driveConfig;
+    if (options.defaultToUnfiled && this.options.configProvider) {
+      try {
+        driveConfig = await this.options.configProvider.getDriveConfig();
+      } catch (error) {
+        throw new Error(
+          `DriveActivityHandler failed to get drive config: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
+    }
+
+    let folderSegments: string[] = [];
+    if (payload.folderName !== undefined) {
+      folderSegments = parsePathSegments(payload.folderName as string);
+    } else if (options.defaultToUnfiled) {
+      const defaultTargetName =
+        driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
+      folderSegments = [defaultTargetName];
+    }
+
+    if (
+      !options.defaultToUnfiled &&
+      rootStorageId === undefined &&
+      parentPathSegments.length === 0 &&
+      folderSegments.length === 0
+    ) {
+      return undefined;
+    }
+
+    let startingId: string;
+    if (rootStorageId) {
+      startingId = rootStorageId;
+    } else if (!firstSourceFile) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else if (firstSourceFile.content instanceof Uint8Array) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else if (
+      this.isEmailPdf(firstSourceFile) ||
+      this.isUnhydratedEmailAttachment(firstSourceFile, payload)
+    ) {
+      throw new Error(
+        'DriveActivityHandler: Cannot create destination folder for unhydrated email item because rootStorageId is missing or unresolved in activity payload'
+      );
+    } else {
+      const firstFileMeta = await this.getCachedFileMetadata(firstSourceFile.id, fileMetadataCache);
+      startingId = firstFileMeta.parents?.[0] ?? 'root';
+    }
+
+    let leafFolder: DriveFileResult = { id: startingId, name: '' };
+    if (parentPathSegments.length > 0) {
+      leafFolder = await this.driveService.resolveFolderPath(startingId, parentPathSegments);
+    }
+
+    let currentParentId = leafFolder.id;
+    for (const segment of folderSegments) {
+      leafFolder = await this.driveService.findOrCreateFolder(currentParentId, segment);
+      currentParentId = leafFolder.id;
+    }
+
+    return leafFolder;
+  }
+
+  private async resolveTargetFileName(
+    sourceFile: SourceFile,
+    requestedFileName: string | undefined,
+    fileNamePrefix: string | undefined,
+    fileMetadataCache: Map<string, DriveFileResult>,
+    requireBaseName: boolean
+  ): Promise<string | undefined> {
+    if (requestedFileName === undefined && fileNamePrefix === undefined) {
+      return undefined;
+    }
+    let sourceName = sourceFile.name;
+    let sourceMimeType = sourceFile.mimeType;
+    if (sourceName === undefined || sourceMimeType === undefined) {
+      const cachedMeta = await this.getCachedFileMetadata(sourceFile.id, fileMetadataCache);
+      sourceName = sourceName ?? cachedMeta.name;
+      sourceMimeType = sourceMimeType ?? cachedMeta.mimeType;
+    }
+    const baseName =
+      requestedFileName !== undefined
+        ? resolveExtensionPreservingFileName(requestedFileName, sourceName, sourceMimeType)
+        : sourceName;
+    if (baseName === undefined || baseName.trim().length === 0) {
+      if (requireBaseName) {
+        throw new DriveServiceError('DriveActivityHandler: Could not resolve target file name');
+      }
+      return undefined;
+    }
+    return applyNonDoublingPrefix(baseName, fileNamePrefix);
+  }
+
+  private mapFileLoopError(error: unknown, processedFiles: FileLocator[]): ActivityOutput {
+    if (isFileNotFoundError(error)) {
+      return {
+        success: false,
+        error: 'The specified Google Drive file or folder was not found.',
+        files: processedFiles,
+      };
+    }
+
+    if (isAccessDeniedError(error)) {
+      return {
+        success: false,
+        error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
+        files: processedFiles,
+      };
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: errorMessage,
+      files: processedFiles,
+    };
+  }
+
   private async handleMove(
     payload: Record<string, unknown>,
     context?: ActivityExecutionContext
   ): Promise<ActivityOutput> {
     let targetSourceFiles: SourceFile[] = [];
+    let isFromContextSourceFiles = false;
 
     const payloadFileId =
       typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
@@ -441,10 +628,14 @@ export class DriveActivityHandler implements ActivityHandler {
 
     const contextSourceFiles = context?.document?.sourceFiles;
 
-    if (contextSourceFiles !== undefined) {
+    if (payload.fileSourceStepId !== undefined) {
+      targetSourceFiles = this.resolveStepSourceFiles('MOVE_FILE', payload, context);
+    } else if (contextSourceFiles !== undefined) {
       targetSourceFiles = [...contextSourceFiles];
+      isFromContextSourceFiles = true;
     } else if (this.sourceFiles !== undefined) {
       targetSourceFiles = [...this.sourceFiles];
+      isFromContextSourceFiles = true;
     } else if (payloadFileId) {
       targetSourceFiles = [{ id: payloadFileId }];
     } else {
@@ -463,30 +654,13 @@ export class DriveActivityHandler implements ActivityHandler {
       }
     }
 
-    if (contextSourceFiles === undefined && this.sourceFiles === undefined && targetSourceFiles.length === 0) {
+    if (
+      payload.fileSourceStepId === undefined &&
+      contextSourceFiles === undefined &&
+      this.sourceFiles === undefined &&
+      targetSourceFiles.length === 0
+    ) {
       throw new Error('DriveActivityHandler: No fileId found in activity payload or execution context');
-    }
-
-    let driveConfig;
-    if (this.options.configProvider) {
-      try {
-        driveConfig = await this.options.configProvider.getDriveConfig();
-      } catch (error) {
-        throw new Error(
-          `DriveActivityHandler failed to get drive config: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error }
-        );
-      }
-    }
-
-    const rootStorageId =
-      typeof payload.rootStorageId === 'string' && payload.rootStorageId.trim().length > 0
-        ? payload.rootStorageId.trim()
-        : undefined;
-
-    let parentPathSegments: string[] = [];
-    if (payload.parentPath !== undefined) {
-      parentPathSegments = parsePathSegments(payload.parentPath as string);
     }
 
     let requestedFileName: string | undefined;
@@ -500,55 +674,20 @@ export class DriveActivityHandler implements ActivityHandler {
     }
 
     const fileMetadataCache = new Map<string, DriveFileResult>();
-
-    let startingId: string;
-    if (rootStorageId) {
-      startingId = rootStorageId;
-    } else if (targetSourceFiles.length === 0) {
-      throw new Error(
-        'DriveActivityHandler: Cannot create destination folder for zero-file filing because rootStorageId is missing or unresolved in activity payload'
-      );
-    } else if (targetSourceFiles[0]?.content instanceof Uint8Array) {
-      throw new Error(
-        'DriveActivityHandler: Cannot create destination folder for binary file filing because rootStorageId is missing or unresolved in activity payload'
-      );
-    } else if (
-      this.isEmailPdf(targetSourceFiles[0]) ||
-      this.isUnhydratedEmailAttachment(targetSourceFiles[0], payload)
-    ) {
-      throw new Error(
-        'DriveActivityHandler: Cannot create destination folder for unhydrated email item because rootStorageId is missing or unresolved in activity payload'
-      );
-    } else {
-      const firstFileMeta = await this.driveService.getFile(targetSourceFiles[0].id);
-      fileMetadataCache.set(targetSourceFiles[0].id, firstFileMeta);
-      startingId = firstFileMeta.parents?.[0] ?? 'root';
-    }
-    const baseFolderId =
-      parentPathSegments.length > 0
-        ? (await this.driveService.resolveFolderPath(startingId, parentPathSegments)).id
-        : startingId;
-
-    const defaultTargetName =
-      driveConfig?.defaultFolderName ?? this.options.defaultFolderName ?? 'Unfiled';
-    let folderSegments: string[];
-    if (payload.folderName !== undefined) {
-      folderSegments = parsePathSegments(payload.folderName as string);
-    } else {
-      folderSegments = [defaultTargetName];
-    }
-
-    let currentParentId = baseFolderId;
-    let leafFolder: DriveFileResult = { id: baseFolderId, name: '' };
-
-    for (const segment of folderSegments) {
-      leafFolder = await this.driveService.findOrCreateFolder(currentParentId, segment);
-      currentParentId = leafFolder.id;
+    const leafFolder = await this.resolveDestinationFolder(
+      payload,
+      targetSourceFiles[0],
+      fileMetadataCache,
+      { defaultToUnfiled: true }
+    );
+    if (!leafFolder) {
+      throw new DriveServiceError('DriveActivityHandler: Could not resolve destination folder');
     }
 
     const movedFiles: FileLocator[] = [];
 
     if (
+      isFromContextSourceFiles &&
       this.sourceFileHydrator &&
       targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
     ) {
@@ -590,7 +729,7 @@ export class DriveActivityHandler implements ActivityHandler {
           });
           movedFiles.push(fileLocator);
         } else {
-          if (this.isEmailPdf(sourceFile)) {
+          if (isFromContextSourceFiles && this.isEmailPdf(sourceFile)) {
             return {
               success: false,
               error: 'Could not generate the Email PDF. Please try again.',
@@ -598,7 +737,7 @@ export class DriveActivityHandler implements ActivityHandler {
             };
           }
 
-          if (this.isUnhydratedEmailAttachment(sourceFile, payload)) {
+          if (isFromContextSourceFiles && this.isUnhydratedEmailAttachment(sourceFile, payload)) {
             return {
               success: false,
               error: 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
@@ -606,21 +745,13 @@ export class DriveActivityHandler implements ActivityHandler {
             };
           }
 
-          let newName: string | undefined;
-          if (requestedFileName !== undefined) {
-            let sourceName = sourceFile.name;
-            let sourceMimeType = sourceFile.mimeType;
-            if (sourceName === undefined || sourceMimeType === undefined) {
-              const cachedMeta = await this.getCachedFileMetadata(sourceFile.id, fileMetadataCache);
-              sourceName = sourceName ?? cachedMeta.name;
-              sourceMimeType = sourceMimeType ?? cachedMeta.mimeType;
-            }
-            newName = resolveExtensionPreservingFileName(
-              requestedFileName,
-              sourceName,
-              sourceMimeType
-            );
-          }
+          const newName = await this.resolveTargetFileName(
+            sourceFile,
+            requestedFileName,
+            undefined,
+            fileMetadataCache,
+            false
+          );
 
           const movedFile =
             newName !== undefined
@@ -659,34 +790,221 @@ export class DriveActivityHandler implements ActivityHandler {
           movedFiles.push(fileLocator);
         }
       } catch (error) {
-        if (isFileNotFoundError(error)) {
-          return {
-            success: false,
-            error: 'The specified Google Drive file or folder was not found.',
-            files: movedFiles,
-          };
-        }
-
-        if (isAccessDeniedError(error)) {
-          return {
-            success: false,
-            error: 'Access denied. You do not have permission to access this Google Drive file or folder.',
-            files: movedFiles,
-          };
-        }
-
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return {
-          success: false,
-          error: errorMessage,
-          files: movedFiles,
-        };
+        return this.mapFileLoopError(error, movedFiles);
       }
     }
 
     return {
       success: true,
       files: movedFiles,
+    };
+  }
+
+  private async handleDuplicate(
+    payload: Record<string, unknown>,
+    context?: ActivityExecutionContext
+  ): Promise<ActivityOutput> {
+    let requestedFileName: string | undefined;
+    if (payload.fileName !== undefined) {
+      if (typeof payload.fileName !== 'string' || payload.fileName.trim().length === 0) {
+        throw new DriveServiceError(
+          'DriveActivityHandler: DUPLICATE_FILE payload.fileName must be a non-empty string'
+        );
+      }
+      requestedFileName = payload.fileName.trim();
+    }
+
+    let fileNamePrefix: string | undefined;
+    if (payload.fileNamePrefix !== undefined) {
+      if (typeof payload.fileNamePrefix !== 'string' || payload.fileNamePrefix.trim().length === 0) {
+        throw new DriveServiceError(
+          'DriveActivityHandler: DUPLICATE_FILE payload.fileNamePrefix must be a non-empty string'
+        );
+      }
+      fileNamePrefix = payload.fileNamePrefix;
+    }
+
+    let targetSourceFiles: SourceFile[] = [];
+    let isFromContextSourceFiles = false;
+    const payloadFileId =
+      typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
+        ? payload.fileId.trim()
+        : undefined;
+
+    if (payload.fileSourceStepId !== undefined) {
+      targetSourceFiles = this.resolveStepSourceFiles('DUPLICATE_FILE', payload, context);
+    } else if (payloadFileId) {
+      targetSourceFiles = [{ id: payloadFileId }];
+    } else if (context && context.files.length > 0) {
+      targetSourceFiles = context.files.map((file) => ({
+        id: file.id,
+        name: file.name,
+        ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+      }));
+    } else if (context?.document?.sourceFiles !== undefined && context.document.sourceFiles.length > 0) {
+      targetSourceFiles = [...context.document.sourceFiles];
+      isFromContextSourceFiles = true;
+    } else if (this.sourceFiles !== undefined && this.sourceFiles.length > 0) {
+      targetSourceFiles = [...this.sourceFiles];
+      isFromContextSourceFiles = true;
+    } else {
+      const searchQuery = this.extractSearchQuery(payload, { includeFileName: false });
+      if (searchQuery) {
+        const results = await this.driveService.searchFiles(searchQuery);
+        if (results.length === 0) {
+          throw new FileNotFoundError(`FileNotFoundError: File not found for target '${searchQuery.targetName}'`);
+        }
+        if (results.length > 1) {
+          throw new AmbiguousFileError(
+            `AmbiguousFileError: Query for target '${searchQuery.targetName}' returned ${results.length} matches and could not be uniquely resolved.`
+          );
+        }
+        targetSourceFiles = [{ id: results[0].id }];
+      }
+    }
+
+    if (targetSourceFiles.length === 0) {
+      throw new DriveServiceError(
+        'DriveActivityHandler: DUPLICATE_FILE requires at least one source file from fileSourceStepId, fileId, or execution context.'
+      );
+    }
+
+    const fileMetadataCache = new Map<string, DriveFileResult>();
+    const leafFolder = await this.resolveDestinationFolder(
+      payload,
+      targetSourceFiles[0],
+      fileMetadataCache,
+      { defaultToUnfiled: false }
+    );
+
+    const duplicatedFiles: FileLocator[] = [];
+
+    if (
+      isFromContextSourceFiles &&
+      this.sourceFileHydrator &&
+      targetSourceFiles.some((f) => !(f.content instanceof Uint8Array))
+    ) {
+      try {
+        targetSourceFiles = await this.sourceFileHydrator.hydrate(targetSourceFiles);
+      } catch (error) {
+        if (error instanceof DriveServiceError) {
+          return {
+            success: false,
+            error: error.message,
+            files: duplicatedFiles,
+          };
+        }
+        throw error;
+      }
+    }
+
+    for (const sourceFile of targetSourceFiles) {
+      try {
+        if (sourceFile.content instanceof Uint8Array) {
+          if (!leafFolder) {
+            throw new DriveServiceError(
+              'DriveActivityHandler: DUPLICATE_FILE requires a destination folder for binary source files'
+            );
+          }
+          const baseName =
+            requestedFileName !== undefined
+              ? resolveExtensionPreservingFileName(
+                  requestedFileName,
+                  sourceFile.name,
+                  sourceFile.mimeType
+                )
+              : sourceFile.name || sourceFile.id;
+          const resolvedName = applyNonDoublingPrefix(baseName, fileNamePrefix);
+          const file = await this.driveService.saveBuffer(sourceFile.content, {
+            action: 'create',
+            targetFolderId: leafFolder.id,
+            name: resolvedName,
+            ...(sourceFile.mimeType !== undefined ? { mimeType: sourceFile.mimeType } : {}),
+          });
+          duplicatedFiles.push(
+            this.createFileLocator(file, leafFolder.name, {
+              fallbackMimeType: sourceFile.mimeType,
+              fallbackParentId: leafFolder.id,
+              defaultEmptyUri: true,
+            })
+          );
+          continue;
+        }
+
+        if (isFromContextSourceFiles && this.isEmailPdf(sourceFile)) {
+          return {
+            success: false,
+            error: 'Could not generate the Email PDF. Please try again.',
+            files: duplicatedFiles,
+          };
+        }
+
+        if (isFromContextSourceFiles && this.isUnhydratedEmailAttachment(sourceFile, payload)) {
+          return {
+            success: false,
+            error: 'Could not retrieve the selected email attachment(s) from Gmail. Please refresh the add-on and try again.',
+            files: duplicatedFiles,
+          };
+        }
+
+        const newName = await this.resolveTargetFileName(
+          sourceFile,
+          requestedFileName,
+          fileNamePrefix,
+          fileMetadataCache,
+          true
+        );
+
+        const duplicateOptions = {
+          ...(leafFolder ? { targetFolderId: leafFolder.id } : {}),
+          ...(newName !== undefined ? { newName } : {}),
+        };
+
+        const duplicatedFile =
+          Object.keys(duplicateOptions).length > 0
+            ? await this.driveService.duplicate(sourceFile.id, duplicateOptions)
+            : await this.driveService.duplicate(sourceFile.id);
+
+        let uri = duplicatedFile.webViewLink;
+        let mimeType = duplicatedFile.mimeType;
+        let name = duplicatedFile.name || newName;
+
+        if (!uri || !name) {
+          try {
+            const fileMeta = await this.driveService.getFile(duplicatedFile.id);
+            uri = uri ?? fileMeta.webViewLink;
+            mimeType = mimeType ?? fileMeta.mimeType;
+            name = name || fileMeta.name;
+          } catch {
+            // Ignore
+          }
+        }
+
+        const parentName = leafFolder?.name ?? duplicatedFile.parents?.[0] ?? '';
+        const fileLocator = this.createFileLocator(
+          {
+            id: duplicatedFile.id,
+            name,
+            parents: duplicatedFile.parents,
+            mimeType,
+            webViewLink: uri,
+          },
+          parentName,
+          {
+            fallbackName: newName ?? sourceFile.name,
+            fallbackMimeType: sourceFile.mimeType,
+            fallbackParentId: leafFolder?.id ?? duplicatedFile.parents?.[0],
+          }
+        );
+        duplicatedFiles.push(fileLocator);
+      } catch (error) {
+        return this.mapFileLoopError(error, duplicatedFiles);
+      }
+    }
+
+    return {
+      success: true,
+      files: duplicatedFiles,
     };
   }
 

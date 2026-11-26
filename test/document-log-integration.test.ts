@@ -237,8 +237,18 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
     },
   }));
 
+  const copy = vi.fn().mockImplementation(async ({ fileId, requestBody }: { fileId: string; requestBody?: { name?: string; parents?: string[] } }) => ({
+    data: {
+      id: `${fileId}-copy`,
+      name: requestBody?.name ?? 'Copy.pdf',
+      parents: requestBody?.parents ?? ['folder-submittals'],
+      mimeType: 'application/pdf',
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+    },
+  }));
+
   return {
-    files: { list, get, update, create },
+    files: { list, get, update, create, copy },
   } as unknown as NonNullable<GoogleDriveClientOptions['drive']>;
 }
 
@@ -1087,7 +1097,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+    expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
     expect(result.contextVariables).toEqual({
       documentLogWrite: {
         spreadsheetId: 'harborview-log-1',
@@ -1245,6 +1255,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       const archDef = JSON.parse(archRaw) as DocumentType;
       return {
         ...archDef,
+        documentUiSchema: {
+          ...archDef.documentUiSchema,
+          events: {
+            onSubmit: { catchAllWorkflow: 'SubmittalSent' },
+          },
+        },
         documentWorkflowConfig: {
           workflows: [
             {
@@ -1455,7 +1471,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
     const service = await factory({
       selectedLogId: 'explicit-selected-log-777',
-      sourceFiles: [],
+      sourceFiles: [{ id: 'selected-log-file-1', name: 'Submittal.pdf' }],
     });
 
     const result = await service.processDocument(
@@ -1499,7 +1515,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     const missingCtx = await buildWiredDocumentService({
       driveState: emptyDriveState,
       sheetsState: emptySheetsState,
-      sourceFiles: [],
+      primaryTargetId: 'missing-log-file-1',
       optionTablePortOverride: createStaticCsiDivisionsOptionTablePort(),
     });
 
@@ -1533,7 +1549,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     const ambiguousCtx = await buildWiredDocumentService({
       driveState: ambiguousDriveState,
       sheetsState: { tableValues: [], batchUpdates: [] },
-      sourceFiles: [],
+      primaryTargetId: 'ambig-log-file-1',
     });
 
     const ambiguousResult = await ambiguousCtx.documentService.processDocument(
@@ -1718,6 +1734,13 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       id: 'moved-doc-1',
       name: 'Moved.pdf',
       webViewLink: 'https://drive.google.com/file/d/moved-doc-1/view',
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'duplicate').mockResolvedValue({
+      id: 'moved-doc-1-copy',
+      name: '_Moved.pdf',
+      parents: ['submittals-id'],
+      mimeType: 'application/pdf',
+      webViewLink: 'https://drive.google.com/file/d/moved-doc-1-copy/view',
     });
     vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
       {
@@ -1981,7 +2004,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
       if (!result.success) return;
 
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual(
+        scenario.documentData.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
       const writeInfo = result.contextVariables?.documentLogWrite as {
         rowNumber: number;
         action: string;
@@ -2338,7 +2365,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
       expect(result.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
@@ -2426,7 +2453,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
         if (!result.success) return;
 
-        expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+        expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
         const writeInfo = result.contextVariables?.documentLogWrite as {
           rowNumber: number;
           action: string;

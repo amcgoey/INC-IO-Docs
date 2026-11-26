@@ -316,9 +316,19 @@ export type ProcessDocumentResult =
       data: Document;
       activities: Activity[];
       outputs: ActivityOutput[];
+      stepOutputs?: Record<string, ActivityOutput> | undefined;
+      files?: FileLocator[] | undefined;
       contextVariables?: { [key: string]: unknown } | undefined;
     }
-  | { success: false; errors: string[] };
+  | {
+      success: false;
+      errors: string[];
+      failedStepId?: string | undefined;
+      workflowName?: string | undefined;
+      stepOutputs?: Record<string, ActivityOutput> | undefined;
+      files?: FileLocator[] | undefined;
+      contextVariables?: { [key: string]: unknown } | undefined;
+    };
 
 /**
  * Maps property names in DocumentIdentitySchema to property names in the Document entity model.
@@ -713,6 +723,30 @@ function cloneAndFreezePlainValue<T>(value: T): T {
     cloned[key] = cloneAndFreezePlainValue(entryValue);
   }
   return Object.freeze(cloned) as T;
+}
+
+function mergeContextVariables(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>
+): void {
+  const existingNotices = Array.isArray(target.notices) ? target.notices : undefined;
+  const hasPatchNotices = Object.prototype.hasOwnProperty.call(patch, 'notices');
+  const { notices: patchNoticesRaw } = patch;
+
+  Object.assign(target, patch);
+
+  if (hasPatchNotices) {
+    if (patchNoticesRaw === undefined) {
+      if (existingNotices !== undefined) {
+        target.notices = [...existingNotices];
+      } else {
+        delete target.notices;
+      }
+    } else {
+      const appended = Array.isArray(patchNoticesRaw) ? patchNoticesRaw : [patchNoticesRaw];
+      target.notices = [...(existingNotices ?? []), ...appended];
+    }
+  }
 }
 
 function createActivityExecutionContext(
@@ -1411,36 +1445,66 @@ export class DocumentService implements DocumentServicePort {
       accumulatedContextVariables
     );
 
+    const buildWorkflowFailureResult = (
+      errors: string[],
+      failedStepId: string | undefined
+    ): ProcessDocumentResult => ({
+      success: false,
+      errors,
+      workflowName: workflow.name,
+      ...(failedStepId !== undefined ? { failedStepId } : {}),
+      stepOutputs: { ...stepOutputs },
+      files: [...currentFiles],
+      ...(Object.keys(accumulatedContextVariables).length > 0
+        ? { contextVariables: { ...accumulatedContextVariables } }
+        : {}),
+    });
+
     const resolvedActivities: Activity[] = [];
     const collectedOutputs: ActivityOutput[] = [];
     for (const activity of activities) {
-      const resolvedPayload = (resolvePayloadTemplates(
-        activity.payload,
-        this.templateEvaluator,
-        evaluationContext,
-        pathEvaluationContext
-      ) ?? {}) as { [key: string]: unknown };
+      let resolvedActivity: Activity;
+      let output: ActivityOutput | void;
+      try {
+        const resolvedPayload = (resolvePayloadTemplates(
+          activity.payload,
+          this.templateEvaluator,
+          evaluationContext,
+          pathEvaluationContext
+        ) ?? {}) as { [key: string]: unknown };
 
-      const resolvedActivity: Activity = {
-        ...(activity.id !== undefined ? { id: activity.id } : {}),
-        type: activity.type,
-        payload: resolvedPayload,
-      };
+        resolvedActivity = {
+          ...(activity.id !== undefined ? { id: activity.id } : {}),
+          type: activity.type,
+          payload: resolvedPayload,
+        };
 
-      const output = (await this.dispatcher.dispatch(
-        resolvedActivity,
-        currentContext
-      )) as ActivityOutput | void;
+        output = (await this.dispatcher.dispatch(
+          resolvedActivity,
+          currentContext
+        )) as ActivityOutput | void;
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.length > 0
+            ? error.message
+            : typeof error === 'string' && error.length > 0
+              ? error
+              : `Activity execution failed for ${activity.type}`;
+        return buildWorkflowFailureResult([message], activity.id);
+      }
 
       resolvedActivities.push(resolvedActivity);
 
       if (output !== undefined) {
         collectedOutputs.push(output);
         if (output.success === false) {
-          return {
-            success: false,
-            errors: [output.error ?? `Activity execution failed for ${activity.type}`],
-          };
+          if (output.contextVariables) {
+            mergeContextVariables(accumulatedContextVariables, output.contextVariables);
+          }
+          return buildWorkflowFailureResult(
+            [output.error ?? `Activity execution failed for ${activity.type}`],
+            activity.id
+          );
         }
         if (output.documentDataPatch) {
           enrichedDocument = {
@@ -1458,8 +1522,8 @@ export class DocumentService implements DocumentServicePort {
           stepOutputs[activity.id] = cloneAndFreezePlainValue(output);
         }
         if (output.contextVariables) {
-          Object.assign(evaluationContext, output.contextVariables);
-          Object.assign(accumulatedContextVariables, output.contextVariables);
+          mergeContextVariables(evaluationContext, output.contextVariables);
+          mergeContextVariables(accumulatedContextVariables, output.contextVariables);
         }
         evaluationContext.Document = enrichedDocument;
         evaluationContext.Context = {
@@ -1488,6 +1552,12 @@ export class DocumentService implements DocumentServicePort {
       activities: resolvedActivities,
       outputs: collectedOutputs,
     };
+    if (Object.keys(stepOutputs).length > 0) {
+      finalResult.stepOutputs = { ...stepOutputs };
+    }
+    if (currentFiles.length > 0) {
+      finalResult.files = [...currentFiles];
+    }
     if (Object.keys(accumulatedContextVariables).length > 0) {
       finalResult.contextVariables = accumulatedContextVariables;
     }
@@ -1680,6 +1750,21 @@ function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
         } else if (!seenStepIds.has(fileSourceStepId)) {
           errors.push(
             `Invalid fileSourceStepId "${fileSourceStepId}" at "${activityPath}.payload.fileSourceStepId": must match an earlier Activity.id in workflow "${workflow.name}".`
+          );
+        }
+      }
+
+      if (
+        activity.type === 'DUPLICATE_FILE' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
+        activity.payload['fileNamePrefix'] !== undefined
+      ) {
+        const prefix = activity.payload['fileNamePrefix'];
+        if (typeof prefix !== 'string' || prefix.trim().length === 0) {
+          errors.push(
+            `Invalid fileNamePrefix at "${activityPath}.payload.fileNamePrefix": must be a non-empty string.`
           );
         }
       }

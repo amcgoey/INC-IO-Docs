@@ -50,6 +50,7 @@ import {
   FormDocumentFieldOptionType,
   FormDocumentFieldType,
   type ActivityDispatcherPort,
+  type ActivityHandler,
   type DocumentSchemaRegistryPort,
   type CompiledSchemaRegistryPort,
   type TemplateEvaluationContext,
@@ -4945,6 +4946,246 @@ describe('Document domain', () => {
       expect(capturedContexts).toHaveLength(2);
       expect(capturedContexts[1].stepOutputs).toEqual({});
     });
+
+    it('returns failedStepId, workflowName, completed stepOutputs, completed files, and appended notices when a step returns success: false mid-workflow (#377)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'partial-fail-doc',
+          name: 'Partial Fail Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'SubmittalReceived' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'SubmittalReceived',
+                activitySequence: [
+                  { id: 'moveOriginal', type: 'MOVE_FILE', payload: {} },
+                  { id: 'duplicateForReview', type: 'DUPLICATE_FILE', payload: {} },
+                  { id: 'writeLog', type: 'WRITE_LOG', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const movedLocator: FileLocator = {
+        id: 'archived-1',
+        name: '071200-001-0.pdf',
+        parentId: 'closed-folder',
+        parentName: '07 Thermal and Moisture Protection',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/archived-1/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'MOVE_FILE') {
+            return {
+              success: true,
+              files: [movedLocator],
+              contextVariables: { notices: ['First notice'], archivedId: 'archived-1' },
+            };
+          }
+          if (activity.type === 'DUPLICATE_FILE') {
+            return {
+              success: false,
+              error: 'Copy permission denied',
+              files: [],
+              contextVariables: { notices: ['Failure notice'] },
+            };
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'partial-fail-doc', data: { title: 'Test' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.errors).toEqual(['Copy permission denied']);
+      expect(result.failedStepId).toBe('duplicateForReview');
+      expect(result.workflowName).toBe('SubmittalReceived');
+      expect(result.stepOutputs).toEqual({
+        moveOriginal: {
+          success: true,
+          files: [movedLocator],
+          contextVariables: { notices: ['First notice'], archivedId: 'archived-1' },
+        },
+      });
+      expect(result.files).toEqual([movedLocator]);
+      expect(result.contextVariables).toEqual({
+        archivedId: 'archived-1',
+        notices: ['First notice', 'Failure notice'],
+      });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('catches thrown errors from dispatcher.dispatch and returns partial-failure ProcessDocumentResult without rollback (#377)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'throw-mid-doc',
+          name: 'Throw Mid Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'SubmittalReceived' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'SubmittalReceived',
+                activitySequence: [
+                  { id: 'moveOriginal', type: 'MOVE_FILE', payload: {} },
+                  { id: 'duplicateForReview', type: 'DUPLICATE_FILE', payload: {} },
+                  { id: 'writeLog', type: 'WRITE_LOG', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      const movedLocator: FileLocator = {
+        id: 'archived-2',
+        name: '071200-002-0.pdf',
+        parentId: 'closed-folder',
+        uri: 'https://drive.google.com/file/d/archived-2/view',
+      };
+
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity) => {
+          if (activity.type === 'MOVE_FILE') {
+            return {
+              success: true,
+              files: [movedLocator],
+              contextVariables: { notices: ['Moved ok'] },
+            };
+          }
+          if (activity.type === 'DUPLICATE_FILE') {
+            throw new Error('Drive API 503 Unavailable');
+          }
+          return { success: true };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'throw-mid-doc', data: { title: 'Test Throw' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.errors).toEqual(['Drive API 503 Unavailable']);
+      expect(result.failedStepId).toBe('duplicateForReview');
+      expect(result.workflowName).toBe('SubmittalReceived');
+      expect(result.stepOutputs).toEqual({
+        moveOriginal: {
+          success: true,
+          files: [movedLocator],
+          contextVariables: { notices: ['Moved ok'] },
+        },
+      });
+      expect(result.files).toEqual([movedLocator]);
+      expect(result.contextVariables).toEqual({ notices: ['Moved ok'] });
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+    });
+
+    it('appends contextVariables.notices across multiple successful steps without overwriting (#377)', async () => {
+      const mockDocumentTypes: DocumentType[] = [
+        {
+          key: 'notices-doc',
+          name: 'Notices Doc',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+          },
+          documentUiSchema: {
+            events: {
+              onSubmit: { catchAllWorkflow: 'NoticeFlow' },
+            },
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'NoticeFlow',
+                activitySequence: [
+                  { id: 'step1', type: 'STEP_1', payload: {} },
+                  { id: 'step2', type: 'STEP_2', payload: {} },
+                  { id: 'step3', type: 'STEP_3', payload: {} },
+                ],
+              },
+            ],
+          },
+        },
+      ];
+
+      let step3Context: ActivityExecutionContext | undefined;
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockImplementation(async (activity: Activity, ctx?: ActivityExecutionContext) => {
+          if (activity.type === 'STEP_1') {
+            return { success: true, contextVariables: { notices: ['Notice 1'], k: 'a' } };
+          }
+          if (activity.type === 'STEP_2') {
+            return { success: true, contextVariables: { notices: ['Notice 2'], k: 'b' } };
+          }
+          step3Context = ctx;
+          return { success: true, contextVariables: { other: true } };
+        }),
+      };
+
+      const service = createDocumentService(
+        mockDispatcher,
+        createCustomRegistry(mockDocumentTypes),
+        defaultEvaluator
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        { type: 'notices-doc', data: { title: 'Notices' } },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(step3Context?.contextVariables).toEqual({
+        notices: ['Notice 1', 'Notice 2'],
+        k: 'b',
+      });
+      expect(result.contextVariables).toEqual({
+        notices: ['Notice 1', 'Notice 2'],
+        k: 'b',
+        other: true,
+      });
+    });
   });
 
   describe('walkTemplates', () => {
@@ -5962,6 +6203,35 @@ describe('Document domain', () => {
         expect(errors).toHaveLength(2);
         expect(errors[0]).toContain('workflows[0].activitySequence[1].payload.fileSourceStepId');
         expect(errors[1]).toContain('workflows[0].activitySequence[2].payload.fileSourceStepId');
+      });
+
+      it('validates DUPLICATE_FILE payload.fileNamePrefix is a non-empty string when provided (#377)', () => {
+        const evaluator = createEvaluator();
+        const manifest: DocumentType = {
+          key: 'dup-prefix-check',
+          name: 'Dup Prefix Check',
+          documentSchema: {
+            fields: [{ key: 'title', name: 'Title', type: 'string' }],
+          },
+          documentWorkflowConfig: {
+            workflows: [
+              {
+                name: 'InvalidPrefix',
+                activitySequence: [
+                  { id: 'move_1', type: 'MOVE_FILE', payload: {} },
+                  {
+                    type: 'DUPLICATE_FILE',
+                    payload: { fileSourceStepId: 'move_1', fileNamePrefix: '  ' },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+
+        const errors = validateManifestTemplates(manifest, evaluator);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('workflows[0].activitySequence[1].payload.fileNamePrefix');
       });
     });
   });
@@ -7057,8 +7327,8 @@ describe('Document domain', () => {
       expect(result.data.idDocument).toBe('071200-001-1');
       expect(result.data.id).toBe('071200-001-1-261102-1');
 
-      // Dispatched activities: MOVE_FILE (moveOriginal) followed by WRITE_LOG (writeLog)
-      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+      // Dispatched activities: SubmittalReceived (MOVE_FILE -> DUPLICATE_FILE -> WRITE_LOG)
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(3);
       const dispatchedActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[0][0];
       expect(dispatchedActivity.id).toBe('moveOriginal');
       expect(dispatchedActivity.type).toBe('MOVE_FILE');
@@ -7068,10 +7338,21 @@ describe('Document domain', () => {
         folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
         fileName: '071200-001-1 Built-up Bituminous Waterproofing - 261102 PMG',
       });
-      const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      const dupActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[1][0];
+      expect(dupActivity.id).toBe('duplicateForReview');
+      expect(dupActivity.type).toBe('DUPLICATE_FILE');
+      expect(dupActivity.payload).toEqual({
+        fileSourceStepId: 'moveOriginal',
+        rootStorageId: 'drive-folder-root',
+        parentPath: '6 Construction',
+        folderName: 'Submittals',
+        fileName: '071200-001-1 Built-up Bituminous Waterproofing - 261102 PMG',
+        fileNamePrefix: '_',
+      });
+      const writeLogActivity = vi.mocked(mockDispatcher.dispatch).mock.calls[2][0];
       expect(writeLogActivity.id).toBe('writeLog');
       expect(writeLogActivity.type).toBe('WRITE_LOG');
-      expect(writeLogActivity.payload).toEqual({});
+      expect(writeLogActivity.payload).toEqual({ fileSourceStepId: 'moveOriginal' });
     });
 
     it('files Submittal Arch matching key directly and action with suffix', async () => {
@@ -8715,6 +8996,306 @@ describe('Document domain', () => {
         mimeType: 'application/vnd.google-apps.document',
         uri: 'https://docs.google.com/document/d/ffe-doc-375/edit',
       });
+    });
+  });
+
+  describe('SubmittalReceived end-to-end workflow at DocumentService.processDocument() seam (#377)', () => {
+    const submittalArchPath = path.resolve(__dirname, '../../../assets/document-types/submittal-arch.json');
+    const submittalFfePath = path.resolve(__dirname, '../../../assets/document-types/submittal-ffe.json');
+    const submittalArchSchema: DocumentType = JSON.parse(fs.readFileSync(submittalArchPath, 'utf-8'));
+    const submittalFfeSchema: DocumentType = JSON.parse(fs.readFileSync(submittalFfePath, 'utf-8'));
+    const handlebarsEvaluator = new HandlebarsAdapter();
+
+    it('routes action REC on submittal-arch to SubmittalReceived: moves to Closed/, duplicates to Submittals with "_" prefix, and binds WRITE_LOG to moveOriginal', async () => {
+      const folderMap = new Map<string, { id: string; name: string; parents: string[] }>([
+        ['drive-root-1/6 Construction', { id: 'folder-6-const', name: '6 Construction', parents: ['drive-root-1'] }],
+      ]);
+      const createdFolders = new Map<string, { id: string; name: string; parents: string[] }>();
+      let nextFolderNum = 1;
+
+      const driveService: DriveServicePort = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: '07.12.00 - Waterproofing',
+          mimeType: 'application/pdf',
+          parents: ['inbox-folder'],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        resolveFolderPath: vi.fn().mockImplementation(async (rootId: string, segments: string[]) => {
+          const folder = folderMap.get(`${rootId}/${segments.join('/')}`);
+          if (!folder) throw new FileNotFoundError(`Missing ${segments.join('/')}`);
+          return folder;
+        }),
+        findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => {
+          const key = `${parentId}/${name}`;
+          const existing = createdFolders.get(key);
+          if (existing) {
+            return existing;
+          }
+          const created = { id: `folder-created-${nextFolderNum++}`, name, parents: [parentId] };
+          createdFolders.set(key, created);
+          return created;
+        }),
+        move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, moveOpts?: { newName?: string }) => ({
+          id: fileId,
+          name: moveOpts?.newName ?? '07.12.00 - Waterproofing',
+          parents: [targetFolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        rename: vi.fn(),
+        duplicate: vi.fn().mockImplementation(async (fileId: string, dupOpts?: { targetFolderId?: string; newName?: string }) => ({
+          id: `${fileId}-review-copy`,
+          name: dupOpts?.newName ?? 'Copy.pdf',
+          parents: dupOpts?.targetFolderId ? [dupOpts.targetFolderId] : ['folder-created-1'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}-review-copy/view`,
+        })),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
+      };
+
+      let loggedUri: string | undefined;
+      const writeLogHandler: ActivityHandler = {
+        canHandle: (a: Activity) => a.type === 'WRITE_LOG',
+        handle: vi.fn().mockImplementation(async (activity: Activity, ctx?: ActivityExecutionContext) => {
+          const sourceStepId = activity.payload.fileSourceStepId as string | undefined;
+          loggedUri = sourceStepId
+            ? ctx?.stepOutputs[sourceStepId]?.files?.[0]?.uri
+            : ctx?.files?.[0]?.uri;
+          return {
+            success: true,
+            contextVariables: {
+              documentLogWrite: {
+                spreadsheetId: 'log-1',
+                sheetName: 'Submittal Arch',
+                rowNumber: 6,
+                action: 'inserted',
+              },
+            },
+          };
+        }),
+      };
+
+      const engine = new ActivityEngine([
+        new DriveActivityHandler(driveService),
+        writeLogHandler,
+      ]);
+
+      const optionTablePort: DocumentOptionTablePort = {
+        resolveOptionTables: vi.fn().mockResolvedValue({
+          csiDivisions: {
+            status: 'ready',
+            tuples: [{ key: '07', folder: '07 Thermal and Moisture Protection' }],
+          },
+        }),
+      };
+
+      const registry = createCustomRegistry([submittalArchSchema]);
+      const compiled = createMockCompiledRegistry(registry);
+      await compiled.initialize();
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        compiled,
+        {
+          validateExistence: vi.fn().mockResolvedValue({
+            status: { isValid: true, status: 'valid', matchedTuple: { key: 'Open' } },
+            action: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'REC', name: 'Received', suffix: '', order: '1' },
+            },
+            contact: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'PMG', name: 'Pavarini McGovern' },
+            },
+          }),
+        },
+        undefined,
+        undefined,
+        driveService,
+        false,
+        optionTablePort
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        {
+          type: 'submittal-arch',
+          space: {
+            id: 'proj-1',
+            typeId: 'projects',
+            name: '123 Main',
+            abstractStorageId: 'drive-root-1',
+          },
+          sourceFiles: [{ id: 'arch-rec-1' }],
+          data: {
+            status: 'Open',
+            section: '071200',
+            number: '001',
+            revision: '0',
+            title: 'Waterproofing',
+            date: '261104',
+            contact: 'PMG',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.activities.map((a) => ({ id: a.id, type: a.type }))).toEqual([
+        { id: 'moveOriginal', type: 'MOVE_FILE' },
+        { id: 'duplicateForReview', type: 'DUPLICATE_FILE' },
+        { id: 'writeLog', type: 'WRITE_LOG' },
+      ]);
+      expect(driveService.move).toHaveBeenCalledWith('arch-rec-1', 'folder-created-3', {
+        newName: '071200-001-0 Waterproofing - 261104 PMG.pdf',
+      });
+      expect(driveService.duplicate).toHaveBeenCalledWith('arch-rec-1', {
+        targetFolderId: 'folder-created-1',
+        newName: '_071200-001-0 Waterproofing - 261104 PMG.pdf',
+      });
+      expect(writeLogHandler.handle).toHaveBeenCalledWith(
+        {
+          id: 'writeLog',
+          type: 'WRITE_LOG',
+          payload: { fileSourceStepId: 'moveOriginal' },
+        },
+        expect.anything()
+      );
+      expect(loggedUri).toBe('https://drive.google.com/file/d/arch-rec-1/view');
+      expect(result.stepOutputs?.moveOriginal?.files?.[0]?.id).toBe('arch-rec-1');
+      expect(result.stepOutputs?.duplicateForReview?.files?.[0]).toEqual({
+        id: 'arch-rec-1-review-copy',
+        name: '_071200-001-0 Waterproofing - 261104 PMG.pdf',
+        parentId: 'folder-created-1',
+        parentName: 'Submittals',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/arch-rec-1-review-copy/view',
+      });
+    });
+
+    it('routes action REC on submittal-ffe to SubmittalReceived and reports partial failure when duplicateForReview fails', async () => {
+      const driveService: DriveServicePort = {
+        getFile: vi.fn().mockImplementation(async (fileId: string) => ({
+          id: fileId,
+          name: 'Original FF&E',
+          mimeType: 'application/pdf',
+          parents: ['inbox-folder'],
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        resolveFolderPath: vi.fn().mockResolvedValue({
+          id: 'folder-3-ffe',
+          name: '3 FFE',
+          parents: ['drive-root-1'],
+        }),
+        findOrCreateFolder: vi.fn().mockImplementation(async (parentId: string, name: string) => ({
+          id: `ffe-${name}`,
+          name,
+          parents: [parentId],
+        })),
+        move: vi.fn().mockImplementation(async (fileId: string, targetFolderId: string, moveOpts?: { newName?: string }) => ({
+          id: fileId,
+          name: moveOpts?.newName ?? 'Original FF&E',
+          parents: [targetFolderId],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+        })),
+        rename: vi.fn(),
+        duplicate: vi.fn().mockRejectedValue(new DriveServiceError('Drive copy error (503): Service Unavailable')),
+        searchFiles: vi.fn().mockResolvedValue([]),
+        downloadAsBuffer: vi.fn(),
+        saveBuffer: vi.fn(),
+        uploadStream: vi.fn(),
+      };
+
+      const writeLogHandler: ActivityHandler = {
+        canHandle: (a: Activity) => a.type === 'WRITE_LOG',
+        handle: vi.fn(),
+      };
+
+      const engine = new ActivityEngine([
+        new DriveActivityHandler(driveService),
+        writeLogHandler,
+      ]);
+
+      const registry = createCustomRegistry([submittalFfeSchema]);
+      const compiled = createMockCompiledRegistry(registry);
+      await compiled.initialize();
+
+      const service = new DocumentService(
+        engine,
+        registry,
+        handlebarsEvaluator,
+        compiled,
+        {
+          validateExistence: vi.fn().mockResolvedValue({
+            status: { isValid: true, status: 'valid', matchedTuple: { key: 'Open' } },
+            specTag: { isValid: true, status: 'valid', matchedTuple: { key: 'CG104', name: 'BED - KING' } },
+            vendor: { isValid: true, status: 'valid', matchedTuple: { key: 'BM', name: 'Berman Falk' } },
+            contact: { isValid: true, status: 'valid', matchedTuple: { key: 'INC', name: 'INC Architecture' } },
+            action: {
+              isValid: true,
+              status: 'valid',
+              matchedTuple: { key: 'REC', name: 'Received', suffix: '', order: '1' },
+            },
+          }),
+        },
+        undefined,
+        undefined,
+        driveService
+      );
+      await service.initialize();
+
+      const result = await service.processDocument(
+        {
+          type: 'submittal-ffe',
+          space: {
+            id: 'proj-1',
+            typeId: 'projects',
+            name: '123 Main',
+            abstractStorageId: 'drive-root-1',
+          },
+          sourceFiles: [{ id: 'ffe-rec-1' }],
+          data: {
+            status: 'Open',
+            specTag: 'CG104',
+            revision: 'A',
+            specTitle: 'BED - KING',
+            vendor: 'BM',
+            date: '261104',
+            contact: 'INC',
+            action: 'REC',
+          },
+        },
+        'onSubmit'
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      expect(result.failedStepId).toBe('duplicateForReview');
+      expect(result.workflowName).toBe('SubmittalReceived');
+      expect(result.errors).toEqual(['Drive copy error (503): Service Unavailable']);
+      expect(result.stepOutputs?.moveOriginal?.files?.[0]).toEqual({
+        id: 'ffe-rec-1',
+        name: 'CG104-A Berman Falk - 261104 INC.pdf',
+        parentId: 'ffe-CG104',
+        parentName: 'CG104',
+        mimeType: 'application/pdf',
+        uri: 'https://drive.google.com/file/d/ffe-rec-1/view',
+      });
+      expect(result.files).toEqual(result.stepOutputs?.moveOriginal?.files);
+      expect(writeLogHandler.handle).not.toHaveBeenCalled();
     });
   });
 });

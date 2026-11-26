@@ -5924,6 +5924,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '6 Construction'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'const-folder-id', name: '6 Construction', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -5931,6 +5932,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('const-folder-id') && q.q.includes("name = 'Submittals'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'submittals-folder-id', name: 'Submittals', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -5956,8 +5958,22 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             id: 'drive-saved-submittal-arch',
             name: '071200-001-A Waterproofing Specs - 261020 PMG.pdf',
             mimeType: 'application/pdf',
-            parents: ['submittals-folder-id'],
+            parents: ['submittals-csi-07-id'],
             webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch/view',
+          });
+
+        nock('https://www.googleapis.com')
+          .post('/drive/v3/files/drive-saved-submittal-arch/copy')
+          .query(true)
+          .reply(200, (_uri, body) => {
+            const reqBody = body as { name?: string; parents?: string[] };
+            return {
+              id: 'drive-saved-submittal-arch-copy',
+              name: reqBody.name ?? '_071200-001-A Waterproofing Specs - 261020 PMG.pdf',
+              mimeType: 'application/pdf',
+              parents: reqBody.parents ?? ['submittals-folder-id'],
+              webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch-copy/view',
+            };
           });
 
         // WRITE_LOG: Drive discovery + Sheets read/batchUpdate
@@ -6163,6 +6179,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '3 FFE'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'ffe-folder-id', name: '3 FFE', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -6170,6 +6187,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('ffe-folder-id') && q.q.includes("name = '05 Submittals'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'ffe-submittals-id', name: '05 Submittals', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -6202,8 +6220,22 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             id: 'drive-saved-submittal-ffe',
             name: 'CG104-A Berman Falk - 261021 INC.pdf',
             mimeType: 'application/pdf',
-            parents: ['ffe-submittals-id'],
+            parents: ['ffe-cg104-id'],
             webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe/view',
+          });
+
+        nock('https://www.googleapis.com')
+          .post('/drive/v3/files/drive-saved-submittal-ffe/copy')
+          .query(true)
+          .reply(200, (_uri, body) => {
+            const reqBody = body as { name?: string; parents?: string[] };
+            return {
+              id: 'drive-saved-submittal-ffe-copy',
+              name: reqBody.name ?? '_CG104-A Berman Falk - 261021 INC.pdf',
+              mimeType: 'application/pdf',
+              parents: reqBody.parents ?? ['ffe-submittals-id'],
+              webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe-copy/view',
+            };
           });
 
         // WRITE_LOG: Drive discovery + Sheets read/FORMULA check + batchUpdate (protecting Spec Title)

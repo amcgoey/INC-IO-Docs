@@ -1909,6 +1909,427 @@ describe('DriveActivityHandler', () => {
         });
       });
 
+      describe('DUPLICATE_FILE active review copy (#377)', () => {
+        it('canHandle returns true for DUPLICATE_FILE', () => {
+          expect(handler.canHandle({ type: 'DUPLICATE_FILE', payload: {} })).toBe(true);
+        });
+
+        it('duplicates file resolved via context.stepOutputs[fileSourceStepId] into destination folder with non-doubling "_" prefix and FileLocator.parentId', async () => {
+          (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-6-const',
+            name: '6 Construction',
+          });
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+            parents: ['folder-6-const'],
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'review-copy-1',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/review-copy-1/view',
+          });
+
+          const result = await handler.handle(
+            {
+              id: 'duplicateForReview',
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                parentPath: '6 Construction',
+                folderName: 'Submittals',
+                fileName: '071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: {
+                type: 'submittal-arch',
+                data: {},
+              },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'archived-original-1',
+                      name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                      parentId: 'folder-closed-07',
+                      parentName: '07 Thermal and Moisture Protection',
+                      mimeType: 'application/pdf',
+                      uri: 'https://drive.google.com/file/d/archived-original-1/view',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith('drive-root-1', [
+            '6 Construction',
+          ]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
+            'folder-6-const',
+            'Submittals'
+          );
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('archived-original-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+          expect(result).toEqual({
+            success: true,
+            files: [
+              {
+                id: 'review-copy-1',
+                name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+                parentId: 'folder-submittals',
+                parentName: 'Submittals',
+                mimeType: 'application/pdf',
+                uri: 'https://drive.google.com/file/d/review-copy-1/view',
+              },
+            ],
+          });
+        });
+
+        it('does not double leading "_" prefix when fileName or source name already begins with "_"', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+            parents: ['drive-root-1'],
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'review-copy-2',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+          });
+
+          const result = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+                fileName: '_071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'orig-1',
+                      name: '_AlreadyPrefixed.pdf',
+                      mimeType: 'application/pdf',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(result.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('orig-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+        });
+
+        it('uses source file name with "_" prefix when fileName is omitted, and skips MIME suffix on Google Workspace native files', async () => {
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'gdoc-1',
+            name: 'Original Spec',
+            parents: ['folder-3-ffe'],
+            mimeType: 'application/vnd.google-apps.document',
+          });
+          (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-3-ffe',
+            name: '3 FFE',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce({
+              id: 'copy-native-1',
+              name: '_Original Spec',
+              parents: ['folder-3-ffe'],
+              mimeType: 'application/vnd.google-apps.document',
+            })
+            .mockResolvedValueOnce({
+              id: 'copy-renamed-native-2',
+              name: '_AC102-A Berman Falk - 261102 INC',
+              parents: ['folder-3-ffe'],
+              mimeType: 'application/vnd.google-apps.document',
+            });
+
+          const r1 = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                parentPath: '3 FFE',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-ffe', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'gdoc-1',
+                      name: 'Original Spec',
+                      mimeType: 'application/vnd.google-apps.document',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(r1.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenNthCalledWith(1, 'gdoc-1', {
+            targetFolderId: 'folder-3-ffe',
+            newName: '_Original Spec',
+          });
+
+          const r2 = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileId: 'gdoc-1',
+                rootStorageId: 'drive-root-1',
+                parentPath: '3 FFE',
+                fileName: 'AC102-A Berman Falk - 261102 INC',
+                fileNamePrefix: '_',
+              },
+            }
+          );
+          expect(r2.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenNthCalledWith(2, 'gdoc-1', {
+            targetFolderId: 'folder-3-ffe',
+            newName: '_AC102-A Berman Falk - 261102 INC',
+          });
+        });
+
+        it('allows native Drive duplicate filenames and falls back to context.files when fileSourceStepId is omitted', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce({
+              id: 'dup-1',
+              name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+              parents: ['folder-submittals'],
+              mimeType: 'application/pdf',
+            })
+            .mockResolvedValueOnce({
+              id: 'dup-2',
+              name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+              parents: ['folder-submittals'],
+              mimeType: 'application/pdf',
+            });
+
+          const ctx = {
+            document: { type: 'submittal-arch', data: {} },
+            files: [
+              {
+                id: 'moved-1',
+                name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                mimeType: 'application/pdf',
+              },
+            ],
+            stepOutputs: {},
+            contextVariables: {},
+          };
+          const act: Activity = {
+            type: 'DUPLICATE_FILE',
+            payload: {
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileNamePrefix: '_',
+            },
+          };
+
+          const first = await handler.handle(act, ctx);
+          const second = await handler.handle(act, ctx);
+          expect(first.success).toBe(true);
+          expect(second.success).toBe(true);
+          expect(first.files?.[0]?.name).toBe('_071200-001-0 Waterproofing - 261102 PMG.pdf');
+          expect(second.files?.[0]?.name).toBe('_071200-001-0 Waterproofing - 261102 PMG.pdf');
+        });
+
+        it('fails fast when fileSourceStepId is unexecuted, missing context, or resolves zero FileLocators', async () => {
+          const unexecuted = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'missingStep',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {},
+              contextVariables: {},
+            }
+          );
+          expect(unexecuted.success).toBe(false);
+          expect(unexecuted.error).toContain('missingStep');
+          expect(mockDriveService.findOrCreateFolder).not.toHaveBeenCalled();
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+
+          const zeroFiles = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [{ id: 'unrelated', name: 'Other.pdf' }],
+              stepOutputs: {
+                moveOriginal: { success: true, files: [] },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(zeroFiles.success).toBe(false);
+          expect(zeroFiles.error).toMatch(/zero files/i);
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+
+          const moveZeroFiles = await handler.handle(
+            {
+              type: 'MOVE_FILE',
+              payload: {
+                fileSourceStepId: 'prevStep',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                prevStep: { success: true, files: [] },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(moveZeroFiles.success).toBe(false);
+          expect(moveZeroFiles.error).toMatch(/zero files/i);
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('rejects blank fileName or fileNamePrefix on DUPLICATE_FILE before Drive calls', async () => {
+          const badFileName = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileId: 'file-1',
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileName: '   ',
+            },
+          });
+          expect(badFileName.success).toBe(false);
+          expect(badFileName.error).toMatch(/fileName/i);
+
+          const badPrefix = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileId: 'file-1',
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileNamePrefix: '  ',
+            },
+          });
+          expect(badPrefix.success).toBe(false);
+          expect(badPrefix.error).toMatch(/fileNamePrefix/i);
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+        });
+
+        it('does not re-hydrate or reject fileSourceStepId FileLocators as unhydrated email attachments in Gmail mode', async () => {
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn().mockRejectedValue(new Error('Should not hydrate Drive FileLocators')),
+          };
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'gmail-dup-1',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/gmail-dup-1/view',
+          });
+
+          const gmailHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'part-arch-1', name: 'Upload.pdf' }],
+            sourceFileHydrator: mockHydrator,
+            isFileSourceEmailAttachments: true,
+          });
+
+          const result = await gmailHandler.handle(
+            {
+              id: 'duplicateForReview',
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+                fileName: '071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'drive-saved-gmail-1',
+                      name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                      parentId: 'folder-closed-07',
+                      parentName: '07 Thermal and Moisture Protection',
+                      mimeType: 'application/pdf',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(result.success).toBe(true);
+          expect(mockHydrator.hydrate).not.toHaveBeenCalled();
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('drive-saved-gmail-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+        });
+      });
+
     });
   });
 });

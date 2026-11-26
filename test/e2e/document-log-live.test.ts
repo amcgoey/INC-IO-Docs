@@ -326,7 +326,11 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual(
+        data.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
       expect(result.contextVariables?.documentLogWrite).toMatchObject({
         spreadsheetId: copiedSpreadsheetId,
         sheetName: sampleFixture.submittalArch.sheetName,
@@ -559,7 +563,11 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual(
+        data.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
       expect(result.contextVariables?.documentLogWrite).toMatchObject({
         spreadsheetId: copiedSpreadsheetId,
         sheetName: sampleFixture.submittalFfe.sheetName,
@@ -1135,7 +1143,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       );
       expect(archSubmit.success).toBe(true);
       if (!archSubmit.success) return;
-      expect(archSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(archSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
 
       const archSnapshotsAfter = await snapshotNamedRanges(
         sheetsApi,
@@ -1253,7 +1261,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       );
       expect(ffeSubmit.success).toBe(true);
       if (!ffeSubmit.success) return;
-      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'WRITE_LOG']);
 
       const ffeSnapshotsAfter = await snapshotNamedRanges(
         sheetsApi,

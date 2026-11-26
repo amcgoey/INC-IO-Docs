@@ -546,6 +546,21 @@ function mockDriveForSubmittalSubmit(logId: string, baseFolderName: string, subF
       parents: ['sub-folder-id'],
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post(`/drive/v3/files/${fileId}/copy`)
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `${fileId}-copy`,
+        name: reqBody.name ?? `_${newName}`,
+        parents: reqBody.parents ?? ['sub-folder-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+      };
+    });
 }
 
 describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submittal FF&E atomic _Config write-back', () => {
