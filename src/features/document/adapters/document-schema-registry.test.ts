@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DocumentSchemaRegistryAdapter, stripOptionAliases } from './document-schema-registry';
 import { type RawManifestProviderPort, type TemplateEvaluatorPort } from '../ports';
+import { HandlebarsAdapter } from '../../../infrastructure/template-engine/handlebars-adapter';
 
 describe('DocumentSchemaRegistryAdapter', () => {
   let mockEvaluator: TemplateEvaluatorPort;
@@ -795,6 +796,350 @@ describe('DocumentSchemaRegistryAdapter', () => {
         mockEvaluator
       );
       await expect(badAdapter.loadAll()).rejects.toThrow(/unknown OptionSource "missingSource"/i);
+    });
+  });
+
+  describe('DocumentUiSuccessViewSchema & loadAll memoization (#385)', () => {
+    it('retains valid documentUiSchema.successView through Value.Clean while stripping unknown keys', async () => {
+      const schemaWithSuccessView = {
+        key: 'submittal-test',
+        name: 'Submittal Test',
+        documentSchema: {
+          fields: [
+            { key: 'title', name: 'Title', type: 'string', required: true },
+          ],
+        },
+        documentUiSchema: {
+          layout: ['title'],
+          fields: {
+            title: { widget: 'textInput', label: 'Title' },
+          },
+          extraUiProp: 'strip-me',
+          successView: {
+            extraSuccessViewProp: 'strip-me-too',
+            summary: {
+              topLabel: 'Summary',
+              text: '<b>{{title}}</b>',
+              bottomLabel: '{{title}}',
+              extraSummaryProp: 123,
+            },
+            artifacts: [
+              {
+                stepId: 'moveOriginal',
+                label: 'Filed Original',
+                whenWorkflow: { MainFlow: 'Archived Original' },
+                fallbackLabel: 'Fallback Copy',
+                extraArtifactProp: true,
+              },
+            ],
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'MainFlow',
+              activitySequence: [
+                { id: 'moveOriginal', type: 'MOVE_FILE', payload: {} },
+              ],
+            },
+          ],
+        },
+      };
+
+      const mockProvider = createMockManifestProvider({
+        './schemas/submittal-test.json': schemaWithSuccessView,
+      });
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+      const result = await adapter.loadAll();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].documentUiSchema).toEqual({
+        layout: ['title'],
+        fields: {
+          title: { widget: 'textInput', label: 'Title' },
+        },
+        successView: {
+          summary: {
+            topLabel: 'Summary',
+            text: '<b>{{title}}</b>',
+            bottomLabel: '{{title}}',
+          },
+          artifacts: [
+            {
+              stepId: 'moveOriginal',
+              label: 'Filed Original',
+              whenWorkflow: { MainFlow: 'Archived Original' },
+              fallbackLabel: 'Fallback Copy',
+            },
+          ],
+        },
+      });
+    });
+
+    it('memoizes loadAll() after startup and retries if an earlier loadAll() rejected', async () => {
+      let shouldFail = true;
+      const docType = {
+        key: 'memo-doc',
+        name: 'Memo Doc',
+        documentSchema: {
+          fields: [{ key: 'title', name: 'Title', type: 'string', required: true }],
+        },
+      };
+      const mockProvider: RawManifestProviderPort = {
+        getRawManifest: vi.fn(async () => {
+          if (shouldFail) {
+            throw new Error('transient manifest read error');
+          }
+          return { documentTypes: ['./schemas/memo-doc.json'] };
+        }),
+        readParsedSchema: vi.fn(async () => docType),
+      };
+
+      const adapter = new DocumentSchemaRegistryAdapter(mockProvider, mockEvaluator);
+
+      await expect(adapter.loadAll()).rejects.toThrow(/transient manifest read error/i);
+
+      shouldFail = false;
+      const [first, second] = await Promise.all([adapter.loadAll(), adapter.loadAll()]);
+      const third = await adapter.loadAll();
+
+      expect(first).toHaveLength(1);
+      expect(second).toHaveLength(1);
+      expect(third).toHaveLength(1);
+      // 1 failed call + 1 successful memoized call = 2 total getRawManifest calls
+      expect(mockProvider.getRawManifest).toHaveBeenCalledTimes(2);
+      expect(mockProvider.readParsedSchema).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts valid submittal-style successView including LinkedField and safe Card HTML with HandlebarsAdapter', async () => {
+      const realEvaluator = new HandlebarsAdapter();
+      const validDoc = {
+        key: 'submittal-ffe-test',
+        name: 'Submittal FF&E Test',
+        documentSchema: {
+          fields: [
+            {
+              key: 'specTag',
+              name: 'Spec Tag',
+              type: 'string',
+              required: true,
+              options: { source: 'specs', key: 'key', allowUserInput: true },
+            },
+            {
+              key: 'specTitle',
+              name: 'Spec Title',
+              type: 'string',
+              required: true,
+              linkedField: { sourceField: 'specTag', sourceProperty: 'name' },
+            },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+            { key: 'date', name: 'Date', type: 'string', required: true },
+          ],
+          calculatedFields: [{ key: 'fileName', template: '{{specTag.key}}-{{date}}' }],
+          optionSources: {
+            specs: { provider: 'document_log', properties: ['key', 'name'] },
+            actions: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+        documentUiSchema: {
+          successView: {
+            summary: {
+              topLabel: 'Spec {{specTag.key}} • {{action.key}}',
+              text: '<b>{{action.name}}</b> • {{date}}',
+              bottomLabel: '{{specTitle}}',
+            },
+            artifacts: [
+              {
+                stepId: 'insertCoverSheet',
+                label: 'Review Copy (with Cover Sheet)',
+                fallbackLabel: 'Transmittal Cover Sheet',
+              },
+              {
+                stepId: 'moveOriginal',
+                label: 'Filed Original',
+                whenWorkflow: {
+                  SubmittalReceived: 'Archived Original',
+                  SubmittalSent: 'Filed Submittal',
+                },
+              },
+            ],
+          },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'SubmittalReceived',
+              activitySequence: [
+                { id: 'moveOriginal', type: 'MOVE_FILE', payload: {} },
+                { id: 'insertCoverSheet', type: 'DUPLICATE_FILE', payload: {} },
+              ],
+            },
+            {
+              name: 'SubmittalSent',
+              activitySequence: [
+                { id: 'moveOriginal', type: 'MOVE_FILE', payload: {} },
+              ],
+            },
+          ],
+        },
+      };
+
+      const adapter = new DocumentSchemaRegistryAdapter(
+        createMockManifestProvider({ './schemas/valid-sv.json': validDoc }),
+        realEvaluator
+      );
+      const loaded = await adapter.loadAll();
+      expect(loaded).toHaveLength(1);
+      expect(loaded[0].documentUiSchema?.successView?.summary?.text).toBe(
+        '<b>{{action.name}}</b> • {{date}}'
+      );
+    });
+
+    it('fails fast at startup on invalid successView Mustache templates, Stage-1 paths, unsafe HTML, HTML in topLabel/bottomLabel, and unknown stepId/whenWorkflow keys', async () => {
+      const realEvaluator = new HandlebarsAdapter();
+      const buildDoc = (successView: unknown) => ({
+        key: 'sv-invalid',
+        name: 'SV Invalid',
+        documentSchema: {
+          fields: [
+            { key: 'title', name: 'Title', type: 'string', required: true },
+            {
+              key: 'action',
+              name: 'Action',
+              type: 'string',
+              required: true,
+              options: { source: 'actions', key: 'key', name: 'name' },
+            },
+          ],
+          calculatedFields: [{ key: 'calcCode', template: '{{title}}' }],
+          optionSources: {
+            actions: { provider: 'document_log', properties: ['key', 'name'] },
+          },
+        },
+        documentUiSchema: { successView },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'MainWorkflow',
+              activitySequence: [{ id: 'moveOriginal', type: 'MOVE_FILE', payload: {} }],
+            },
+          ],
+        },
+      });
+
+      const invalidCases: Array<{ label: string; successView: unknown }> = [
+        {
+          label: 'blank summary.text',
+          successView: { summary: { text: '   ' } },
+        },
+        {
+          label: 'blank summary.topLabel',
+          successView: { summary: { topLabel: '  ', text: '{{title}}' } },
+        },
+        {
+          label: 'blank summary.bottomLabel',
+          successView: { summary: { text: '{{title}}', bottomLabel: '  ' } },
+        },
+        {
+          label: 'logic block {{#if}} in summary.text',
+          successView: { summary: { text: '{{#if title}}{{title}}{{/if}}' } },
+        },
+        {
+          label: 'helper call in summary.topLabel',
+          successView: { summary: { topLabel: '{{upper title}}', text: '{{title}}' } },
+        },
+        {
+          label: 'triple-stache {{{title}}} in summary.text',
+          successView: { summary: { text: '{{{title}}}' } },
+        },
+        {
+          label: 'unknown field in summary.text',
+          successView: { summary: { text: '{{doesNotExist}}' } },
+        },
+        {
+          label: 'CalculatedField in summary.text',
+          successView: { summary: { text: '{{calcCode}}' } },
+        },
+        {
+          label: 'disallowed namespace Document.data in summary.text',
+          successView: { summary: { text: '{{Document.data.title}}' } },
+        },
+        {
+          label: 'disallowed space namespace in summary.topLabel',
+          successView: { summary: { topLabel: '{{space.name}}', text: '{{title}}' } },
+        },
+        {
+          label: 'property access on non-lookup field',
+          successView: { summary: { text: '{{title.key}}' } },
+        },
+        {
+          label: 'unknown lookup property on lookup field',
+          successView: { summary: { text: '{{action.missingProp}}' } },
+        },
+        {
+          label: 'unsafe <script> tag in summary.text',
+          successView: { summary: { text: '<script>alert(1)</script>{{title}}' } },
+        },
+        {
+          label: 'unclosed <b> tag in summary.text',
+          successView: { summary: { text: '<b>{{title}}' } },
+        },
+        {
+          label: 'attribute on <b> in summary.text',
+          successView: { summary: { text: '<b onclick="x">{{title}}</b>' } },
+        },
+        {
+          label: 'HTML <b> tag in summary.topLabel',
+          successView: { summary: { topLabel: '<b>{{title}}</b>', text: '{{title}}' } },
+        },
+        {
+          label: 'HTML <script> tag in summary.bottomLabel',
+          successView: { summary: { text: '{{title}}', bottomLabel: '<script>x</script>' } },
+        },
+        {
+          label: 'unknown stepId in artifacts',
+          successView: { artifacts: [{ stepId: 'missingStep', label: 'Filed' }] },
+        },
+        {
+          label: 'unknown whenWorkflow key in artifacts',
+          successView: {
+            artifacts: [
+              {
+                stepId: 'moveOriginal',
+                label: 'Filed',
+                whenWorkflow: { UnknownWorkflow: 'Archived' },
+              },
+            ],
+          },
+        },
+        {
+          label: 'blank artifact label',
+          successView: { artifacts: [{ stepId: 'moveOriginal', label: '   ' }] },
+        },
+        {
+          label: 'blank artifact fallbackLabel',
+          successView: {
+            artifacts: [{ stepId: 'moveOriginal', label: 'Filed', fallbackLabel: '   ' }],
+          },
+        },
+      ];
+
+      for (const testCase of invalidCases) {
+        const adapter = new DocumentSchemaRegistryAdapter(
+          createMockManifestProvider({ './schemas/invalid.json': buildDoc(testCase.successView) }),
+          realEvaluator
+        );
+        await expect(
+          adapter.loadAll(),
+          `Expected failure for case: ${testCase.label}`
+        ).rejects.toThrow(/Invalid template in "sv-invalid"/i);
+      }
     });
   });
 });

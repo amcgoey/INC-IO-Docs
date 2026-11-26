@@ -121,11 +121,45 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
+export const DocumentUiSuccessSummarySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.String()),
+    text: Type.String(),
+    bottomLabel: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessSummary = Static<typeof DocumentUiSuccessSummarySchema>;
+
+export const DocumentUiSuccessArtifactSchema = Type.Object(
+  {
+    stepId: Type.String(),
+    label: Type.String(),
+    whenWorkflow: Type.Optional(Type.Record(Type.String(), Type.String())),
+    fallbackLabel: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessArtifact = Static<typeof DocumentUiSuccessArtifactSchema>;
+
+export const DocumentUiSuccessViewSchema = Type.Object(
+  {
+    summary: Type.Optional(DocumentUiSuccessSummarySchema),
+    artifacts: Type.Optional(Type.Array(DocumentUiSuccessArtifactSchema)),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessView = Static<typeof DocumentUiSuccessViewSchema>;
+
 export const UiSchema = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
   evaluationOrder: Type.Optional(Type.Array(Type.String())),
+  successView: Type.Optional(DocumentUiSuccessViewSchema),
 });
 
 export type UiSchema = Static<typeof UiSchema>;
