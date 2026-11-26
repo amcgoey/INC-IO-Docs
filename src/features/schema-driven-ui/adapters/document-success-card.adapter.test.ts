@@ -177,7 +177,7 @@ describe('DocumentSuccessCardAdapter (#382)', () => {
     });
 
     assertValidUiView(view);
-    expect(view.header).toEqual({ title: 'custom-doc Filed' });
+    expect(view.header).toEqual({ title: 'custom-doc Filed (with Warnings)' });
     expect('subtitle' in (view.header ?? {})).toBe(false);
 
     expect(view.sections[0].widgets[0].textParagraph?.text).toBe('Filed.');
@@ -834,6 +834,326 @@ describe('DocumentSuccessCardAdapter (#382)', () => {
       expect(sentFiles?.widgets.map((w) => [w.decoratedText?.topLabel, w.decoratedText?.text])).toEqual([
         ['Filed Submittal', 'Sent.pdf'],
       ]);
+    });
+  });
+
+  describe('status-aware headers and partial-failure + warnings banners (#386)', () => {
+    it('renders "<DocumentType> Filed (with Warnings)" header and amber Warnings banner when notices are present', async () => {
+      const displayNameResolver: DocumentTypeDisplayNameResolverPort = {
+        getDisplayName: vi.fn().mockResolvedValue('Submittal Arch'),
+      };
+      const adapter = new DocumentSuccessCardAdapter(displayNameResolver);
+
+      const view = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'submittal-arch',
+        executionOutcome: {
+          success: true,
+          workflowName: 'SubmittalReceived',
+          completedStepCount: 3,
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [],
+          notices: ['Fallback <sibling> & notice'],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(view);
+      expect(view.header).toEqual({
+        title: 'Submittal Arch Filed (with Warnings)',
+        subtitle: 'Harborview Tower',
+      });
+      expect(view.sections[0]?.widgets).toEqual([
+        {
+          textParagraph: {
+            text: 'Filed via <b>SubmittalReceived</b>',
+          },
+        },
+        {
+          textParagraph: {
+            text: '<font color="#b06000"><b>Warnings:</b></font> Fallback &lt;sibling&gt; &amp; notice',
+          },
+        },
+      ]);
+    });
+
+    it('renders "<DocumentType> — Partial Failure" header, red partial-failure banner with HTML-escaped failedStepId/errors/completedStepCount, and combined amber Warnings banner', async () => {
+      const displayNameResolver: DocumentTypeDisplayNameResolverPort = {
+        getDisplayName: vi.fn().mockResolvedValue('Submittal FF&E'),
+      };
+      const adapter = new DocumentSuccessCardAdapter(displayNameResolver);
+
+      const combinedView = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'submittal-ffe',
+        executionOutcome: {
+          success: false,
+          workflowName: 'SubmittalReceived',
+          completedStepCount: 2,
+          failedStepId: 'insertCover<Sheet>&1',
+          spaceName: 'Harborview Tower',
+          documentData: {},
+          stepResults: [
+            {
+              stepId: 'moveOriginal',
+              activityType: 'MOVE_FILE',
+              files: [
+                {
+                  id: 'orig-1',
+                  name: 'Submittal.pdf',
+                  parentId: 'folder-1',
+                  parentName: 'Closed',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-1',
+                  uri: 'https://drive.google.com/file/d/orig-1/view',
+                },
+              ],
+            },
+          ],
+          notices: ['Warning <one> & two'],
+          errors: ['PDF graft <failed> & aborted'],
+        },
+      });
+
+      assertValidUiView(combinedView);
+      expect(combinedView.header).toEqual({
+        title: 'Submittal FF&E \u2014 Partial Failure',
+        subtitle: 'Harborview Tower',
+      });
+      expect(combinedView.sections[0]?.widgets).toHaveLength(2);
+      const failureText = combinedView.sections[0]?.widgets[0]?.textParagraph?.text ?? '';
+      expect(failureText).toContain('<font color="#c5221f">');
+      expect(failureText).toContain('insertCover&lt;Sheet&gt;&amp;1');
+      expect(failureText).toContain('PDF graft &lt;failed&gt; &amp; aborted');
+      expect(failureText).toContain('2');
+      expect(failureText).not.toContain('<Sheet>');
+      expect(failureText).not.toContain('<failed>');
+
+      const warningsText = combinedView.sections[0]?.widgets[1]?.textParagraph?.text ?? '';
+      expect(warningsText).toBe(
+        '<font color="#b06000"><b>Warnings:</b></font> Warning &lt;one&gt; &amp; two'
+      );
+
+      // Step 1 batch partial failure with completedStepCount: 0 and missing failedStepId/errors
+      const fallbackAdapter = new DocumentSuccessCardAdapter();
+      const step1FallbackView = await fallbackAdapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: 'communication-project',
+        executionOutcome: {
+          success: false,
+          completedStepCount: 0,
+          spaceName: '',
+          documentData: {},
+          stepResults: [],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(step1FallbackView);
+      expect(step1FallbackView.header).toEqual({
+        title: 'communication-project \u2014 Partial Failure',
+      });
+      expect(step1FallbackView.sections[0]?.widgets).toHaveLength(1);
+      const fallbackBanner = step1FallbackView.sections[0]?.widgets[0]?.textParagraph?.text ?? '';
+      expect(fallbackBanner).toContain('<font color="#c5221f">');
+      expect(fallbackBanner).toContain('0');
+    });
+  });
+
+  describe('collapsible Created & Filed and dynamic 100-widget budget (#386)', () => {
+    function makeFiles(count: number, options?: { distinctFolders?: boolean; folderUri?: string | undefined }) {
+      return Array.from({ length: count }, (_, idx) => {
+        const n = idx + 1;
+        const folderId = options?.distinctFolders ? `folder-${n}` : 'folder-main';
+        const folderName = options?.distinctFolders ? `Folder ${n}` : 'Communications';
+        return {
+          id: `file-${n}`,
+          name: `Doc_${n}.pdf`,
+          parentId: folderId,
+          parentName: folderName,
+          ...(options && 'folderUri' in options
+            ? options.folderUri !== undefined
+              ? { parentUri: options.folderUri }
+              : {}
+            : { parentUri: `https://drive.google.com/drive/folders/${folderId}` }),
+          uri: `https://drive.google.com/file/d/file-${n}/view`,
+        };
+      });
+    }
+
+    function countTotalWidgets(view: { sections: Array<{ widgets: unknown[] }> }): number {
+      return view.sections.reduce((sum, s) => sum + s.widgets.length, 0);
+    }
+
+    it('enables collapsible: true and uncollapsibleWidgetsCount: 5 strictly when more than 5 items exist, and omits hard 20-row cap up to budget', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      // Exactly 5 items: NOT collapsible
+      const view5 = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [{ activityType: 'MOVE_FILE', files: makeFiles(5) }],
+          notices: [],
+          errors: [],
+        },
+      });
+      assertValidUiView(view5);
+      const files5 = view5.sections.find((s) => s.header === 'Created & Filed');
+      expect(files5?.widgets).toHaveLength(5);
+      expect('collapsible' in (files5 ?? {})).toBe(false);
+      expect('uncollapsibleWidgetsCount' in (files5 ?? {})).toBe(false);
+
+      // 6 items: collapsible with uncollapsibleWidgetsCount: 5
+      const view6 = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [{ activityType: 'MOVE_FILE', files: makeFiles(6) }],
+          notices: [],
+          errors: [],
+        },
+      });
+      assertValidUiView(view6);
+      const files6 = view6.sections.find((s) => s.header === 'Created & Filed');
+      expect(files6?.widgets).toHaveLength(6);
+      expect(files6?.collapsible).toBe(true);
+      expect(files6?.uncollapsibleWidgetsCount).toBe(5);
+
+      // 50 items: no hard 20-row cap, all 50 rendered with no overflow notice
+      const view50 = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [{ activityType: 'MOVE_FILE', files: makeFiles(50) }],
+          notices: [],
+          errors: [],
+        },
+      });
+      assertValidUiView(view50);
+      const files50 = view50.sections.find((s) => s.header === 'Created & Filed');
+      expect(files50?.widgets).toHaveLength(50);
+      expect(files50?.collapsible).toBe(true);
+      expect(files50?.uncollapsibleWidgetsCount).toBe(5);
+      expect(countTotalWidgets(view50)).toBe(53); // 1 banner + 1 folder + 50 files + 1 Start Over
+    });
+
+    it('caps total widgets strictly <= 100 with dynamic budgeting and permanently visible overflow notice outside collapsed tail (with and without Open Folder button)', async () => {
+      const adapter = new DocumentSuccessCardAdapter();
+
+      // 120 files + 1 folder (with uri) + 2 banners (status + warnings) + Summary + Start Over
+      // fixedWidgets = 2 (banners) + 1 (summary) + 1 (Start Over) = 4
+      // remaining = 96 -> reserve 1 overflow notice -> itemBudget = 95 -> 1 folder + 94 files = 95 -> total = 100
+      const overflowWithUri = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 2,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [{ activityType: 'MOVE_FILE', files: makeFiles(120) }],
+          notices: ['Large batch warning'],
+          logWrite: {
+            sheetName: 'Comm Log',
+            rowNumber: 9,
+            uri: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=9:9',
+          },
+          errors: [],
+        },
+      });
+
+      assertValidUiView(overflowWithUri);
+      expect(countTotalWidgets(overflowWithUri)).toBe(100);
+
+      const filesSection = overflowWithUri.sections.find((s) => s.header === 'Created & Filed');
+      expect(filesSection?.widgets).toHaveLength(94);
+      expect(filesSection?.collapsible).toBe(true);
+      expect(filesSection?.uncollapsibleWidgetsCount).toBe(5);
+
+      const filesSectionIdx = overflowWithUri.sections.indexOf(filesSection!);
+      const overflowSection = overflowWithUri.sections[filesSectionIdx + 1];
+      expect(overflowSection).toBeDefined();
+      expect('collapsible' in (overflowSection ?? {})).toBe(false);
+      expect(overflowSection?.widgets).toHaveLength(1);
+      expect(overflowSection?.widgets[0]?.decoratedText).toEqual({
+        text: 'Showing 94 of 120 filed items',
+        wrapText: true,
+        button: {
+          text: 'Open Folder',
+          onClick: {
+            openLink: {
+              url: 'https://drive.google.com/drive/folders/folder-main',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        },
+      });
+
+      // Overflow without folders[0]?.uri omits Open Folder button
+      const overflowNoFolderUri = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [
+            { activityType: 'MOVE_FILE', files: makeFiles(120, { folderUri: '   ' }) },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(overflowNoFolderUri);
+      expect(countTotalWidgets(overflowNoFolderUri)).toBe(100);
+      const noUriFilesIdx = overflowNoFolderUri.sections.findIndex(
+        (s) => s.header === 'Created & Filed'
+      );
+      const noUriOverflow = overflowNoFolderUri.sections[noUriFilesIdx + 1]?.widgets[0]?.decoratedText;
+      expect(noUriOverflow?.text).toContain('120');
+      expect('button' in (noUriOverflow ?? {})).toBe(false);
+
+      // Combined overflow across many distinct folders (80) and many files (80)
+      const combinedOverflow = await adapter.composeView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        executionOutcome: {
+          success: true,
+          workflowName: 'FileCommProject',
+          completedStepCount: 1,
+          spaceName: 'Harborview',
+          documentData: {},
+          stepResults: [
+            { activityType: 'MOVE_FILE', files: makeFiles(80, { distinctFolders: true }) },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+
+      assertValidUiView(combinedOverflow);
+      expect(countTotalWidgets(combinedOverflow)).toBe(100);
+      const combinedFolders = combinedOverflow.sections.find((s) => s.header === 'Folders');
+      const combinedFiles = combinedOverflow.sections.find((s) => s.header === 'Created & Filed');
+      expect((combinedFolders?.widgets.length ?? 0)).toBeGreaterThan(0);
+      expect((combinedFiles?.widgets.length ?? 0)).toBeGreaterThan(0);
+      expect(combinedFiles?.collapsible).toBe(true);
+      expect(combinedFiles?.uncollapsibleWidgetsCount).toBe(5);
     });
   });
 });

@@ -2428,7 +2428,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
       ]);
     });
 
-    it('halts immediately on partial failure during batch filing, returning error card while earlier file remains moved', async () => {
+    it('halts immediately on partial failure during batch filing, pushing partial-failure Success Card while earlier file remains moved (#386)', async () => {
 
       const file1Id = 'file-partial-1';
       const file1Name = 'First_File.pdf';
@@ -2547,17 +2547,27 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      const updateCard = body.action?.navigations?.[0]?.updateCard;
-      expect(updateCard).toBeDefined();
+      expect(body.action?.notification).toBeUndefined();
+      const pushCard = body.action?.navigations?.[0]?.pushCard;
+      expect(pushCard).toBeDefined();
+      expect(pushCard.header?.title).toBe('Communication Project \u2014 Partial Failure');
+      expect(pushCard.header?.subtitle).toBe('Active Projects');
 
-      const errorSection = updateCard.sections.find((s: { widgets?: Array<{ textParagraph?: { text?: string } }> }) =>
-        s.widgets?.some(
-          (w) =>
-            w.textParagraph?.text?.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
-            w.textParagraph?.text?.includes('Drive service error (403) in move')
-        )
+      const errorText = pushCard.sections?.[0]?.widgets?.[0]?.textParagraph?.text ?? '';
+      expect(errorText).toContain('<font color="#c5221f">');
+      expect(errorText).toContain('moveFiles');
+      expect(errorText).toContain('0 completed steps');
+      expect(
+        errorText.includes('Access denied. You do not have permission to access this Google Drive file or folder.') ||
+          errorText.includes('Drive service error (403) in move')
+      ).toBe(true);
+
+      const filesSection = pushCard.sections?.find(
+        (s: { header?: string }) => s.header === 'Created & Filed'
       );
-      expect(errorSection).toBeDefined();
+      expect(filesSection?.widgets).toHaveLength(1);
+      expect(filesSection?.widgets?.[0]?.decoratedText?.topLabel).toBe('Filed File');
+      expect(filesSection?.widgets?.[0]?.decoratedText?.text).toBe(file1Name);
       expect(nock.isDone()).toBe(true);
     });
 

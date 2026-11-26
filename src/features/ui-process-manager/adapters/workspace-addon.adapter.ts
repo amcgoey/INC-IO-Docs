@@ -1263,8 +1263,38 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
           if (result && result.success === false) {
             const validationErrors =
-              result.errors ??
-              (result.error ? [result.error] : ['Document validation failed']);
+              result.errors && result.errors.length > 0
+                ? result.errors
+                : result.executionOutcome?.errors && result.executionOutcome.errors.length > 0
+                  ? result.executionOutcome.errors
+                  : result.error
+                    ? [result.error]
+                    : ['Document validation failed'];
+
+            const outcome = result.executionOutcome;
+            const completedStepCount = outcome?.completedStepCount ?? 0;
+            const producedFiles =
+              outcome?.stepResults.flatMap((step) => step.files) ?? [];
+
+            if (outcome && (completedStepCount >= 1 || producedFiles.length >= 1)) {
+              const executionOutcome: UiProcessDocumentExecutionOutcome = {
+                ...outcome,
+                success: false,
+                notices: outcome.notices.length > 0 ? outcome.notices : notices,
+                errors: outcome.errors.length > 0 ? outcome.errors : validationErrors,
+              };
+              return {
+                type: 'render',
+                viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+                ...(resolvedDocumentTypeKey !== undefined
+                  ? { documentTypeKey: resolvedDocumentTypeKey }
+                  : {}),
+                spaceId: space.id,
+                isUpdateCard: false,
+                executionOutcome,
+              };
+            }
+
             return createErrorRenderResult(
               validationErrors,
               notices.length > 0 ? notices : undefined

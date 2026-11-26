@@ -119,7 +119,7 @@ function mapProcessDocumentResultToExecutionResult(
 ): UiProcessDocumentExecutionResult {
   const notices = extractNonEmptyStrings(result.contextVariables?.notices);
   const logWrite = mapLogWriteContext(result.contextVariables?.documentLogWrite);
-  const stepResults: UiProcessExecutionStepResult[] = Array.isArray(result.stepResults)
+  const rawStepResults: UiProcessExecutionStepResult[] = Array.isArray(result.stepResults)
     ? result.stepResults.map((step) => {
         const stepNotices = extractNonEmptyStrings(step.output?.contextVariables?.notices);
         return {
@@ -136,7 +136,17 @@ function mapProcessDocumentResultToExecutionResult(
   const completedStepCount =
     typeof result.completedStepCount === 'number'
       ? result.completedStepCount
-      : stepResults.length;
+      : rawStepResults.length;
+
+  const stepResults: UiProcessExecutionStepResult[] =
+    rawStepResults.length === 0 && Array.isArray(result.files) && result.files.length > 0
+      ? [
+          {
+            activityType: 'UNKNOWN',
+            files: result.files.map(mapFileLocatorToOutcomeFile),
+          },
+        ]
+      : rawStepResults;
   const workflowName =
     typeof result.workflowName === 'string' ? result.workflowName : undefined;
   const failedStepId =

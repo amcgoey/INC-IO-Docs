@@ -1645,6 +1645,14 @@ export class DocumentService implements DocumentServicePort {
           if (output.contextVariables) {
             mergeContextVariables(accumulatedContextVariables, output.contextVariables);
           }
+          if (output.files && output.files.length > 0) {
+            currentFiles = Object.freeze([...currentFiles, ...output.files]);
+            stepResults.push({
+              ...(activity.id !== undefined ? { stepId: activity.id } : {}),
+              activityType: activity.type,
+              output: cloneAndFreezePlainValue(output),
+            });
+          }
           return buildWorkflowFailureResult(
             [output.error ?? `Activity execution failed for ${activity.type}`],
             activity.id

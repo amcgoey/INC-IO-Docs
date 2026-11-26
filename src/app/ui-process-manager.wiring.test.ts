@@ -2812,7 +2812,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         expect(res.action?.notification).toBeUndefined();
         const pushCard = res.action?.navigations?.[0]?.pushCard;
         expect(pushCard).toBeDefined();
-        expect(pushCard?.header.title).toBe('Communication Project Filed');
+        expect(pushCard?.header.title).toBe('Communication Project Filed (with Warnings)');
         expect(pushCard?.header.subtitle).toBe('Project Alpha');
         expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toBe(
           'Filed via <b>SubmittalReceived</b>'
@@ -2855,6 +2855,135 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       expect(startOverRes.action?.navigations).toHaveLength(2);
       expect(startOverRes.action?.navigations?.[0]).toEqual({ popToRoot: true });
       expect(startOverRes.action?.navigations?.[1]?.updateCard?.header.title).toBe('INC-IO Engine');
+    });
+
+    it('routes partial failures (completedStepCount >= 1 or Step 1 batch files) to Partial Failure Success Card and zero-effect failures to inline validationErrors across both runners (#386)', async () => {
+      const batchFailureResult = {
+        success: false as const,
+        errors: ['Permission denied on second file'],
+        failedStepId: 'moveFiles',
+        workflowName: 'FileCommProject',
+        completedStepCount: 0,
+        data: {
+          type: 'communication-project',
+          data: { contact: 'Alice Corp', date: '260920' },
+        },
+        activities: [],
+        outputs: [],
+        stepResults: [
+          {
+            stepId: 'moveFiles',
+            activityType: 'MOVE_FILE',
+            output: {
+              success: false,
+              error: 'Permission denied on second file',
+              files: [
+                {
+                  id: 'moved-1',
+                  name: 'First.pdf',
+                  parentId: 'folder-1',
+                  parentName: 'Communications',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-1',
+                  uri: 'https://drive.google.com/file/d/moved-1/view',
+                },
+              ],
+            },
+          },
+        ],
+        files: [
+          {
+            id: 'moved-1',
+            name: 'First.pdf',
+            parentId: 'folder-1',
+            parentName: 'Communications',
+            parentUri: 'https://drive.google.com/drive/folders/folder-1',
+            uri: 'https://drive.google.com/file/d/moved-1/view',
+          },
+        ],
+        contextVariables: {
+          notices: ['Early fallback notice'],
+        },
+      };
+
+      const zeroEffectFailureResult = {
+        success: false as const,
+        errors: ['Invalid payload field'],
+        workflowName: 'FileCommProject',
+        completedStepCount: 0,
+        stepResults: [],
+        files: [],
+      };
+
+      const fallbackDocService = {
+        processDocument: vi
+          .fn()
+          .mockResolvedValueOnce(batchFailureResult)
+          .mockResolvedValueOnce(zeroEffectFailureResult),
+      } as unknown as DocumentService;
+
+      const reqDocService = {
+        processDocument: vi
+          .fn()
+          .mockResolvedValueOnce(batchFailureResult)
+          .mockResolvedValueOnce(zeroEffectFailureResult),
+      } as unknown as DocumentService;
+
+      const fallbackWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        documentService: fallbackDocService,
+      });
+
+      const reqWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService: () => reqDocService,
+      });
+
+      const submitCtx: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'Communication Project',
+          SelectFiles: 'file-123',
+        },
+        selectedItems: [{ id: 'file-123' }],
+      };
+
+      for (const wiring of [fallbackWiring, reqWiring]) {
+        const partialRes = (await wiring.requestScopedWrapper.processUiEvent(
+          submitCtx
+        )) as GoogleWorkspaceActionResponse;
+
+        expect(partialRes.action?.notification).toBeUndefined();
+        const pushCard = partialRes.action?.navigations?.[0]?.pushCard;
+        expect(pushCard).toBeDefined();
+        expect(pushCard?.header.title).toBe('Communication Project \u2014 Partial Failure');
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain('moveFiles');
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain(
+          'Permission denied on second file'
+        );
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain('0 completed steps');
+        expect(pushCard?.sections[0].widgets[1].textParagraph?.text).toContain(
+          'Early fallback notice'
+        );
+        const filesSec = pushCard?.sections.find((s) => s.header === 'Created & Filed');
+        expect(filesSec?.widgets[0].decoratedText?.text).toBe('First.pdf');
+
+        const zeroRes = (await wiring.requestScopedWrapper.processUiEvent(
+          submitCtx
+        )) as GoogleWorkspaceActionResponse;
+        const updateCard = zeroRes.action?.navigations?.[0]?.updateCard;
+        expect(updateCard).toBeDefined();
+        expect(
+          updateCard?.sections.some((s) =>
+            s.widgets.some((w) => w.textParagraph?.text?.includes('Invalid payload field'))
+          )
+        ).toBe(true);
+      }
     });
   });
 });
