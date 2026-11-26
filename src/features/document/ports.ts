@@ -375,6 +375,30 @@ export class UnsupportedDocumentMimeTypeError extends DocumentContentError {
   }
 }
 
+export class DocumentTemplateError extends DocumentContentError {
+  readonly templateKey: string | undefined;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { templateKey?: string | undefined }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'DocumentTemplateError';
+    this.templateKey = options?.templateKey;
+  }
+}
+
+export interface ResolvedDocumentTemplate {
+  templateKey: string;
+  fileId: string;
+  envVarName?: string | undefined;
+}
+
+export interface TemplateRegistryPort {
+  resolveTemplate(templateKey: string): Promise<ResolvedDocumentTemplate>;
+  redactSecrets?(message: string): string;
+}
+
 export type DocumentFormFieldInputValue =
   | string
   | number
@@ -390,6 +414,20 @@ export interface DocumentContentInsertDataRequest {
   formData: Record<string, DocumentFormFieldInputValue>;
 }
 
+export type DocumentContentInsertPosition = 'start' | 'end' | number;
+
+export interface DocumentContentInsertPagesRequest {
+  targetFileId: string;
+  targetMimeType?: string | undefined;
+  targetFileName?: string | undefined;
+  sourceFileId: string;
+  sourceMimeType?: string | undefined;
+  sourceIsTemplate?: boolean | undefined;
+  position?: DocumentContentInsertPosition | undefined;
+  sourcePages?: number[] | undefined;
+  formData?: Record<string, DocumentFormFieldInputValue> | undefined;
+}
+
 export interface DocumentContentEditResult {
   file: FileLocator;
   skipped?: boolean | undefined;
@@ -397,6 +435,7 @@ export interface DocumentContentEditResult {
 
 export interface DocumentContentEditorPort {
   insertData(request: DocumentContentInsertDataRequest): Promise<DocumentContentEditResult>;
+  insertPages(request: DocumentContentInsertPagesRequest): Promise<DocumentContentEditResult>;
 }
 
 export interface DriveSearchQuery {
@@ -435,6 +474,7 @@ export interface DriveConfiguration {
 export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
   getMaxInMemoryFileBytes?(): Promise<number | undefined>;
+  getTemplatesConfig?(): Promise<Record<string, string> | undefined>;
 }
 
 export interface DriveDuplicateOptions {

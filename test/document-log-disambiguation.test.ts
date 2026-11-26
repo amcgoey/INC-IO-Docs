@@ -23,6 +23,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { SELECT_DOCUMENT_LOG_KEY } from '../src/features/schema-driven-ui/blocks/document-log';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 const DRIVE_ID = 'drive-ambig-351';
 const SPACE_NAME = 'Harborview Hotel';
@@ -564,6 +567,59 @@ function buildSubmittalArchFormInputs(overrides?: Record<string, string>) {
   );
 }
 
+function mockInsertCoverSheetNock(options: {
+  copyFileId: string;
+  copyFileName: string;
+  copyParentId: string;
+  pdfBytes: Uint8Array;
+}): void {
+  const { copyFileId, copyFileName, copyParentId, pdfBytes } = options;
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: [copyParentId],
+    });
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .patch(`/upload/drive/v3/files/${copyFileId}`)
+    .query(true)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      parents: [copyParentId],
+      webViewLink: `https://drive.google.com/file/d/${copyFileId}/view`,
+    });
+}
+
 describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disambiguation, Selection Lifecycle & Ambiguous Pre-Flight Guard', () => {
   let app: AppInstance;
   let manifestProvider: AppManifestProvider;
@@ -695,6 +751,7 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -1542,6 +1599,10 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
   });
 
   it('submits processDocument against chosen SelectDocumentLog candidate via WorkspaceExecutionContext.selectedLogId without polluting Document.data and with single Drive search (Drive + Gmail)', async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
+    const coverSheetPdfBytes = cachedCoverSheetPdfBytes;
+
     // 1. Drive processDocument against log-const
     nock('https://www.googleapis.com')
       .get('/drive/v3/drives')
@@ -1634,6 +1695,12 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           webViewLink: 'https://drive.google.com/file/d/file-ambig-351-copy/view',
         };
       });
+    mockInsertCoverSheetNock({
+      copyFileId: 'file-ambig-351-copy',
+      copyFileName: '_071200-001-A Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const driveCapturedSheets = mockSubmittalArchLogWrite(LOG_CONST_ID);
 
@@ -1754,6 +1821,12 @@ describe('Ticket #351 CQRS Integration: Multi-Candidate SelectDocumentLog Disamb
           webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-351-copy/view',
         };
       });
+    mockInsertCoverSheetNock({
+      copyFileId: 'drive-saved-gmail-351-copy',
+      copyFileName: '_071200-001-A Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const gmailCapturedSheets = mockSubmittalArchLogWrite(LOG_CONST_ID);
 

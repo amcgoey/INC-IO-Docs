@@ -15,6 +15,9 @@ import {
   getDocumentTypeWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 const MANIFEST_PATH = path.resolve(__dirname, '../assets/manifest.json');
 const DRIVE_ID = 'drive-361-e2e';
@@ -561,12 +564,66 @@ function mockDriveForSubmittalSubmit(logId: string, baseFolderName: string, subF
         webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
       };
     });
+
+  const pdfBytes = cachedCoverSheetPdfBytes;
+  if (!pdfBytes) {
+    throw new Error('cachedCoverSheetPdfBytes must be initialized in beforeEach');
+  }
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: `_${newName}`,
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: ['sub-folder-id'],
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .patch(`/upload/drive/v3/files/${fileId}-copy`)
+    .query(true)
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: `_${newName}`,
+      mimeType: 'application/pdf',
+      parents: ['sub-folder-id'],
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+    });
 }
 
 describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submittal FF&E atomic _Config write-back', () => {
   let app: AppInstance;
 
   beforeEach(async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
     app = createApp({
       manifestProvider: new AppManifestProvider({ manifestPath: MANIFEST_PATH }),
       authVerifier: createAuthVerifier(),
@@ -579,6 +636,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 

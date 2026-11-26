@@ -247,6 +247,108 @@ export function validateInsertDataActivityPayload(
   });
 }
 
+/**
+ * Validates `INSERT_PAGES` workflow activity payload, enforcing mutually exclusive
+ * `templateKey` vs `sourceStepId`, valid `position`/`sourcePages`/`fillForm` options,
+ * and `templateKey` declaration in `Manifest.configuration.templates` when provided.
+ */
+export function validateInsertPagesActivityPayload(
+  payload: Record<string, unknown>,
+  activityPath: string,
+  seenStepIds: ReadonlySet<string>,
+  workflowName: string,
+  errors: string[],
+  configuredTemplateKeys?: ReadonlySet<string>
+): void {
+  const rawTemplateKey = payload['templateKey'];
+  const rawSourceStepId = payload['sourceStepId'];
+  const hasTemplateKey = rawTemplateKey !== undefined;
+  const hasSourceStepId = rawSourceStepId !== undefined;
+
+  if (hasTemplateKey && hasSourceStepId) {
+    errors.push(
+      `Invalid INSERT_PAGES payload at "${activityPath}.payload": cannot specify both templateKey and sourceStepId (mutually exclusive).`
+    );
+  } else if (!hasTemplateKey && !hasSourceStepId) {
+    errors.push(
+      `Invalid INSERT_PAGES payload at "${activityPath}.payload": must specify either templateKey or sourceStepId.`
+    );
+  }
+
+  if (hasTemplateKey) {
+    if (typeof rawTemplateKey !== 'string' || rawTemplateKey.trim().length === 0) {
+      errors.push(
+        `Invalid templateKey at "${activityPath}.payload.templateKey": must be a non-empty string.`
+      );
+    } else if (
+      configuredTemplateKeys !== undefined &&
+      !rawTemplateKey.includes('{{') &&
+      !configuredTemplateKeys.has(rawTemplateKey.trim())
+    ) {
+      errors.push(
+        `Invalid templateKey "${rawTemplateKey}" at "${activityPath}.payload.templateKey": not declared in Manifest configuration.templates.`
+      );
+    }
+  }
+
+  if (hasSourceStepId) {
+    if (typeof rawSourceStepId !== 'string' || rawSourceStepId.trim().length === 0) {
+      errors.push(
+        `Invalid sourceStepId at "${activityPath}.payload.sourceStepId": must be a string referencing an earlier Activity.id.`
+      );
+    } else if (!seenStepIds.has(rawSourceStepId)) {
+      errors.push(
+        `Invalid sourceStepId "${rawSourceStepId}" at "${activityPath}.payload.sourceStepId": must match an earlier Activity.id in workflow "${workflowName}".`
+      );
+    }
+  }
+
+  if (payload['position'] !== undefined) {
+    const pos = payload['position'];
+    const isValidPosition =
+      pos === 'start' ||
+      pos === 'end' ||
+      (typeof pos === 'number' && Number.isInteger(pos) && pos >= 0);
+    if (!isValidPosition) {
+      errors.push(
+        `Invalid position at "${activityPath}.payload.position": expected "start", "end", or a non-negative integer.`
+      );
+    }
+  }
+
+  if (payload['sourcePages'] !== undefined) {
+    const pages = payload['sourcePages'];
+    if (!Array.isArray(pages) || pages.length === 0) {
+      errors.push(
+        `Invalid sourcePages at "${activityPath}.payload.sourcePages": must be a non-empty array of unique 1-indexed integers.`
+      );
+    } else {
+      const seenPages = new Set<number>();
+      for (const page of pages) {
+        if (typeof page !== 'number' || !Number.isInteger(page) || page < 1) {
+          errors.push(
+            `Invalid sourcePages at "${activityPath}.payload.sourcePages": page numbers must be integers >= 1.`
+          );
+          break;
+        }
+        if (seenPages.has(page)) {
+          errors.push(
+            `Invalid sourcePages at "${activityPath}.payload.sourcePages": duplicate page number ${page}.`
+          );
+          break;
+        }
+        seenPages.add(page);
+      }
+    }
+  }
+
+  if (payload['fillForm'] !== undefined && typeof payload['fillForm'] !== 'boolean') {
+    errors.push(
+      `Invalid fillForm at "${activityPath}.payload.fillForm": must be a boolean.`
+    );
+  }
+}
+
 function parseTemplateWithFallback(
   template: string,
   evaluator: TemplateEvaluatorPort

@@ -25,6 +25,9 @@
       "templateSpreadsheetId": "1Ops-suWgiqs-_PbaEvdx1WIdUWdVCctJkjS2rPjB42I",
       "copyNameTemplate": "{{DocumentSpace.name}} Document Log"
     },
+    "templates": {
+      "submittalCoverSheet": "SUBMITTAL_COVER_SHEET_TEMPLATE_ID"
+    },
     "maxInMemoryFileBytes": 209715200
   },
   "DocumentSpaceTypes": [

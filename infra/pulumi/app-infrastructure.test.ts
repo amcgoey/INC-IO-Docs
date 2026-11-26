@@ -381,6 +381,31 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(template?.containers?.[0]?.image).toBe("us-docker.pkg.dev/cloudrun/container/hello");
   });
 
+  it("injects SUBMITTAL_COVER_SHEET_TEMPLATE_ID env when provided and omits when unset or blank", async () => {
+    const { AppInfrastructure } = await import("./app-infrastructure");
+
+    const configuredInfra = new AppInfrastructure("template-configured", {
+      projectId: "inc-io-docs-dev",
+      submittalCoverSheetTemplateId: pulumi.secret("mock-submittal-cover-sheet-template-id"),
+    });
+    const configuredTemplate = await promiseOf(configuredInfra.service.template);
+    expect(configuredTemplate?.containers?.[0]?.envs).toContainEqual({
+      name: "SUBMITTAL_COVER_SHEET_TEMPLATE_ID",
+      value: "mock-submittal-cover-sheet-template-id",
+    });
+
+    const blankInfra = new AppInfrastructure("template-blank", {
+      projectId: "inc-io-docs-dev",
+      submittalCoverSheetTemplateId: "   ",
+    });
+    const blankTemplate = await promiseOf(blankInfra.service.template);
+    expect(
+      blankTemplate?.containers?.[0]?.envs?.some(
+        (envVar) => envVar.name === "SUBMITTAL_COVER_SHEET_TEMPLATE_ID"
+      )
+    ).toBe(false);
+  });
+
   it("maintains structural parity between Pulumi.dev.yaml and Pulumi.prod.yaml", () => {
     const devPath = path.resolve(__dirname, "Pulumi.dev.yaml");
     const prodPath = path.resolve(__dirname, "Pulumi.prod.yaml");

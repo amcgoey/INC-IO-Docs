@@ -10,6 +10,7 @@ const infra = new AppInfrastructure("app-infra", {
   runtimeAccountName: infraConfig.get("runtimeAccountName"),
   image: infraConfig.get("image"),
   port: infraConfig.getNumber("port"),
+  submittalCoverSheetTemplateId: infraConfig.getSecret("submittalCoverSheetTemplateId"),
 });
 
 export const repositoryUrl = infra.repositoryUrl;

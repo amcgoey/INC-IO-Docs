@@ -21,6 +21,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { PdfProcessor } from '../src/infrastructure/pdf/pdf-processor';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () => {
   let app: AppInstance;
@@ -5764,7 +5767,62 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     });
 
     describe('Ticket #305: End-to-end Gmail Workspace Add-on pre-population and Document submission for Submittal Arch & FF&E', () => {
-      beforeEach(() => {
+      function mockInsertCoverSheetNock(options: {
+        copyFileId: string;
+        copyFileName: string;
+        copyParentId: string;
+        pdfBytes: Uint8Array;
+      }): void {
+        const { copyFileId, copyFileName, copyParentId, pdfBytes } = options;
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/test-cover-sheet-tpl')
+          .query((q) => q.alt !== 'media')
+          .times(2)
+          .reply(200, {
+            id: 'test-cover-sheet-tpl',
+            name: 'Cover Sheet.pdf',
+            mimeType: 'application/pdf',
+            size: pdfBytes.byteLength,
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/test-cover-sheet-tpl')
+          .query((q) => q.alt === 'media')
+          .reply(200, Buffer.from(pdfBytes));
+
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${copyFileId}`)
+          .query((q) => q.alt !== 'media')
+          .times(2)
+          .reply(200, {
+            id: copyFileId,
+            name: copyFileName,
+            mimeType: 'application/pdf',
+            size: pdfBytes.byteLength,
+            parents: [copyParentId],
+          });
+
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${copyFileId}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, Buffer.from(pdfBytes));
+
+        nock('https://www.googleapis.com')
+          .patch(`/upload/drive/v3/files/${copyFileId}`)
+          .query(true)
+          .reply(200, {
+            id: copyFileId,
+            name: copyFileName,
+            mimeType: 'application/pdf',
+            parents: [copyParentId],
+            webViewLink: `https://drive.google.com/file/d/${copyFileId}/view`,
+          });
+      }
+
+      beforeEach(async () => {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+        cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
         vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
           if (threadId === 'th-pass2-ticket-305-arch') {
             return {
@@ -5858,6 +5916,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           }
           return { id: messageId, messageId, inlineImages: [], attachments: [] };
         });
+      });
+
+      afterEach(() => {
+        vi.unstubAllEnvs();
       });
 
       it('renders Submittal Arch card with pre-populated compound attachment fields, contact alias, action: REC, and submits document successfully', async () => {
@@ -5975,6 +6037,12 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
               webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch-copy/view',
             };
           });
+        mockInsertCoverSheetNock({
+          copyFileId: 'drive-saved-submittal-arch-copy',
+          copyFileName: '_071200-001-A Waterproofing Specs - 261020 PMG.pdf',
+          copyParentId: 'submittals-folder-id',
+          pdfBytes: cachedCoverSheetPdfBytes!,
+        });
 
         // WRITE_LOG: Drive discovery + Sheets read/batchUpdate
         nock('https://www.googleapis.com')
@@ -6237,6 +6305,12 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
               webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe-copy/view',
             };
           });
+        mockInsertCoverSheetNock({
+          copyFileId: 'drive-saved-submittal-ffe-copy',
+          copyFileName: '_CG104-A Berman Falk - 261021 INC.pdf',
+          copyParentId: 'ffe-submittals-id',
+          pdfBytes: cachedCoverSheetPdfBytes!,
+        });
 
         // WRITE_LOG: Drive discovery + Sheets read/FORMULA check + batchUpdate (protecting Spec Title)
         nock('https://www.googleapis.com')

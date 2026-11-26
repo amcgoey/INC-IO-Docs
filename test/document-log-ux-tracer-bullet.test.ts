@@ -18,6 +18,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { PRIMARY_ACTION_BUTTON_COLOR } from '../src/features/schema-driven-ui/blocks/common';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 interface ButtonWidgetShape {
   button?: {
@@ -344,6 +347,59 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
   return captured;
 }
 
+function mockInsertCoverSheetNock(options: {
+  copyFileId: string;
+  copyFileName: string;
+  copyParentId: string;
+  pdfBytes: Uint8Array;
+}): void {
+  const { copyFileId, copyFileName, copyParentId, pdfBytes } = options;
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: [copyParentId],
+    });
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .patch(`/upload/drive/v3/files/${copyFileId}`)
+    .query(true)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      parents: [copyParentId],
+      webViewLink: `https://drive.google.com/file/d/${copyFileId}/view`,
+    });
+}
+
 describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log Status Bar, Space Memoization & Pre-Flight Gating', () => {
   let app: AppInstance;
   let manifestProvider: AppManifestProvider;
@@ -475,6 +531,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -1053,6 +1110,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
   });
 
   it('renders resolved Document Log bar with Open Log URL (webViewLink & fallback) and forwards selectedLogId on submit skipping duplicate Drive search (Drive + Gmail)', async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
+    const coverSheetPdfBytes = cachedCoverSheetPdfBytes;
+
     const driveId = 'drive-resolved-1';
     const rawSpaceName = 'Harbor & <Bay> Hotel';
     const logId = 'sheet-log-349';
@@ -1181,6 +1242,12 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
           webViewLink: 'https://drive.google.com/file/d/arch-res-file-copy/view',
         };
       });
+    mockInsertCoverSheetNock({
+      copyFileId: 'arch-res-file-copy',
+      copyFileName: '_071200-001_Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const driveCapturedSheets = mockSubmittalArchLogWrite(logId);
 
@@ -1279,6 +1346,12 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
           webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-349-copy/view',
         };
       });
+    mockInsertCoverSheetNock({
+      copyFileId: 'drive-saved-gmail-349-copy',
+      copyFileName: '_071200-001-A Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const gmailCapturedSheets = mockSubmittalArchLogWrite(logId);
 

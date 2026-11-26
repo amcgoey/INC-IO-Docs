@@ -17,6 +17,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { SELECT_DOCUMENT_LOG_KEY } from '../src/features/schema-driven-ui/blocks/document-log';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 const MANIFEST_PATH = path.resolve(__dirname, '../assets/manifest.json');
 const DRIVE_ID = 'drive-362-e2e';
@@ -514,12 +517,66 @@ function mockDriveForFfe(logs: Array<{ id: string; name: string; modifiedTime?: 
         webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
       };
     });
+
+  const pdfBytes = cachedCoverSheetPdfBytes;
+  if (!pdfBytes) {
+    throw new Error('cachedCoverSheetPdfBytes must be initialized in beforeEach');
+  }
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: '_Filed_Submittal.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: ['ffe-sub-id'],
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .patch(`/upload/drive/v3/files/${fileId}-copy`)
+    .query(true)
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: '_Filed_Submittal.pdf',
+      mimeType: 'application/pdf',
+      parents: ['ffe-sub-id'],
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+    });
 }
 
 describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedField Locking & Submittal FF&E specs Cutover', () => {
   let app: AppInstance;
 
   beforeEach(async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
     app = createApp({
       manifestProvider: new AppManifestProvider({ manifestPath: MANIFEST_PATH }),
       authVerifier: createAuthVerifier(),
@@ -533,6 +590,7 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
