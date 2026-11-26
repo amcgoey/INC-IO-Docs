@@ -2458,6 +2458,7 @@ export class GoogleSheetsClient implements SheetsClient {
       return {
         rowNumber,
         action,
+        ...(sheetId !== undefined ? { sheetId } : {}),
       };
     });
   }

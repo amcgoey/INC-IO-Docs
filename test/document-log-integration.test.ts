@@ -1148,8 +1148,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       documentLogWrite: {
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal Arch',
+        sheetId: 101,
         rowNumber: 6,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=6:6',
       },
     });
 
@@ -1232,8 +1234,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 8,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=8:8',
     });
 
     const batchReqs = sheetsState.batchUpdates[0].requests;
@@ -1410,6 +1414,134 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(sheetsState.batchUpdates).toHaveLength(callsBeforeFail);
   });
 
+  it('keeps WRITE_LOG ActivityOutput.files unset so downstream ActivityExecutionContext.files stay intact', async () => {
+    const sheetsState: MockSheetsState = {
+      tableValues: [
+        sampleFixture.submittalArch.headers,
+        [],
+        ['<--->'],
+        [],
+        ['<--->'],
+      ],
+      batchUpdates: [],
+    };
+    const driveSdk = createMockDriveSdk({
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    });
+    const sheetsSdk = createMockSheetsSdk(sheetsState);
+    const logWiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({ drive: driveSdk }),
+      sheetsClient: new GoogleSheetsClient({ sheets: sheetsSdk }),
+      templateEvaluator: handlebars,
+    });
+    await logWiring.logSchemaRegistry.initialize();
+
+    const archRaw = fs.readFileSync(
+      path.resolve(__dirname, '../assets/document-types/submittal-arch.json'),
+      'utf-8'
+    );
+    const archDef = JSON.parse(archRaw) as DocumentType;
+    const isolationDocType: DocumentType = {
+      ...archDef,
+      documentUiSchema: {
+        ...archDef.documentUiSchema,
+        events: {
+          onSubmit: { catchAllWorkflow: 'SubmittalSent' },
+        },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'SubmittalSent',
+            activitySequence: [
+              { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+              { id: 'writeLog', type: 'WRITE_LOG', payload: {} },
+              { id: 'downstreamStep', type: 'NOTIFY_DOWNSTREAM', payload: {} },
+            ],
+          },
+        ],
+      },
+    };
+
+    const customRegistry: DocumentSchemaRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue([isolationDocType]),
+    };
+    const compiled = new CompiledSchemaRegistry(customRegistry);
+    await compiled.initialize();
+
+    const upstreamFiles = [
+      {
+        id: 'upstream-file-1',
+        name: 'Submittal.pdf',
+        parentId: 'dest-folder-1',
+        parentName: 'Submittals',
+        uri: 'https://drive.google.com/file/d/upstream-file-1/view',
+      },
+    ];
+    let seenByDownstreamFiles: unknown;
+
+    const moveHandler: ActivityHandler = {
+      canHandle: (a) => a.type === 'MOVE_FILE',
+      handle: () => ({
+        success: true,
+        files: upstreamFiles,
+      }),
+    };
+    const downstreamHandler: ActivityHandler = {
+      canHandle: (a) => a.type === 'NOTIFY_DOWNSTREAM',
+      handle: (_activity, context) => {
+        seenByDownstreamFiles = context?.files;
+        return { success: true };
+      },
+    };
+
+    const engine = new ActivityEngine([
+      moveHandler,
+      logWiring.createActivityHandler(),
+      downstreamHandler,
+    ]);
+    const service = new DocumentService(
+      engine,
+      customRegistry,
+      handlebars,
+      compiled,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createStaticCsiDivisionsOptionTablePort()
+    );
+    await service.initialize();
+
+    const result = await service.processDocument(
+      {
+        type: 'submittal-arch',
+        space: {
+          id: sampleFixture.space.id,
+          typeId: sampleFixture.space.typeId,
+          name: sampleFixture.space.name,
+          abstractStorageId: sampleFixture.space.abstractStorageId,
+        },
+        data: sampleFixture.submittalArch.seedEntries[0].documentData,
+      },
+      'onSubmit'
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.stepOutputs?.writeLog?.files).toBeUndefined();
+    expect(seenByDownstreamFiles).toEqual(upstreamFiles);
+    expect(result.files).toEqual(upstreamFiles);
+  });
+
   it('writes user text starting with =, +, -, @ strictly as literal stringValue (never formulaValue)', async () => {
     const driveState: MockDriveState = {
       searchResults: [
@@ -1539,8 +1671,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'explicit-selected-log-777',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/explicit-selected-log-777/edit#gid=101&range=6:6',
     });
     // Zero Drive searchSpreadsheets calls when selectedLogId is provided
     expect(driveSdk.files.list).not.toHaveBeenCalledWith(
@@ -2253,8 +2387,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(upsertResult.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 9,
       action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=9:9',
     });
     expect(upsertSheetsState.batchUpdates).toHaveLength(1);
     const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
@@ -2437,8 +2573,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(result.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
+        sheetId: 102,
         rowNumber: 6,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=102&range=6:6',
       });
 
       expect(sheetsState.batchUpdates).toHaveLength(1);
@@ -2747,8 +2885,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(upsertRes.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
+        sheetId: 102,
         rowNumber: 6,
         action: 'updated',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=102&range=6:6',
       });
 
       const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
@@ -2910,8 +3050,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step1.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 16,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=16:16',
     });
 
     // Verify top edge (idx 5..7) and lower unrelated messy gap (idx 22..24 after -2 net delta) were NOT disturbed!
@@ -2934,8 +3076,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step2.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=6:6',
     });
     expect(sheetsState.grid![4]).toEqual(['<--->']);
     expect(sheetsState.grid![5][1]).toBe('013300');
@@ -2948,8 +3092,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step3.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 23,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=23:23',
     });
     expect(sheetsState.grid![21]).toEqual(['---']);
     expect(sheetsState.grid![22][1]).toBe('075100');
@@ -3000,8 +3146,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(bottomDocResult.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 29,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=29:29',
     });
     const finalGrid = sheetsState.grid!;
     expect(finalGrid[finalGrid.length - 1]).toEqual(['<--->']);
@@ -3091,8 +3239,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(res.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 10,
       action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=10:10',
     });
 
     expect(sheetsState.grid![6]).toEqual(['---']); // healed upper divider

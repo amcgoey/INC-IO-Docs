@@ -2,6 +2,7 @@ import type {
   DocumentUiSuccessArtifact,
   DocumentUiSuccessSummary,
   UiView,
+  UiViewButton,
   UiViewHeader,
   UiViewSection,
   UiViewWidget,
@@ -9,6 +10,7 @@ import type {
 import type {
   DocumentTypeDisplayNameResolverPort,
   ExecutionFileLocator,
+  ExecutionLogWrite,
   TemplateParserPort,
   UiViewAdapterContext,
   UiViewSchemaAdapterPort,
@@ -24,6 +26,18 @@ interface CollectedArtifactItem {
 
 function normalizeNewlines(value: string): string {
   return value.replace(/\r?\n|\r/g, ' ');
+}
+
+function buildOpenLinkButton(text: string, url: string): UiViewButton {
+  return {
+    text,
+    onClick: {
+      openLink: {
+        url,
+        openAs: 'FULL_SIZE' as const,
+      },
+    },
+  };
 }
 
 function resolveTokenString(
@@ -71,7 +85,8 @@ function stitchTemplate(
 function buildSummarySection(
   summary: DocumentUiSuccessSummary,
   documentData: Readonly<Record<string, unknown>>,
-  templateParser?: TemplateParserPort
+  templateParser?: TemplateParserPort,
+  logWrite?: ExecutionLogWrite
 ): UiViewSection {
   if (!templateParser) {
     throw new Error('TemplateParserPort is required to evaluate successView.summary');
@@ -91,6 +106,7 @@ function buildSummarySection(
     summary.bottomLabel !== undefined
       ? stitchTemplate(templateParser, summary.bottomLabel, documentData, { escapeHtml: false })
       : '';
+  const trimmedLogUri = logWrite?.uri?.trim();
 
   return {
     header: 'Summary',
@@ -101,6 +117,33 @@ function buildSummarySection(
           text,
           wrapText: true,
           ...(bottomLabel.length > 0 ? { bottomLabel } : {}),
+          ...(trimmedLogUri ? { button: buildOpenLinkButton('Open Log', trimmedLogUri) } : {}),
+        },
+      },
+    ],
+  };
+}
+
+function buildFallbackLogSummarySection(logWrite: ExecutionLogWrite): UiViewSection {
+  const trimmedSheetName = logWrite.sheetName?.trim();
+  const rowNumber =
+    typeof logWrite.rowNumber === 'number' && Number.isFinite(logWrite.rowNumber)
+      ? logWrite.rowNumber
+      : undefined;
+  const text =
+    trimmedSheetName && trimmedSheetName.length > 0 && rowNumber !== undefined
+      ? `<b>${escapeCardHtml(trimmedSheetName)}</b> \u2022 Row ${rowNumber}`
+      : 'Document Log Entry';
+  const trimmedUri = logWrite.uri?.trim();
+
+  return {
+    header: 'Summary',
+    widgets: [
+      {
+        decoratedText: {
+          text,
+          wrapText: true,
+          ...(trimmedUri ? { button: buildOpenLinkButton('Open Log', trimmedUri) } : {}),
         },
       },
     ],
@@ -184,19 +227,7 @@ function buildFileWidget(item: CollectedArtifactItem): UiViewWidget {
       text: escapeCardHtml(displayName),
       wrapText: true,
       ...(trimmedParentName ? { bottomLabel: trimmedParentName } : {}),
-      ...(trimmedUri
-        ? {
-            button: {
-              text: 'Open',
-              onClick: {
-                openLink: {
-                  url: trimmedUri,
-                  openAs: 'FULL_SIZE' as const,
-                },
-              },
-            },
-          }
-        : {}),
+      ...(trimmedUri ? { button: buildOpenLinkButton('Open', trimmedUri) } : {}),
     },
   };
 }
@@ -261,8 +292,15 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     const successView = context.uiSchema?.successView;
     if (successView?.summary) {
       sections.push(
-        buildSummarySection(successView.summary, outcome.documentData, this.templateParser)
+        buildSummarySection(
+          successView.summary,
+          outcome.documentData,
+          this.templateParser,
+          outcome.logWrite
+        )
       );
+    } else if (outcome.logWrite !== undefined) {
+      sections.push(buildFallbackLogSummarySection(outcome.logWrite));
     }
 
     const filedItems = collectCreatedAndFiledItems(

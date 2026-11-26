@@ -20,6 +20,7 @@ import {
   GoogleSheetsNamedRangeNotFoundError,
 } from './errors';
 import {
+  InsertGroupedRowResultSchema,
   ReadPositiveTableRequestSchema,
   PositiveTableRowSchema,
   type CellValue,
@@ -2040,7 +2041,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
 
       const batchCalls = mockSheetsApi.spreadsheets.batchUpdate.mock.calls;
       expect(batchCalls).toHaveLength(1);
@@ -2108,7 +2109,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
       expect(state.grid).toHaveLength(7); // rows 0..4 + 1 data row (idx 5) + bottomAnchor (idx 6)
       expect(state.grid[5].style).toBe('clean-data-row');
       expect(state.grid[6].cells[0].value).toBe('<--->');
@@ -2135,7 +2136,7 @@ describe('GoogleSheetsClient', () => {
         },
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
       const table = await client.readTable({ target: ffeTarget });
       expect(table.rows).toHaveLength(1);
       expect(table.rows[0].values.Status).toBe('');
@@ -2161,7 +2162,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
 
       const requests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
@@ -2224,7 +2225,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 7, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 7, action: 'inserted', sheetId: 22 });
 
       const requests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
@@ -2309,7 +2310,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 4, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 4, action: 'inserted', sheetId: 33 });
       expect(state.grid[3].cells[0].value).toBe('keepA');
       expect(state.grid[3].cells[3].value).toBe('=USER_HELPER()');
       expect(state.grid[3].cells[5].value).toBe('=AUTO_TITLE()');
@@ -2371,7 +2372,7 @@ describe('GoogleSheetsClient', () => {
         },
         readOnlyColumns: ['DeletedFormulaCol'],
       });
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
     });
 
     it('serializes concurrent writes to the same spreadsheetId via KeyedAsyncLock and allows parallel writes to different spreadsheets', async () => {
@@ -2427,9 +2428,9 @@ describe('GoogleSheetsClient', () => {
         client.insertIntoGroupedList({ target: targetB, rowData: { Status: 'Open', Section: '087100' } }),
       ]);
 
-      expect(res1).toEqual({ rowNumber: 4, action: 'inserted' });
-      expect(res2).toEqual({ rowNumber: 4, action: 'inserted' });
-      expect(resB).toEqual({ rowNumber: 4, action: 'inserted' });
+      expect(res1).toEqual({ rowNumber: 4, action: 'inserted', sheetId: 1 });
+      expect(res2).toEqual({ rowNumber: 4, action: 'inserted', sheetId: 1 });
+      expect(resB).toEqual({ rowNumber: 4, action: 'inserted', sheetId: 1 });
 
       const aEvents = callLog.filter((e) => e.endsWith(':sheet-A'));
       expect(aEvents).toEqual(['read:sheet-A', 'write:sheet-A', 'read:sheet-A', 'write:sheet-A']);
@@ -2461,7 +2462,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
       expect(sleepMock).toHaveBeenCalledTimes(1);
       expect(sleepMock).toHaveBeenCalledWith(50);
     });
@@ -2559,7 +2560,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
 
       const requests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
@@ -2613,7 +2614,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
       });
 
-      expect(resA).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(resA).toEqual({ rowNumber: 8, action: 'inserted', sheetId: 10 });
       const reqsA = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       expect(reqsA[0].insertDimension?.inheritFromBefore).toBe(true);
@@ -2644,7 +2645,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
       });
 
-      expect(resB).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(resB).toEqual({ rowNumber: 8, action: 'inserted', sheetId: 10 });
       expect(stateNoDivider.grid[5].cells[1].value).toBe('033000-001');
       expect(stateNoDivider.grid[6].cells[0].value).toBe('---');
       expect(stateNoDivider.grid[7].cells[1].value).toBe('075100-001');
@@ -2674,7 +2675,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '096500-001', sortKey: '096500-001-0-260314-1' },
       });
 
-      expect(result).toEqual({ rowNumber: 10, action: 'inserted' });
+      expect(result).toEqual({ rowNumber: 10, action: 'inserted', sheetId: 10 });
       expect(state.grid[7].cells[1].value).toBe('087100-001');
       expect(state.grid[8].cells[0].value).toBe('---');
       expect(state.grid[9].style).toBe('clean-data-row');
@@ -2708,7 +2709,7 @@ describe('GoogleSheetsClient', () => {
         groupSortOrder: 'desc',
         rowSortOrder: 'desc',
       });
-      expect(midRes).toEqual({ rowNumber: 9, action: 'inserted' });
+      expect(midRes).toEqual({ rowNumber: 9, action: 'inserted', sheetId: 10 });
 
       // Row inside 087100-001 with sortKey 260304-2 sorts between 260305-3 and 260303-1 in desc order
       const rowRes = await client.insertIntoGroupedList({
@@ -2724,7 +2725,7 @@ describe('GoogleSheetsClient', () => {
         groupSortOrder: 'desc',
         rowSortOrder: 'desc',
       });
-      expect(rowRes).toEqual({ rowNumber: 7, action: 'inserted' });
+      expect(rowRes).toEqual({ rowNumber: 7, action: 'inserted', sheetId: 10 });
 
       const table = await client.readTable({ target });
       expect(table.rows.map((r) => r.values.SortKey)).toEqual([
@@ -2758,7 +2759,7 @@ describe('GoogleSheetsClient', () => {
         rowKeyExtractor,
         targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
       });
-      expect(firstRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(firstRes).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
       const firstReq = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       expect(firstReq[0].insertDimension?.inheritFromBefore).toBe(false);
@@ -2777,7 +2778,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260205-2' },
         duplicatePolicy: 'insert',
       });
-      expect(dupRes).toEqual({ rowNumber: 9, action: 'inserted' });
+      expect(dupRes).toEqual({ rowNumber: 9, action: 'inserted', sheetId: 10 });
 
       const table = await client.readTable({ target });
       expect(table.rows.map((r) => r.values.Notes)).toEqual([
@@ -2830,7 +2831,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated' });
+      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated', sheetId: 10 });
       const upsertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       expect(upsertReqs.some((r) => r.insertDimension)).toBe(false);
@@ -2867,7 +2868,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260212-5' },
       });
 
-      expect(res).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(res).toEqual({ rowNumber: 8, action: 'inserted', sheetId: 10 });
       expect(state.grid[5].cells[5].value).toBe('Unkeyable malformed row');
       expect(state.grid[6].cells[5].value).toBe('Valid row');
       expect(state.grid[7].cells[5].value).toBe('New valid row');
@@ -2888,7 +2889,7 @@ describe('GoogleSheetsClient', () => {
         rowKeyExtractor,
         targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
       });
-      expect(allNullRes).toEqual({ rowNumber: 7, action: 'inserted' });
+      expect(allNullRes).toEqual({ rowNumber: 7, action: 'inserted', sheetId: 10 });
       expect(allNullState.grid[5].cells[5].value).toBe('Only malformed row');
       expect(allNullState.grid[6].cells[5].value).toBe('Appended safely');
     });
@@ -2970,7 +2971,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: 'CG104', sortKey: 'CG104-1-260205-1' },
       });
 
-      expect(insertRes).toEqual({ rowNumber: 7, action: 'inserted' });
+      expect(insertRes).toEqual({ rowNumber: 7, action: 'inserted', sheetId: 44 });
       const insertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       const insertUpdates = insertReqs.filter((r) => r.updateCells);
@@ -3004,7 +3005,7 @@ describe('GoogleSheetsClient', () => {
         duplicatePolicy: 'upsert',
       });
 
-      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated' });
+      expect(upsertRes).toEqual({ rowNumber: 6, action: 'updated', sheetId: 44 });
       const upsertReqs = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[1][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       expect(upsertReqs.map((r) => r.updateCells?.range)).toEqual([
@@ -3064,7 +3065,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(res).toEqual({ rowNumber: 15, action: 'inserted' });
+      expect(res).toEqual({ rowNumber: 15, action: 'inserted', sheetId: 10 });
       expect(mockSheetsApi.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
 
       // Verify exact final grid structure
@@ -3116,7 +3117,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '033000-001', sortKey: '033000-001-0-260115-1' },
       });
 
-      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
       const topRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
         .requests as sheets_v4.Schema$Request[];
       const topInsertReq = topRequests.find((r) => r.insertDimension)?.insertDimension;
@@ -3164,7 +3165,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '087100-001', sortKey: '087100-001-0-260305-2' },
       });
 
-      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted' });
+      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted', sheetId: 10 });
       expect(bottomState.grid[13].style).toBe('clean-data-row');
       expect(bottomState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
         '<--->',
@@ -3226,7 +3227,7 @@ describe('GoogleSheetsClient', () => {
         readOnlyColumns: ['Spec Title'],
       });
 
-      expect(res).toEqual({ rowNumber: 15, action: 'updated' });
+      expect(res).toEqual({ rowNumber: 15, action: 'updated', sheetId: 10 });
       expect(state.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
         '<--->',
         '---', // untouched top stray
@@ -3294,7 +3295,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '013300-001', sortKey: '013300-001-0-260110-1' },
       });
 
-      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted' });
+      expect(topRes).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
       expect(topState.grid[5].style).toBe('clean-data-row');
       expect(topState.grid[6].cells).toEqual([{ kind: 'string', value: '---' }]);
       expect(topState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
@@ -3347,7 +3348,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
       });
 
-      expect(midDupRes).toEqual({ rowNumber: 12, action: 'inserted' });
+      expect(midDupRes).toEqual({ rowNumber: 12, action: 'inserted', sheetId: 10 });
       expect(midDupState.grid[11].style).toBe('clean-data-row');
       expect(midDupState.grid[10].cells).toEqual([{ kind: 'string', value: '---' }]);
       expect(midDupState.grid[12].cells).toEqual([{ kind: 'string', value: '---' }]);
@@ -3430,7 +3431,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '075100-001', sortKey: '075100-001-0-260220-1' },
       });
 
-      expect(dirtyMidRes).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(dirtyMidRes).toEqual({ rowNumber: 8, action: 'inserted', sheetId: 11 });
       expect(dirtyDividerState.grid[6].cells).toEqual([{ kind: 'string', value: '---' }]);
       expect(dirtyDividerState.grid[7].style).toBe('clean-data-row');
       expect(dirtyDividerState.grid[8].cells).toEqual([{ kind: 'string', value: '---' }]);
@@ -3470,7 +3471,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '096500-001', sortKey: '096500-001-0-260314-1' },
       });
 
-      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted' });
+      expect(bottomRes).toEqual({ rowNumber: 14, action: 'inserted', sheetId: 10 });
       expect(bottomState.grid[12].cells).toEqual([{ kind: 'string', value: '---' }]);
       expect(bottomState.grid[13].style).toBe('clean-data-row');
       expect(bottomState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')).toEqual([
@@ -3515,7 +3516,7 @@ describe('GoogleSheetsClient', () => {
         targetKeys: { groupKey: '071200-001', sortKey: '071200-001-0-260204-1' },
       });
 
-      expect(emptyGroupsRes).toEqual({ rowNumber: 8, action: 'inserted' });
+      expect(emptyGroupsRes).toEqual({ rowNumber: 8, action: 'inserted', sheetId: 10 });
       expect(emptyGroupsState.grid[7].style).toBe('clean-data-row');
       expect(
         emptyGroupsState.grid.slice(4).map((row) => row.cells[5]?.value ?? row.cells[0]?.value ?? '')
@@ -3532,6 +3533,66 @@ describe('GoogleSheetsClient', () => {
         { rowNumber: 7, notes: 'Only null-keyed 2' },
         { rowNumber: 8, notes: 'First real group' },
       ]);
+    });
+
+    it('returns sheetId (including sheetId === 0) on InsertGroupedRowResult and satisfies ExactOptionalPropertyTypes', async () => {
+      const zeroSheetState = createSeededState([
+        { style: 'clean-data-row', cells: [] },
+      ]);
+      zeroSheetState.sheetId = 0;
+      wireSimulator(zeroSheetState);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const zeroResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'Zero sheetId row',
+        },
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(zeroResult).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 0 });
+
+      const nonZeroState = createSeededState([
+        { style: 'clean-data-row', cells: [] },
+      ]);
+      nonZeroState.sheetId = 404;
+      wireSimulator(nonZeroState);
+
+      const nonZeroResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: 'Open',
+          Group: '071200-001',
+          SortKey: '071200-001-0-260204-1',
+          Notes: 'Non-zero sheetId row',
+        },
+        readOnlyColumns: ['Spec Title'],
+      });
+
+      expect(nonZeroResult).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 404 });
+
+      const prevPolicy = TypeSystemPolicy.ExactOptionalPropertyTypes;
+      TypeSystemPolicy.ExactOptionalPropertyTypes = true;
+      try {
+        expect(Value.Check(InsertGroupedRowResultSchema, zeroResult)).toBe(true);
+        expect(Value.Check(InsertGroupedRowResultSchema, nonZeroResult)).toBe(true);
+        expect(
+          Value.Check(InsertGroupedRowResultSchema, { rowNumber: 6, action: 'inserted' })
+        ).toBe(true);
+        expect(
+          Value.Check(InsertGroupedRowResultSchema, {
+            rowNumber: 6,
+            action: 'inserted',
+            sheetId: undefined,
+          })
+        ).toBe(true);
+      } finally {
+        TypeSystemPolicy.ExactOptionalPropertyTypes = prevPolicy;
+      }
     });
   });
 
