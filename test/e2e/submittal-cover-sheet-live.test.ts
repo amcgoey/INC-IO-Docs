@@ -268,11 +268,22 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
       ]);
       expect(result.contextVariables?.notices).toBeUndefined();
 
-      const movedFileId = result.stepOutputs?.moveOriginal?.files?.[0]?.id;
-      const graftedReviewFileId = result.stepOutputs?.insertCoverSheet?.files?.[0]?.id;
+      const movedFile = result.stepOutputs?.moveOriginal?.files?.[0];
+      const dupFile = result.stepOutputs?.duplicateForReview?.files?.[0];
+      const graftedReviewFile = result.stepOutputs?.insertCoverSheet?.files?.[0];
+      const movedFileId = movedFile?.id;
+      const graftedReviewFileId = graftedReviewFile?.id;
       expect(movedFileId).toBe(archPdfFileId);
       expect(graftedReviewFileId).toBeDefined();
       expect(graftedReviewFileId).not.toBe(movedFileId);
+      expect(movedFile?.parentId).toBeDefined();
+      expect(movedFile?.parentUri).toMatch(/^https:\/\/drive\.google\.com\//);
+      expect(movedFile?.parentUri).toContain(movedFile?.parentId);
+      expect(dupFile?.parentId).toBeDefined();
+      expect(dupFile?.parentUri).toMatch(/^https:\/\/drive\.google\.com\//);
+      expect(dupFile?.parentUri).toContain(dupFile?.parentId);
+      expect(graftedReviewFile?.parentId).toBe(dupFile?.parentId);
+      expect(graftedReviewFile?.parentUri).toBe(dupFile?.parentUri);
       trackCleanupId(graftedReviewFileId);
 
       // Verify grafted review copy in Drive has cover sheet prepended and stays editable
@@ -331,6 +342,11 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
       expect(siblingFile?.mimeType).toBe('application/pdf');
       expect(siblingFile?.name).toMatch(/^_.* Transmittal\.pdf$/);
       expect(siblingFile?.name).not.toContain('..pdf');
+      expect(dupFile?.parentId).toBeDefined();
+      expect(dupFile?.parentUri).toMatch(/^https:\/\/drive\.google\.com\//);
+      expect(dupFile?.parentUri).toContain(dupFile?.parentId);
+      expect(siblingFile?.parentId).toBe(dupFile?.parentId);
+      expect(siblingFile?.parentUri).toBe(dupFile?.parentUri);
       trackCleanupId(dupFile?.id);
       trackCleanupId(siblingFile?.id);
 

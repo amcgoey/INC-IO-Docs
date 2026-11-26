@@ -19,6 +19,7 @@ import {
   PdfUnsupportedFormError,
 } from '../../../infrastructure/pdf/errors';
 import { redactTemplateId } from './env-template-registry.adapter';
+import { resolveDriveFolderUri } from './drive-folder-uri';
 
 export interface DocumentContentEditorAdapterDeps {
   driveService: DriveServicePort;
@@ -79,15 +80,18 @@ function hasWritableFormValues(
 function toFileLocator(
   file: Pick<DriveFileResult, 'id' | 'name' | 'parents' | 'mimeType' | 'webViewLink'>,
   fallbackName?: string,
-  fallbackMimeType?: string
+  fallbackMimeType?: string,
+  fallbackParentId?: string
 ): FileLocator {
   const resolvedName = file.name || fallbackName || '';
   const resolvedMimeType = file.mimeType ?? fallbackMimeType;
-  const parentId = file.parents?.[0];
+  const parentId = file.parents?.[0] ?? fallbackParentId;
+  const parentUri = resolveDriveFolderUri(parentId);
   return {
     id: file.id,
     name: resolvedName,
     ...(parentId !== undefined ? { parentId } : {}),
+    ...(parentUri !== undefined ? { parentUri } : {}),
     ...(resolvedMimeType !== undefined ? { mimeType: resolvedMimeType } : {}),
     ...(file.webViewLink !== undefined ? { uri: file.webViewLink } : {}),
   };
@@ -306,7 +310,7 @@ export class DocumentContentEditorAdapter implements DocumentContentEditorPort {
     });
 
     return {
-      file: toFileLocator(saved, resolvedFileName, PDF_MIME_TYPE),
+      file: toFileLocator(saved, resolvedFileName, PDF_MIME_TYPE, resolvedTargetFolderId),
       fallbackUsed: true,
       unmodifiableReason: reason,
     };
@@ -434,7 +438,8 @@ export class DocumentContentEditorAdapter implements DocumentContentEditorPort {
       file: toFileLocator(
         saved,
         request.targetFileName ?? targetMeta?.name,
-        PDF_MIME_TYPE
+        PDF_MIME_TYPE,
+        targetMeta?.parents?.[0]
       ),
     };
   }
@@ -475,7 +480,8 @@ export class DocumentContentEditorAdapter implements DocumentContentEditorPort {
       file: toFileLocator(
         saved,
         request.targetFileName ?? targetMeta?.name,
-        PDF_MIME_TYPE
+        PDF_MIME_TYPE,
+        targetMeta?.parents?.[0]
       ),
     };
   }

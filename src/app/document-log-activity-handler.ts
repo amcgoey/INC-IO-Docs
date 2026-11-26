@@ -134,6 +134,18 @@ export class DocumentLogActivityHandler implements ActivityHandler {
       };
     }
 
+    const findFiledDocumentUri = (
+      files: readonly { id: string; parentId?: string | undefined; mimeType?: string | undefined; uri?: string | undefined }[] | undefined
+    ): string | undefined =>
+      files?.find(
+        (file) =>
+          !(
+            file.parentId !== undefined &&
+            file.id === file.parentId &&
+            file.mimeType === 'application/vnd.google-apps.folder'
+          )
+      )?.uri;
+
     let fileUri: string | undefined;
     if (payload.fileSourceStepId !== undefined) {
       const stepOutput = context.stepOutputs[payload.fileSourceStepId];
@@ -143,9 +155,9 @@ export class DocumentLogActivityHandler implements ActivityHandler {
           error: `WRITE_LOG fileSourceStepId "${payload.fileSourceStepId}" references an unexecuted step.`,
         };
       }
-      fileUri = stepOutput.files?.[0]?.uri;
+      fileUri = findFiledDocumentUri(stepOutput.files);
     } else {
-      fileUri = context.files[0]?.uri;
+      fileUri = findFiledDocumentUri(context.files);
     }
 
     try {

@@ -80,6 +80,7 @@ describe('DocumentContentEditorAdapter (#378)', () => {
       id: 'pdf-target-1',
       name: '_071200-001-0 Waterproofing.pdf',
       parentId: 'folder-submittals',
+      parentUri: 'https://drive.google.com/drive/folders/folder-submittals',
       mimeType: 'application/pdf',
       uri: 'https://drive.google.com/file/d/pdf-target-1/view',
     });
@@ -251,6 +252,7 @@ describe('DocumentContentEditorAdapter (#378)', () => {
         id: 'target-dup-1',
         name: '_071200-001-0 Waterproofing.pdf',
         parentId: 'folder-submittals',
+        parentUri: 'https://drive.google.com/drive/folders/folder-submittals',
         mimeType: 'application/pdf',
         uri: 'https://drive.google.com/file/d/target-dup-1/view',
       });
@@ -577,6 +579,7 @@ describe('DocumentContentEditorAdapter (#378)', () => {
           id: 'sibling-transmittal-1',
           name: testCase.expectedSavedName,
           parentId: 'folder-submittals',
+          parentUri: 'https://drive.google.com/drive/folders/folder-submittals',
           mimeType: 'application/pdf',
           uri: 'https://drive.google.com/file/d/sibling-transmittal-1/view',
         });
@@ -673,6 +676,61 @@ describe('DocumentContentEditorAdapter (#378)', () => {
         })
       ).rejects.toThrow(PdfUnsupportedFormError);
       expect(badTemplateDrive.saveBuffer).not.toHaveBeenCalled();
+    });
+
+    it('populates FileLocator.parentUri alongside parentId across insertData, in-place insertPages, and createSiblingPdf (#384)', async () => {
+      const targetPdf = await createAnonymizedSubmittalCoverSheetPdf();
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const driveService = createMockDriveService({
+        getFile: vi.fn().mockImplementation(async (id: string) => ({
+          id,
+          name: `${id}.pdf`,
+          mimeType: id === 'non-pdf-1' ? 'text/plain' : 'application/pdf',
+          parents: ['folder-submittals'],
+          webViewLink: `https://drive.google.com/file/d/${id}/view`,
+        })),
+        downloadAsBuffer: vi.fn().mockImplementation(async (id: string) =>
+          id === 'tpl-cover' ? coverBytes : targetPdf
+        ),
+        saveBuffer: vi.fn().mockImplementation(async (_bytes, opts) => ({
+          id: opts.action === 'create' ? 'sibling-1' : opts.fileId,
+          name: opts.action === 'create' ? opts.name : 'target.pdf',
+          parents: ['folder-submittals'],
+          mimeType: 'application/pdf',
+          webViewLink: `https://drive.google.com/file/d/${opts.action === 'create' ? 'sibling-1' : opts.fileId}/view`,
+        })),
+      });
+
+      const adapter = new DocumentContentEditorAdapter({
+        driveService,
+        pdfProcessor: new PdfProcessor(),
+      });
+
+      const dataRes = await adapter.insertData({
+        targetFileId: 'pdf-1',
+        formData: { 'Submittal No': '071200-001-0' },
+      });
+      expect(dataRes.file.parentUri).toBe('https://drive.google.com/drive/folders/folder-submittals');
+
+      const graftRes = await adapter.insertPages({
+        targetFileId: 'pdf-1',
+        sourceFileId: 'tpl-cover',
+        sourceIsTemplate: true,
+        position: 'start',
+        sourcePages: [1],
+      });
+      expect(graftRes.file.parentUri).toBe('https://drive.google.com/drive/folders/folder-submittals');
+
+      const siblingRes = await adapter.insertPages({
+        targetFileId: 'non-pdf-1',
+        sourceFileId: 'tpl-cover',
+        sourceIsTemplate: true,
+        onUnmodifiableTarget: {
+          strategy: 'createSiblingPdf',
+          fileName: '_Sibling.pdf',
+        },
+      });
+      expect(siblingRes.file.parentUri).toBe('https://drive.google.com/drive/folders/folder-submittals');
     });
   });
 });

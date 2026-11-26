@@ -96,6 +96,7 @@ export const FileLocatorType = Type.Object({
   name: Type.String(),
   parentId: Type.Optional(Type.String()),
   parentName: Type.Optional(Type.String()),
+  parentUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   mimeType: Type.Optional(Type.String()),
   uri: Type.Optional(Type.String()),
 });
@@ -1166,7 +1167,24 @@ export class DocumentService implements DocumentServicePort {
     sourceFiles: readonly SourceFile[] | undefined
   ): Promise<{ ok: true; sourceFiles?: SourceFile[] } | { ok: false; errors: string[] }> {
     if (sourceFiles === undefined) {
+      if (documentType.allowEmptySourceFiles === false) {
+        return {
+          ok: false,
+          errors: [
+            `DocumentType "${documentType.key}" requires at least one source file (allowEmptySourceFiles is disabled).`,
+          ],
+        };
+      }
       return { ok: true };
+    }
+
+    if (sourceFiles.length === 0 && documentType.allowEmptySourceFiles !== true) {
+      return {
+        ok: false,
+        errors: [
+          `DocumentType "${documentType.key}" requires at least one source file (allowEmptySourceFiles is not enabled).`,
+        ],
+      };
     }
 
     if (documentType.maxSourceFiles === undefined) {

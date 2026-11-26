@@ -81,7 +81,7 @@ function extractNonEmptyStrings(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
 }
 
-function mapFileLocatorToOutcomeFile(file: FileLocator & { parentUri?: string | undefined }): UiProcessExecutionFileLocator {
+function mapFileLocatorToOutcomeFile(file: FileLocator): UiProcessExecutionFileLocator {
   return {
     id: file.id,
     name: file.name,

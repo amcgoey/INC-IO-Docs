@@ -9,6 +9,72 @@ import { escapeCardHtml } from '../blocks/common';
 
 export const DOCUMENT_SUCCESS_CARD_VIEW_ID = 'document-success-card';
 
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+
+interface FolderDisplayEntry {
+  id: string;
+  name: string;
+  isFallbackName: boolean;
+  uri?: string | undefined;
+}
+
+function isFolderOnlyPlaceholder(file: ExecutionFileLocator): boolean {
+  const id = file.id.trim();
+  const parentId = file.parentId?.trim();
+  return (
+    id.length > 0 &&
+    parentId !== undefined &&
+    id === parentId &&
+    (file.mimeType === undefined || file.mimeType === GOOGLE_FOLDER_MIME_TYPE)
+  );
+}
+
+function collectFolders(
+  stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults']
+): FolderDisplayEntry[] {
+  const foldersById = new Map<string, FolderDisplayEntry>();
+
+  for (const step of stepResults) {
+    if (step.activityType === 'WRITE_LOG') {
+      continue;
+    }
+    for (const file of step.files) {
+      const parentId = file.parentId?.trim();
+      if (!parentId) {
+        continue;
+      }
+
+      const candidateName =
+        file.parentName?.trim() ||
+        (isFolderOnlyPlaceholder(file) ? file.name.trim() : '');
+      const candidateUri =
+        file.parentUri?.trim() ||
+        (isFolderOnlyPlaceholder(file) ? file.uri?.trim() : '') ||
+        undefined;
+
+      const existing = foldersById.get(parentId);
+      if (!existing) {
+        foldersById.set(parentId, {
+          id: parentId,
+          name: candidateName || parentId,
+          isFallbackName: candidateName.length === 0,
+          ...(candidateUri ? { uri: candidateUri } : {}),
+        });
+      } else {
+        if (existing.isFallbackName && candidateName.length > 0) {
+          existing.name = candidateName;
+          existing.isFallbackName = false;
+        }
+        if (!existing.uri && candidateUri) {
+          existing.uri = candidateUri;
+        }
+      }
+    }
+  }
+
+  return Array.from(foldersById.values());
+}
+
 function collectCreatedAndFiledFiles(
   stepResults: NonNullable<UiViewAdapterContext['executionOutcome']>['stepResults']
 ): ExecutionFileLocator[] {
@@ -20,6 +86,9 @@ function collectCreatedAndFiledFiles(
       continue;
     }
     for (const file of step.files) {
+      if (isFolderOnlyPlaceholder(file)) {
+        continue;
+      }
       const idKey = file.id.trim();
       if (idKey.length > 0 && seenIds.has(idKey)) {
         continue;
@@ -34,30 +103,55 @@ function collectCreatedAndFiledFiles(
   return files;
 }
 
+function buildOpenButton(rawUri: string | undefined):
+  | {
+      text: string;
+      onClick: {
+        openLink: {
+          url: string;
+          openAs: 'FULL_SIZE';
+        };
+      };
+    }
+  | undefined {
+  const trimmedUri = rawUri?.trim();
+  if (!trimmedUri) {
+    return undefined;
+  }
+  return {
+    text: 'Open',
+    onClick: {
+      openLink: {
+        url: trimmedUri,
+        openAs: 'FULL_SIZE' as const,
+      },
+    },
+  };
+}
+
+function buildFolderWidget(folder: FolderDisplayEntry): UiViewWidget {
+  const button = buildOpenButton(folder.uri);
+  return {
+    decoratedText: {
+      text: escapeCardHtml(folder.name),
+      wrapText: true,
+      ...(button ? { button } : {}),
+    },
+  };
+}
+
 function buildFileWidget(file: ExecutionFileLocator): UiViewWidget {
   const trimmedName = file.name.trim();
   const displayName = trimmedName.length > 0 ? trimmedName : 'Unnamed File';
   const trimmedParentName = file.parentName?.trim();
-  const trimmedUri = file.uri?.trim();
+  const button = buildOpenButton(file.uri);
 
   return {
     decoratedText: {
       text: escapeCardHtml(displayName),
       wrapText: true,
       ...(trimmedParentName ? { bottomLabel: trimmedParentName } : {}),
-      ...(trimmedUri
-        ? {
-            button: {
-              text: 'Open',
-              onClick: {
-                openLink: {
-                  url: trimmedUri,
-                  openAs: 'FULL_SIZE' as const,
-                },
-              },
-            },
-          }
-        : {}),
+      ...(button ? { button } : {}),
     },
   };
 }
@@ -117,6 +211,14 @@ export class DocumentSuccessCardAdapter implements UiViewSchemaAdapterPort {
     }
 
     const sections: UiViewSection[] = [{ widgets: bannerWidgets }];
+
+    const folders = collectFolders(outcome.stepResults);
+    if (folders.length > 0) {
+      sections.push({
+        header: 'Folders',
+        widgets: folders.map(buildFolderWidget),
+      });
+    }
 
     const filedFiles = collectCreatedAndFiledFiles(outcome.stepResults);
     if (filedFiles.length > 0) {

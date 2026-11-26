@@ -2749,6 +2749,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
                   name: 'Filed.pdf',
                   parentId: 'folder-1',
                   parentName: 'Communications',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-1',
                   uri: 'https://drive.google.com/file/d/moved-1/view',
                 },
               ],
@@ -2817,6 +2818,14 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           'Filed via <b>SubmittalReceived</b>'
         );
         expect(pushCard?.sections[0].widgets[1].textParagraph?.text).toContain('Fallback notice');
+        const foldersSec = pushCard?.sections.find((s) => s.header === 'Folders');
+        expect(foldersSec?.widgets[0].decoratedText?.text).toBe('Communications');
+        expect(foldersSec?.widgets[0].decoratedText?.button?.onClick).toEqual({
+          openLink: {
+            url: 'https://drive.google.com/drive/folders/folder-1',
+            openAs: 'FULL_SIZE',
+          },
+        });
         const filesSec = pushCard?.sections.find((s) => s.header === 'Created & Filed');
         expect(filesSec?.widgets[0].decoratedText?.text).toBe('Filed.pdf');
         expect(filesSec?.widgets[0].decoratedText?.button?.onClick).toEqual({

@@ -107,6 +107,7 @@ describe('DriveActivityHandler', () => {
             name: 'Report.docx',
             parentId: 'testmove-folder-id',
             parentName: 'Unfiled',
+            parentUri: 'https://drive.google.com/drive/folders/testmove-folder-id',
             uri: 'https://drive.google.com/file/d/file-123/view',
           },
         ],
@@ -343,7 +344,7 @@ describe('DriveActivityHandler', () => {
               id: 'found-file-456',
               name: 'TargetDoc.pdf',
               parentId: 'folder-123',
-              parentName: 'folder-123',
+              parentUri: 'https://drive.google.com/drive/folders/folder-123',
               mimeType: 'application/pdf',
               uri: 'https://drive.google.com/file/d/found-file-456/view',
             },
@@ -648,6 +649,7 @@ describe('DriveActivityHandler', () => {
             name: 'Resolved.pdf',
             parentId: 'submittals-folder-id',
             parentName: 'Submittals',
+            parentUri: 'https://drive.google.com/drive/folders/submittals-folder-id',
             mimeType: 'application/pdf',
             uri: 'https://drive.google.com/file/d/resolved-target-1/view',
           },
@@ -704,6 +706,7 @@ describe('DriveActivityHandler', () => {
             name: 'Doc1.pdf',
             parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             uri: 'https://drive.google.com/file/d/sf-1/view',
           },
           {
@@ -711,6 +714,7 @@ describe('DriveActivityHandler', () => {
             name: 'Doc2.pdf',
             parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             uri: 'https://drive.google.com/file/d/sf-2/view',
           },
         ]);
@@ -767,6 +771,7 @@ describe('DriveActivityHandler', () => {
             name: 'Doc1.pdf',
             parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             mimeType: 'application/pdf',
             uri: 'https://drive.google.com/file/d/sf-1/view',
           },
@@ -885,7 +890,17 @@ describe('DriveActivityHandler', () => {
 
         expect(result).toEqual({
           success: true,
-          files: [],
+          files: [
+            {
+              id: 'subfolder-id',
+              name: '260920 IN - Meeting Notes',
+              parentId: 'subfolder-id',
+              parentName: '260920 IN - Meeting Notes',
+              parentUri: 'https://drive.google.com/drive/folders/subfolder-id',
+              mimeType: 'application/vnd.google-apps.folder',
+              uri: 'https://drive.google.com/drive/folders/subfolder-id',
+            },
+          ],
         });
         expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith(
           'shared-drive-root-id',
@@ -960,6 +975,7 @@ describe('DriveActivityHandler', () => {
               name: 'Document.docx',
               parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/vnd.google-apps.document',
               uri: 'https://docs.google.com/document/d/file-doc-123/edit',
             },
@@ -1003,6 +1019,7 @@ describe('DriveActivityHandler', () => {
               name: 'SubFolder',
               parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/vnd.google-apps.folder',
               uri: 'https://drive.google.com/drive/folders/folder-sub-456',
             },
@@ -1151,6 +1168,7 @@ describe('DriveActivityHandler', () => {
               name: 'Invoice.pdf',
               parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/pdf',
               uri: 'https://drive.google.com/file/d/drive-file-new-1/view',
             },
@@ -1556,6 +1574,7 @@ describe('DriveActivityHandler', () => {
             name: 'Invoice.pdf',
             parentId: 'target-folder-id',
             parentName: 'Target Folder',
+            parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
             mimeType: 'application/pdf',
             uri: 'https://drive.google.com/file/d/saved-att-1/view',
           });
@@ -1683,6 +1702,7 @@ describe('DriveActivityHandler', () => {
                 name: '081100-001-0 Doors - 261102 PMG.pdf',
                 parentId: 'closed-folder-id',
                 parentName: '08 Openings',
+                parentUri: 'https://drive.google.com/drive/folders/closed-folder-id',
                 mimeType: 'application/pdf',
                 uri: 'https://drive.google.com/file/d/file-arch-1/view',
               },
@@ -1989,6 +2009,7 @@ describe('DriveActivityHandler', () => {
                 name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
                 parentId: 'folder-submittals',
                 parentName: 'Submittals',
+                parentUri: 'https://drive.google.com/drive/folders/folder-submittals',
                 mimeType: 'application/pdf',
                 uri: 'https://drive.google.com/file/d/review-copy-1/view',
               },
@@ -2327,6 +2348,207 @@ describe('DriveActivityHandler', () => {
             targetFolderId: 'folder-submittals',
             newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
           });
+        });
+      });
+
+      describe('parentUri, handleSearch parentName fix, and empty MOVE_FILE placeholder (#384)', () => {
+        it('populates parentUri from leafFolder.webViewLink (or folder URL fallback) across MOVE_FILE (remote and binary) and DUPLICATE_FILE', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-custom-link',
+            name: 'Closed',
+            parents: ['root'],
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/folder-custom-link',
+          });
+          (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'file-123',
+            name: 'Report.docx',
+            parents: ['folder-custom-link'],
+            webViewLink: 'https://drive.google.com/file/d/file-123/view',
+          });
+          const moveOutput = await handler.handle({
+            type: 'MOVE_FILE',
+            payload: { fileId: 'file-123', folderName: 'Closed' },
+          });
+          expect(moveOutput.files?.[0]?.parentUri).toBe(
+            'https://drive.google.com/drive/u/0/folders/folder-custom-link'
+          );
+
+          // Fallback URL when webViewLink is absent on destination folder
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-no-link',
+            name: 'Submittals',
+            parents: ['root'],
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'bin-saved-1',
+            name: 'Attachment.pdf',
+            parents: ['folder-no-link'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/bin-saved-1/view',
+          });
+          const binaryHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              {
+                id: 'att-1',
+                name: 'Attachment.pdf',
+                mimeType: 'application/pdf',
+                content: new Uint8Array([1, 2, 3]),
+              },
+            ],
+          });
+          const binaryOutput = await binaryHandler.handle({
+            type: 'MOVE_FILE',
+            payload: { rootStorageId: 'root', folderName: 'Submittals' },
+          });
+          expect(binaryOutput.files?.[0]?.parentUri).toBe(
+            'https://drive.google.com/drive/folders/folder-no-link'
+          );
+
+          // In-place DUPLICATE_FILE without leafFolder resolves real parentName and parentUri instead of writing parents[0] ID
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockImplementation(
+            async (id: string) => {
+              if (id === 'folder-real-parent') {
+                return {
+                  id: 'folder-real-parent',
+                  name: '07 Thermal & Moisture',
+                  mimeType: 'application/vnd.google-apps.folder',
+                  webViewLink: 'https://drive.google.com/drive/folders/folder-real-parent',
+                };
+              }
+              return {
+                id,
+                name: 'Original.pdf',
+                mimeType: 'application/pdf',
+                parents: ['folder-real-parent'],
+              };
+            }
+          );
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'dup-inplace-1',
+            name: '_Original.pdf',
+            parents: ['folder-real-parent'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/dup-inplace-1/view',
+          });
+          const dupOutput = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: { fileId: 'file-orig-1', fileNamePrefix: '_' },
+          });
+          expect(dupOutput.files?.[0]).toEqual({
+            id: 'dup-inplace-1',
+            name: '_Original.pdf',
+            parentId: 'folder-real-parent',
+            parentName: '07 Thermal & Moisture',
+            parentUri: 'https://drive.google.com/drive/folders/folder-real-parent',
+            mimeType: 'application/pdf',
+            uri: 'https://drive.google.com/file/d/dup-inplace-1/view',
+          });
+        });
+
+        it('resolves real parentName and parentUri on SEARCH_DRIVE_FILE and never writes parents[0] ID into parentName', async () => {
+          (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+            {
+              id: 'found-1',
+              name: 'Budget.xlsx',
+              parents: ['folder-acme-id'],
+              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              webViewLink: 'https://drive.google.com/file/d/found-1/view',
+            },
+          ]);
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-acme-id',
+            name: 'Acme Corp',
+            mimeType: 'application/vnd.google-apps.folder',
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/folder-acme-id',
+          });
+
+          const resolvedSearch = await handler.handle({
+            type: 'SEARCH_DRIVE_FILE',
+            payload: { targetName: 'Budget.xlsx' },
+          });
+          expect(resolvedSearch.files?.[0]).toEqual({
+            id: 'found-1',
+            name: 'Budget.xlsx',
+            parentId: 'folder-acme-id',
+            parentName: 'Acme Corp',
+            parentUri: 'https://drive.google.com/drive/u/0/folders/folder-acme-id',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            uri: 'https://drive.google.com/file/d/found-1/view',
+          });
+
+          // When parent folder lookup fails, parentName is omitted (never folder ID) and parentUri falls back
+          (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+            {
+              id: 'found-2',
+              name: 'Spec.pdf',
+              parents: ['folder-unknown-id'],
+              mimeType: 'application/pdf',
+            },
+          ]);
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+            new Error('Not found')
+          );
+
+          const fallbackSearch = await handler.handle({
+            type: 'FIND_DRIVE_FILE',
+            payload: { targetName: 'Spec.pdf' },
+          });
+          expect(fallbackSearch.files?.[0]).toEqual({
+            id: 'found-2',
+            name: 'Spec.pdf',
+            parentId: 'folder-unknown-id',
+            parentUri: 'https://drive.google.com/drive/folders/folder-unknown-id',
+            mimeType: 'application/pdf',
+          });
+          expect(fallbackSearch.files?.[0]?.parentName).toBeUndefined();
+        });
+
+        it('emits a single folder-only placeholder FileLocator (id === parentId, uri === parentUri) when MOVE_FILE runs with 0 SourceFiles', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'empty-dest-folder-1',
+            name: '261126 OT - Empty Comm',
+            parents: ['comm-contact-folder'],
+            mimeType: 'application/vnd.google-apps.folder',
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+          });
+
+          const zeroFilesHandler = new DriveActivityHandler(mockDriveService);
+          const result = await zeroFilesHandler.handle(
+            {
+              id: 'moveFiles',
+              type: 'MOVE_FILE',
+              payload: {
+                rootStorageId: 'shared-drive-1',
+                folderName: '261126 OT - Empty Comm',
+              },
+            },
+            {
+              document: {
+                type: 'communication-project',
+                data: {},
+                sourceFiles: [],
+              },
+              files: [],
+              stepOutputs: {},
+              contextVariables: {},
+            }
+          );
+
+          expect(result).toEqual({
+            success: true,
+            files: [
+              {
+                id: 'empty-dest-folder-1',
+                name: '261126 OT - Empty Comm',
+                parentId: 'empty-dest-folder-1',
+                parentName: '261126 OT - Empty Comm',
+                parentUri: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+                mimeType: 'application/vnd.google-apps.folder',
+                uri: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+              },
+            ],
+          });
+          expect(mockDriveService.move).not.toHaveBeenCalled();
         });
       });
 
