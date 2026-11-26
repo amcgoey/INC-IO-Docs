@@ -845,6 +845,452 @@ export async function inspectPositiveTableLayout(
     bottomAnchorRowIndex: rangeStartRowIndex + parsed.bottomAnchorIndex,
     betweenRows,
     dividerRowIndices,
-    formulaRowsByHeader,
+      formulaRowsByHeader,
+    };
+}
+
+export interface NamedRangeSnapshot {
+  name: string;
+  namedRangeId?: string | undefined;
+  sheetId: number;
+  sheetTitle: string;
+  gridRange: sheets_v4.Schema$GridRange;
+  a1Range: string;
+}
+
+export interface ClearOptionTableResult {
+  cleared: boolean;
+  blankRowIndex: number;
+  absTerminatorRowIndex: number;
+}
+
+interface OptionTableGridCellInfo {
+  formattedValue: string;
+  userEnteredFormat?: sheets_v4.Schema$CellFormat | undefined;
+}
+
+interface OptionTableGridRowInfo {
+  absRowIndex: number;
+  cells: OptionTableGridCellInfo[];
+}
+
+export interface OptionTableGridFormatsInfo {
+  headerRow: string[];
+  dataRows: OptionTableGridRowInfo[];
+}
+
+function findNamedRangeInSpreadsheet(
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  rangeName: string,
+  sheetName?: string
+): {
+  namedRange: sheets_v4.Schema$NamedRange;
+  sheetId: number;
+  sheetTitle: string;
+  gridRange: sheets_v4.Schema$GridRange;
+  a1Range: string;
+} {
+  const sheetTitleById = new Map<number, string>();
+  let explicitSheetId: number | undefined;
+  for (const sheet of spreadsheet.sheets ?? []) {
+    const id = sheet.properties?.sheetId;
+    const title = sheet.properties?.title ?? '';
+    if (typeof id === 'number') {
+      sheetTitleById.set(id, title);
+      if (sheetName && title.toLowerCase() === sheetName.toLowerCase()) {
+        explicitSheetId = id;
+      }
+    }
+  }
+  if (sheetName && explicitSheetId === undefined) {
+    throw new Error(
+      `Sheet "${sheetName}" not found in spreadsheet "${spreadsheet.spreadsheetId ?? ''}".`
+    );
+  }
+
+  const targetLower = rangeName.toLowerCase();
+  const scopedLower = sheetName ? `${sheetName}!${rangeName}`.toLowerCase() : undefined;
+
+  let matched: sheets_v4.Schema$NamedRange | undefined;
+  let fallback: sheets_v4.Schema$NamedRange | undefined;
+
+  for (const nr of spreadsheet.namedRanges ?? []) {
+    const name = (nr.name ?? '').toLowerCase();
+    if (name === targetLower || (scopedLower !== undefined && name === scopedLower)) {
+      if (explicitSheetId !== undefined) {
+        if (nr.range?.sheetId === explicitSheetId) {
+          matched = nr;
+          break;
+        }
+        if ((nr.range?.sheetId === undefined || nr.range?.sheetId === null) && !fallback) {
+          fallback = nr;
+        }
+      } else {
+        matched = nr;
+        break;
+      }
+    }
+  }
+
+  const resolved = matched ?? fallback;
+  if (!resolved?.range) {
+    throw new Error(
+      `Named range "${rangeName}" not found${sheetName ? ` on sheet "${sheetName}"` : ''} in spreadsheet "${spreadsheet.spreadsheetId ?? ''}".`
+    );
+  }
+
+  const sheetId = explicitSheetId ?? resolved.range.sheetId ?? 0;
+  const sheetTitle = sheetName ?? sheetTitleById.get(sheetId) ?? '';
+  const gridRange: sheets_v4.Schema$GridRange = {
+    ...resolved.range,
+    sheetId,
   };
+
+  return {
+    namedRange: resolved,
+    sheetId,
+    sheetTitle,
+    gridRange,
+    a1Range: gridRangeToA1(sheetTitle, gridRange),
+  };
+}
+
+/**
+ * Snapshots named range bounds for verification of Named Range expansion and side-by-side stability.
+ */
+export async function snapshotNamedRanges(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  rangeNames: readonly string[],
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<Record<string, NamedRangeSnapshot>> {
+  const response = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(sheetId,title)),namedRanges',
+      }),
+    retryOptions
+  );
+
+  const spreadsheet: sheets_v4.Schema$Spreadsheet = {
+    ...response.data,
+    spreadsheetId,
+  };
+
+  const result: Record<string, NamedRangeSnapshot> = {};
+  for (const rangeName of rangeNames) {
+    const found = findNamedRangeInSpreadsheet(spreadsheet, rangeName);
+    result[rangeName] = {
+      name: found.namedRange.name ?? rangeName,
+      ...(typeof found.namedRange.namedRangeId === 'string'
+        ? { namedRangeId: found.namedRange.namedRangeId }
+        : {}),
+      sheetId: found.sheetId,
+      sheetTitle: found.sheetTitle,
+      gridRange: found.gridRange,
+      a1Range: found.a1Range,
+    };
+  }
+  return result;
+}
+
+/**
+ * Reads `FORMATTED_VALUE` grids for all snapshotted named ranges in a single `values.batchGet`.
+ */
+export async function readNamedRangesFormattedValues(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  snapshots: Readonly<Record<string, NamedRangeSnapshot>>,
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<Record<string, CellValue[][]>> {
+  const entries = Object.entries(snapshots);
+  if (entries.length === 0) {
+    return {};
+  }
+
+  const response = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: entries.map(([, snap]) => snap.a1Range),
+        valueRenderOption: 'FORMATTED_VALUE',
+      }),
+    retryOptions
+  );
+
+  const valueRanges = response.data.valueRanges ?? [];
+  const output: Record<string, CellValue[][]> = {};
+  entries.forEach(([key], idx) => {
+    output[key] = (valueRanges[idx]?.values as CellValue[][] | undefined) ?? [];
+  });
+  return output;
+}
+
+/**
+ * Verifies that untouched side-by-side `_Config` tables kept identical NamedRange bounds and cell values.
+ */
+export function findSideBySideTableShiftViolations(params: {
+  beforeSnapshots: Readonly<Record<string, NamedRangeSnapshot>>;
+  afterSnapshots: Readonly<Record<string, NamedRangeSnapshot>>;
+  beforeValues: Readonly<Record<string, CellValue[][]>>;
+  afterValues: Readonly<Record<string, CellValue[][]>>;
+  rangeNames: readonly string[];
+}): string[] {
+  const { beforeSnapshots, afterSnapshots, beforeValues, afterValues, rangeNames } = params;
+  const violations: string[] = [];
+
+  for (const name of rangeNames) {
+    const beforeRange = beforeSnapshots[name]?.gridRange;
+    const afterRange = afterSnapshots[name]?.gridRange;
+    if (JSON.stringify(beforeRange) !== JSON.stringify(afterRange)) {
+      violations.push(
+        `Named range "${name}" shifted from ${JSON.stringify(beforeRange)} to ${JSON.stringify(afterRange)}.`
+      );
+    }
+
+    const beforeGrid = beforeValues[name];
+    const afterGrid = afterValues[name];
+    if (JSON.stringify(beforeGrid) !== JSON.stringify(afterGrid)) {
+      violations.push(
+        `Table values for "${name}" changed unexpectedly during neighboring write.`
+      );
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Clears an option table to 1 unformatted blank row + `endMarker` using range-scoped `deleteRange`
+ * so neighboring side-by-side `_Config` tables on the same sheet are unaffected.
+ */
+export async function clearOptionTableToEmpty(
+  sheetsApi: sheets_v4.Sheets,
+  target: {
+    spreadsheetId: string;
+    sheetName: string;
+    rangeName: string;
+    validationRangeName?: string | undefined;
+    endMarker: string;
+  },
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<ClearOptionTableResult> {
+  const metaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId: target.spreadsheetId,
+        fields: 'sheets(properties(sheetId,title)),namedRanges',
+      }),
+    retryOptions
+  );
+
+  const spreadsheet: sheets_v4.Schema$Spreadsheet = {
+    ...metaResponse.data,
+    spreadsheetId: target.spreadsheetId,
+  };
+  const resolved = findNamedRangeInSpreadsheet(spreadsheet, target.rangeName, target.sheetName);
+
+  const valuesResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.get({
+        spreadsheetId: target.spreadsheetId,
+        range: resolved.a1Range,
+        valueRenderOption: 'FORMATTED_VALUE',
+      }),
+    retryOptions
+  );
+
+  const values = (valuesResponse.data.values as CellValue[][] | undefined) ?? [];
+  const startRow = resolved.gridRange.startRowIndex ?? 0;
+  const startCol = resolved.gridRange.startColumnIndex ?? 0;
+  const endCol =
+    resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
+      ? resolved.gridRange.endColumnIndex
+      : startCol + Math.max((values[0] ?? []).length, 1);
+  const width = Math.max(endCol - startCol, 1);
+
+  let terminatorRelIndex = -1;
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    if (row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() === target.endMarker)) {
+      terminatorRelIndex = i;
+      break;
+    }
+  }
+
+  if (terminatorRelIndex === -1) {
+    throw new Error(
+      `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing endMarker "${target.endMarker}".`
+    );
+  }
+
+  if (terminatorRelIndex <= 1) {
+    return {
+      cleared: false,
+      blankRowIndex: startRow + 1,
+      absTerminatorRowIndex: startRow + terminatorRelIndex,
+    };
+  }
+
+  const requests: sheets_v4.Schema$Request[] = [
+    {
+      updateCells: {
+        range: {
+          sheetId: resolved.sheetId,
+          startRowIndex: startRow + 1,
+          endRowIndex: startRow + 2,
+          startColumnIndex: startCol,
+          endColumnIndex: startCol + width,
+        },
+        rows: [{ values: Array.from({ length: width }, () => ({})) }],
+        fields: 'userEnteredValue,userEnteredFormat',
+      },
+    },
+  ];
+
+  if (terminatorRelIndex > 2) {
+    requests.push({
+      deleteRange: {
+        range: {
+          sheetId: resolved.sheetId,
+          startRowIndex: startRow + 2,
+          endRowIndex: startRow + terminatorRelIndex,
+          startColumnIndex: startCol,
+          endColumnIndex: startCol + width,
+        },
+        shiftDimension: 'ROWS',
+      },
+    });
+  }
+
+  if (target.validationRangeName) {
+    const valResolved = findNamedRangeInSpreadsheet(
+      spreadsheet,
+      target.validationRangeName,
+      target.sheetName
+    );
+    requests.push({
+      updateNamedRange: {
+        namedRange: {
+          ...(typeof valResolved.namedRange.namedRangeId === 'string'
+            ? { namedRangeId: valResolved.namedRange.namedRangeId }
+            : {}),
+          ...(typeof valResolved.namedRange.name === 'string'
+            ? { name: valResolved.namedRange.name }
+            : {}),
+          range: {
+            ...valResolved.gridRange,
+            sheetId: valResolved.sheetId,
+            startRowIndex: startRow + 1,
+            endRowIndex: startRow + 2,
+          },
+        },
+        fields: 'range',
+      },
+    });
+  }
+
+  await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.batchUpdate({
+        spreadsheetId: target.spreadsheetId,
+        requestBody: { requests },
+      }),
+    retryOptions
+  );
+
+  return {
+    cleared: true,
+    blankRowIndex: startRow + 1,
+    absTerminatorRowIndex: startRow + 2,
+  };
+}
+
+/**
+ * Reads `formattedValue` and `userEnteredFormat` for rows between header and `endMarker` in an option table.
+ */
+export async function readOptionTableGridFormats(
+  sheetsApi: sheets_v4.Sheets,
+  target: {
+    spreadsheetId: string;
+    sheetName: string;
+    rangeName: string;
+    endMarker: string;
+  },
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<OptionTableGridFormatsInfo> {
+  const metaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId: target.spreadsheetId,
+        fields: 'sheets(properties(sheetId,title)),namedRanges',
+      }),
+    retryOptions
+  );
+  const resolved = findNamedRangeInSpreadsheet(
+    { ...metaResponse.data, spreadsheetId: target.spreadsheetId },
+    target.rangeName,
+    target.sheetName
+  );
+
+  const gridResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId: target.spreadsheetId,
+        ranges: [resolved.a1Range],
+        includeGridData: true,
+        fields: 'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat))))',
+      }),
+    retryOptions
+  );
+
+  const sheet = (gridResponse.data.sheets ?? []).find(
+    (s) =>
+      s.properties?.sheetId === resolved.sheetId ||
+      s.properties?.title?.toLowerCase() === resolved.sheetTitle.toLowerCase()
+  );
+  const gridData = sheet?.data?.[0];
+  const baseRow = gridData?.startRow ?? resolved.gridRange.startRowIndex ?? 0;
+  const baseCol = gridData?.startColumn ?? resolved.gridRange.startColumnIndex ?? 0;
+  const startRow = resolved.gridRange.startRowIndex ?? baseRow;
+  const startCol = resolved.gridRange.startColumnIndex ?? baseCol;
+  const rowData = gridData?.rowData ?? [];
+  const headerCells = rowData[startRow - baseRow]?.values ?? [];
+  const width =
+    resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
+      ? Math.max(resolved.gridRange.endColumnIndex - startCol, 1)
+      : Math.max(headerCells.length - (startCol - baseCol), 1);
+
+  const readRow = (absRow: number): OptionTableGridCellInfo[] => {
+    const relRow = absRow - baseRow;
+    const rawCells = relRow >= 0 && relRow < rowData.length ? (rowData[relRow]?.values ?? []) : [];
+    const relColStart = startCol - baseCol;
+    return Array.from({ length: width }, (_, offset) => {
+      const cell = rawCells[relColStart + offset];
+      return {
+        formattedValue: cell?.formattedValue ?? '',
+        ...(cell?.userEnteredFormat !== undefined && cell.userEnteredFormat !== null
+          ? { userEnteredFormat: structuredClone(cell.userEnteredFormat) }
+          : {}),
+      };
+    });
+  };
+
+  const headerRow = readRow(startRow).map((c) => c.formattedValue.trim());
+  const maxRow =
+    resolved.gridRange.endRowIndex !== undefined && resolved.gridRange.endRowIndex !== null
+      ? resolved.gridRange.endRowIndex
+      : baseRow + rowData.length;
+
+  const dataRows: OptionTableGridRowInfo[] = [];
+  for (let absRow = startRow + 1; absRow < maxRow; absRow++) {
+    const cells = readRow(absRow);
+    if (cells.some((c) => c.formattedValue.trim() === target.endMarker)) {
+      break;
+    }
+    dataRows.push({ absRowIndex: absRow, cells });
+  }
+
+  return { headerRow, dataRows };
 }
