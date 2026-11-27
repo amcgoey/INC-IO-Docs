@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-11-25
-- **Related Issue**: `#273` (`[Idea] LookupField Options from Log`)
+- **Related Issues**: `#273` (`[Idea] LookupField Options from Log`), `#387`, `#388`, `#389`
 - **Related ADRs**: ADR 0001, ADR 0005, ADR 0009, ADR 0011, ADR 0012, ADR 0013, ADR 0014, ADR 0017, ADR 0019, ADR 0020, ADR 0021, ADR 0022
 
 ## Context
@@ -26,18 +26,27 @@ Two additional gaps existed:
 ### 2. Split Manifest Option Schemas (`OptionSource` & `OptionBinding`)
 - Split dynamic option configuration across ADR 0009's domain boundaries:
   - `DocumentSchema.optionSources` (`OptionSource`) stays storage-agnostic (`provider: "document_log" | "google_drive"`, expected tuple `properties`, and optional Drive traversal parameters). Migrate `Communication Project` and `Communication Proposal` off legacy inline `dynamicConfig` onto `optionSources`.
-  - `DocumentLogSchema.optionBindings` (`OptionBinding`) holds Google Sheets mechanics (`sheetName`, `rangeName`, optional companion `validationRangeName`, sentinel `endMarker`, header-to-property `columns` map, and optional RFC 4180 CSV `aliasesColumn`).
+  - `DocumentLogSchema.optionBindings` (`OptionBinding`) holds Google Sheets mechanics (`sheetName`, `rangeName`, optional companion `validationRangeName`, sentinel `endMarker`, header-to-property `columns` map, and optional RFC 4180 CSV `aliasesColumn`):
+    - `_Config` tabs pair a Row 1 sheet title and Row 2 merged table-group headers (`Statuses`, `Actions`, `Contacts`, `Vendors`, `Specs`, `Specification Divisions`) with unprefixed Row 3 column headers where `Options_*` Named Ranges start (while main `DocumentLog` tabs retain prefixed headers).
+    - `submittal-arch` and `submittal-ffe` map unprefixed Row 3 headers (`statuses`: `Status`; `actions`: `Key`, `Name`, `Suffix`, `Order`; `contacts` and `vendors`: `Key`, `Name`; `specs`: `Tag`, `Title`; `csiDivisions`: `Division Number`, `Division Folder`), keeping informational `Type` columns in `Contacts` and `Vendors` unmapped in `OptionSource.properties`.
+    - `aliasesColumn: "Aliases"` is declared explicitly as an optional rightmost column on the four entity tables (`submittal-arch` `contacts`; `submittal-ffe` `contacts`, `vendors`, `specs`) and omitted on `statuses`, `actions`, and `csiDivisions`.
+    - `validationRangeName` is set on `statuses` (retaining `"---"` at index 6 for main-tab divider conditional formatting) and on the four `allowUserInput` entity tables (`Key` on `Contacts`, `Tag` on `Specs`, `Name` on `Vendors`, omitting `"---"` so `WRITE_LOG` expands them cleanly), and omitted on `actions` (`allowUserInput: false`) and `csiDivisions`.
 - Enforce fail-fast startup validation across `DocumentSchemaRegistryAdapter`, `LogSchemaRegistryAdapter`, and `ParseSchemaRegistryAdapter` verifying that every `document_log` `OptionSource` has a matching `OptionBinding` covering all declared `properties`, valid `LinkedField` references, and valid template dot-notation paths.
 - Keep local static JSON reads memoized in `AppManifestProvider.readParsedSchema()`, returning `structuredClone`d copies so downstream consumers cannot mutate cached manifests.
 
 ### 3. Acyclic, Deepened `DocumentLog` Option Tables & Atomic `WRITE_LOG` Write-Back
 - Maintain a strict DAG: `LookupOptions` depends on `DocumentLogPort`, while `DocumentLogService` never depends on `LookupOptions`. Inside `readLog`, `writeLog`, and `queryUiContext`, `DocumentLogService` reads and hydrates option tables directly from the resolved spreadsheet.
-- `DocumentLogService` owns domain option-table parsing, `config_error` validation (missing Named Range or missing `"---"` sentinel on read or write), first-row-wins trimmed case-insensitive key deduplication on read, RFC 4180 CSV `aliasesColumn` parsing (`""`-escaped quotes), and strict canonical validation for non-`allowUserInput` fields on `READ_LOG` hydration (reporting `partial_hydration` when invalid).
+- `DocumentLogService` owns domain option-table parsing and hydration:
+  - Missing Named Ranges, missing required `columns` headers on Row 0, or missing `"---"` sentinels fail with `config_error` on read or write.
+  - Duplicate canonical keys (trimmed, case-insensitive) preserve first-row-wins mapped properties (`key`, `name`, etc.) while concatenating `aliases[]` across all matching rows in first-seen order and deduplicating trimmed case-insensitively (preserving first-seen casing), so `SourceParser` Pass 2 resolves aliases added on subsequent duplicate-key rows (e.g., duplicate `Spec Tag` rows in `Specs`).
+  - `aliasesColumn` is strictly optional on read: when the `Aliases` header is absent from the sheet, hydration succeeds without `config_error` and `SourceParser` falls back to Tier 3 `AliasDictionary`.
+  - `aliasesColumn` cells parse as RFC 4180 CSV (`""`-escaped quotes) and handle unbalanced quotes gracefully (flushing remaining trimmed text and splitting unquoted commas without throwing).
+  - Non-`allowUserInput` fields undergo strict canonical validation on `READ_LOG` hydration (reporting `partial_hydration` when invalid).
 - `DocumentLogPort.readOptionTables` resolves omitted or stale `selectedLogId` to the active/top-ranked `candidates[0]` when `ambiguous`; `writeLog` remains strict and rejects `ambiguous_log`.
 - `GoogleSheetsClient` executes range-level mechanics only:
   - Batched reads resolve all requested Named Ranges in 1 `spreadsheets.get` call + 1 `spreadsheets.values.batchGet` call (`FORMATTED_VALUE`).
   - Atomic option write-back executes **inside `WRITE_LOG`** (`insertIntoGroupedList` / `LogStoragePort.insertRow`) under one process-shared `KeyedAsyncLock` keyed by `spreadsheetId`, adding 0 extra Google Sheets API calls.
-  - Write-back deduplicates candidate rows by trimmed, case-insensitive **key only** (preserving legitimate shared names across distinct keys such as FF&E spec titles), coalesces same-submit writes targeting the same `OptionSource` (e.g. `specTag` and `relatedTag` both bound to `specs`), and backfills blank sibling cells on an existing key row without overwriting non-blank cells.
+  - Write-back deduplicates candidate rows by trimmed, case-insensitive **key only** (preserving legitimate shared names across distinct keys such as FF&E spec titles), coalesces same-submit writes targeting the same `OptionSource` (e.g. `specTag` and `relatedTag` both bound to `specs`), backfills blank sibling cells on an existing key row without overwriting non-blank cells, and writes only mapped `columns` properties (leaving `Aliases` cells untouched at runtime).
   - New rows use range-scoped `insertRange` (`shiftDimension: "ROWS"` bounded to the target Named Range's columns) right above the `"---"` row, `updateCells` with `stringValue` literals only (preventing formula injection), and explicit `updateNamedRange` to extend companion `Validation_*` (`validationRangeName`) ranges when needed.
   - When inserting into an empty option table (no existing data row above `"---"`), copy formatting from `configuration.documentLog.templateSpreadsheetId`'s matching table data row so template style updates take effect without hard-coding styles in application code.
   - Keep `sanitizeFilePath()` scoped to path/filename generation rather than option-table or `LinkedField` values.
