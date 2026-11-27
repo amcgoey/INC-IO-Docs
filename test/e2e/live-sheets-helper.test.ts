@@ -1190,6 +1190,58 @@ describe('live-sheets-helper', () => {
       expect(values.Options_Submittal_Arch_Contacts).toEqual([['Contact', 'Name'], ['INC', 'INC'], ['---']]);
     });
 
+    it('resolves optional extraRanges alongside named-range snapshots in a single batchGet call', async () => {
+      const batchGet = vi.fn().mockResolvedValue({
+        data: {
+          valueRanges: [
+            { range: "'_Config Submittal Arch'!A1:A6", values: [['Status'], ['Open'], ['---']] },
+            {
+              range: "'_Config Submittal Arch'!A1:K2",
+              values: [
+                ['Architecture Submittal Log Settings'],
+                ['Statuses', '', '', 'Specification Divisions'],
+              ],
+            },
+          ],
+        },
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          values: { batchGet },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const snapshots = {
+        Options_Submittal_Arch_Statuses: {
+          name: 'Options_Submittal_Arch_Statuses',
+          sheetId: 401,
+          sheetTitle: '_Config Submittal Arch',
+          a1Range: "'_Config Submittal Arch'!A1:A6",
+          gridRange: { sheetId: 401, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        },
+      };
+
+      const values = await readNamedRangesFormattedValues(
+        sheetsApi,
+        'sheet-cfg-1',
+        snapshots,
+        undefined,
+        { archHeaderBanner: "'_Config Submittal Arch'!A1:K2" }
+      );
+
+      expect(batchGet).toHaveBeenCalledTimes(1);
+      expect(batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-cfg-1',
+        ranges: ["'_Config Submittal Arch'!A1:A6", "'_Config Submittal Arch'!A1:K2"],
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(values.Options_Submittal_Arch_Statuses).toEqual([['Status'], ['Open'], ['---']]);
+      expect(values.archHeaderBanner).toEqual([
+        ['Architecture Submittal Log Settings'],
+        ['Statuses', '', '', 'Specification Divisions'],
+      ]);
+    });
+
     it('detects side-by-side _Config table range shifts or value mutations', () => {
       const baseSnap = {
         Options_Submittal_Arch_Statuses: {
@@ -1397,6 +1449,94 @@ describe('live-sheets-helper', () => {
         { formattedValue: 'T363C', userEnteredFormat: tmplFmt },
         { formattedValue: '', userEnteredFormat: tmplFmt },
       ]);
+    });
+
+    it('reads headerNotes and sheetMerges in readOptionTableGridFormats without changing API call count', async () => {
+      const sheetMerges: sheets_v4.Schema$GridRange[] = [
+        { sheetId: 401, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 5, endColumnIndex: 9 },
+      ];
+      const getSpreadsheet = vi.fn().mockImplementation(async (req: { includeGridData?: boolean; fields?: string }) => {
+        if (!req.includeGridData) {
+          return {
+            data: {
+              sheets: [
+                {
+                  properties: { sheetId: 401, title: '_Config Submittal Arch' },
+                  merges: sheetMerges,
+                },
+              ],
+              namedRanges: [
+                {
+                  namedRangeId: 'nr-contacts',
+                  name: 'Options_Submittal_Arch_Contacts',
+                  range: { sheetId: 401, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 5, endColumnIndex: 9 },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          data: {
+            sheets: [
+              {
+                properties: { sheetId: 401, title: '_Config Submittal Arch' },
+                data: [
+                  {
+                    startRow: 2,
+                    startColumn: 5,
+                    rowData: [
+                      {
+                        values: [
+                          { formattedValue: 'Type' },
+                          { formattedValue: 'Key' },
+                          { formattedValue: 'Name' },
+                          {
+                            formattedValue: 'Aliases',
+                            note: 'Comma-separated aliases; wrap ""quotes"" and note case-sensitive matching.',
+                          },
+                        ],
+                      },
+                      { values: [{ formattedValue: 'Consultant' }, { formattedValue: 'PMG' }, { formattedValue: 'Pavarini' }, { formattedValue: '' }] },
+                      { values: [{ formattedValue: '---' }] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const gridInfo = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(2);
+      expect(getSpreadsheet).toHaveBeenNthCalledWith(1, {
+        spreadsheetId: 'sheet-cfg-1',
+        fields: 'sheets(properties(sheetId,title),merges),namedRanges',
+      });
+      expect(getSpreadsheet).toHaveBeenNthCalledWith(2, {
+        spreadsheetId: 'sheet-cfg-1',
+        ranges: ["'_Config Submittal Arch'!F3:I6"],
+        includeGridData: true,
+        fields: 'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat,note))))',
+      });
+      expect(gridInfo.headerNotes).toEqual([
+        '',
+        '',
+        '',
+        'Comma-separated aliases; wrap ""quotes"" and note case-sensitive matching.',
+      ]);
+      expect(gridInfo.sheetMerges).toEqual(sheetMerges);
     });
 
     it('handles single-row and already-empty tables and rejects missing endMarker in clearOptionTableToEmpty', async () => {

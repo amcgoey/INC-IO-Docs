@@ -215,7 +215,7 @@ export async function findSpreadsheetErrorTokens(
     return [];
   }
 
-  const quotedRanges = sheetTitles.map((title) => `'${title.replace(/'/g, "''")}'`);
+  const quotedRanges = sheetTitles.map((title) => gridRangeToA1(title, {}));
   const valuesResponse = await withSheetsRetry(
     () =>
       sheetsApi.spreadsheets.values.batchGet({
@@ -953,7 +953,9 @@ interface OptionTableGridRowInfo {
 
 export interface OptionTableGridFormatsInfo {
   headerRow: string[];
+  headerNotes: string[];
   dataRows: OptionTableGridRowInfo[];
+  sheetMerges: sheets_v4.Schema$GridRange[];
 }
 
 function findNamedRangeInSpreadsheet(
@@ -1079,9 +1081,13 @@ export async function readNamedRangesFormattedValues(
   sheetsApi: sheets_v4.Sheets,
   spreadsheetId: string,
   snapshots: Readonly<Record<string, NamedRangeSnapshot>>,
-  retryOptions?: LiveSheetsRetryOptions
+  retryOptions?: LiveSheetsRetryOptions,
+  extraRanges?: Readonly<Record<string, string>>
 ): Promise<Record<string, CellValue[][]>> {
-  const entries = Object.entries(snapshots);
+  const entries = [
+    ...Object.entries(snapshots).map(([key, snap]) => ({ key, a1Range: snap.a1Range })),
+    ...Object.entries(extraRanges ?? {}).map(([key, a1Range]) => ({ key, a1Range })),
+  ];
   if (entries.length === 0) {
     return {};
   }
@@ -1090,7 +1096,7 @@ export async function readNamedRangesFormattedValues(
     () =>
       sheetsApi.spreadsheets.values.batchGet({
         spreadsheetId,
-        ranges: entries.map(([, snap]) => snap.a1Range),
+        ranges: entries.map((entry) => entry.a1Range),
         valueRenderOption: 'FORMATTED_VALUE',
       }),
     retryOptions
@@ -1098,7 +1104,7 @@ export async function readNamedRangesFormattedValues(
 
   const valueRanges = response.data.valueRanges ?? [];
   const output: Record<string, CellValue[][]> = {};
-  entries.forEach(([key], idx) => {
+  entries.forEach(({ key }, idx) => {
     output[key] = (valueRanges[idx]?.values as CellValue[][] | undefined) ?? [];
   });
   return output;
@@ -1285,7 +1291,7 @@ export async function clearOptionTableToEmpty(
 }
 
 /**
- * Reads `formattedValue` and `userEnteredFormat` for rows between header and `endMarker` in an option table.
+ * Reads `formattedValue`, `userEnteredFormat`, header `note`s, and sheet `merges` for an option table.
  */
 export async function readOptionTableGridFormats(
   sheetsApi: sheets_v4.Sheets,
@@ -1301,7 +1307,7 @@ export async function readOptionTableGridFormats(
     () =>
       sheetsApi.spreadsheets.get({
         spreadsheetId: target.spreadsheetId,
-        fields: 'sheets(properties(sheetId,title)),namedRanges',
+        fields: 'sheets(properties(sheetId,title),merges),namedRanges',
       }),
     retryOptions
   );
@@ -1310,6 +1316,12 @@ export async function readOptionTableGridFormats(
     target.rangeName,
     target.sheetName
   );
+  const metaSheet = (metaResponse.data.sheets ?? []).find(
+    (s) =>
+      s.properties?.sheetId === resolved.sheetId ||
+      s.properties?.title?.toLowerCase() === resolved.sheetTitle.toLowerCase()
+  );
+  const sheetMerges = metaSheet?.merges ?? [];
 
   const gridResponse = await withSheetsRetry(
     () =>
@@ -1317,7 +1329,8 @@ export async function readOptionTableGridFormats(
         spreadsheetId: target.spreadsheetId,
         ranges: [resolved.a1Range],
         includeGridData: true,
-        fields: 'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat))))',
+        fields:
+          'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat,note))))',
       }),
     retryOptions
   );
@@ -1338,11 +1351,11 @@ export async function readOptionTableGridFormats(
     resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
       ? Math.max(resolved.gridRange.endColumnIndex - startCol, 1)
       : Math.max(headerCells.length - (startCol - baseCol), 1);
+  const relColStart = startCol - baseCol;
 
   const readRow = (absRow: number): OptionTableGridCellInfo[] => {
     const relRow = absRow - baseRow;
     const rawCells = relRow >= 0 && relRow < rowData.length ? (rowData[relRow]?.values ?? []) : [];
-    const relColStart = startCol - baseCol;
     return Array.from({ length: width }, (_, offset) => {
       const cell = rawCells[relColStart + offset];
       return {
@@ -1355,6 +1368,10 @@ export async function readOptionTableGridFormats(
   };
 
   const headerRow = readRow(startRow).map((c) => c.formattedValue.trim());
+  const headerNotes = Array.from(
+    { length: width },
+    (_, offset) => headerCells[relColStart + offset]?.note ?? ''
+  );
   const maxRow =
     resolved.gridRange.endRowIndex !== undefined && resolved.gridRange.endRowIndex !== null
       ? resolved.gridRange.endRowIndex
@@ -1369,5 +1386,5 @@ export async function readOptionTableGridFormats(
     dataRows.push({ absRowIndex: absRow, cells });
   }
 
-  return { headerRow, dataRows };
+  return { headerRow, headerNotes, dataRows, sheetMerges };
 }

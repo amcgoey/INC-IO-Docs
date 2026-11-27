@@ -15,7 +15,11 @@ import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wi
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
-import { GoogleSheetsClient, type PositiveTableTarget } from '../../src/infrastructure/sheets';
+import {
+  GoogleSheetsClient,
+  columnIndexToLetter,
+  type PositiveTableTarget,
+} from '../../src/infrastructure/sheets';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
   getDocumentLogTestFolderId,
@@ -42,6 +46,12 @@ import {
 const sampleFixture = loadDocumentLogSampleFixture();
 
 const TEST_FOLDER_ID = getDocumentLogTestFolderId();
+
+function expectAliasesHeaderNote(note: string | undefined): void {
+  expect(note?.trim().length).toBeGreaterThan(0);
+  expect(note).toMatch(/""/);
+  expect(note).toMatch(/case-?sensitiv/i);
+}
 
 describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Trash)', () => {
   const cleanupIds: string[] = [];
@@ -1102,7 +1112,13 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         sheetsApi,
         optSpreadsheetId,
         initialSnapshots,
-        DEFAULT_LIVE_RETRY_OPTIONS
+        DEFAULT_LIVE_RETRY_OPTIONS,
+        { archHeaderBanner: `'${archContactsBinding.sheetName}'!A1:K2` }
+      );
+      const archHeaderBanner = initialValidationValues.archHeaderBanner;
+      expect(archHeaderBanner?.[0]?.[0]).toBe('Architecture Submittal Log Settings');
+      expect((archHeaderBanner?.[1] ?? []).map((c) => String(c ?? '').trim())).toContain(
+        'Specification Divisions'
       );
       expect(initialSnapshots[archContactsBinding.validationRangeName!].gridRange).toMatchObject({
         startColumnIndex: 6,
@@ -1145,6 +1161,15 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         endMarker: archContactsBinding.endMarker,
       });
       expect(templateContactsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      expectAliasesHeaderNote(templateContactsGrid.headerNotes[3]);
+      expect(templateContactsGrid.sheetMerges).toContainEqual(
+        expect.objectContaining({
+          startRowIndex: 1,
+          endRowIndex: 2,
+          startColumnIndex: 5,
+          endColumnIndex: 9,
+        })
+      );
       const templateDataRow = templateContactsGrid.dataRows.find((r) =>
         r.cells.some((c) => c.formattedValue.trim().length > 0)
       );
@@ -1405,8 +1430,8 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       expect(fxcRowOffset).toBeGreaterThan(0);
 
       const startRow = (contactsRange.gridRange.startRowIndex ?? 0) + 1;
-      const aliasesColLetter = String.fromCharCode(
-        65 + (contactsRange.gridRange.startColumnIndex ?? 0) + aliasesColOffset
+      const aliasesColLetter = columnIndexToLetter(
+        (contactsRange.gridRange.startColumnIndex ?? 0) + aliasesColOffset
       );
       await sheetsApi.spreadsheets.values.batchUpdate({
         spreadsheetId: spSpreadsheetId,
@@ -1792,6 +1817,29 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         endMarker: ffeSpecsBinding.endMarker,
       });
       expect(templateSpecsGrid.headerRow).toEqual(['Tag', 'Title', 'Aliases']);
+      expectAliasesHeaderNote(templateSpecsGrid.headerNotes[2]);
+      expect(templateSpecsGrid.sheetMerges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            startRowIndex: 1,
+            endRowIndex: 2,
+            startColumnIndex: 0,
+            endColumnIndex: 3,
+          }),
+          expect.objectContaining({
+            startRowIndex: 1,
+            endRowIndex: 2,
+            startColumnIndex: 3,
+            endColumnIndex: 7,
+          }),
+          expect.objectContaining({
+            startRowIndex: 1,
+            endRowIndex: 2,
+            startColumnIndex: 12,
+            endColumnIndex: 16,
+          }),
+        ])
+      );
       const templateSpecsRow = templateSpecsGrid.dataRows.find((r) =>
         r.cells.some((c) => c.formattedValue.trim().length > 0)
       );
@@ -1805,6 +1853,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         endMarker: ffeVendorsBinding.endMarker,
       });
       expect(templateVendorsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      expectAliasesHeaderNote(templateVendorsGrid.headerNotes[3]);
       const templateVendorsRow = templateVendorsGrid.dataRows.find((r) =>
         r.cells.some((c) => c.formattedValue.trim().length > 0)
       );
@@ -1818,6 +1867,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         endMarker: ffeContactsBinding.endMarker,
       });
       expect(templateContactsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      expectAliasesHeaderNote(templateContactsGrid.headerNotes[3]);
       const templateContactsRow = templateContactsGrid.dataRows.find((r) =>
         r.cells.some((c) => c.formattedValue.trim().length > 0)
       );
@@ -2223,7 +2273,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         });
         expect(rowOffset).toBeGreaterThan(0);
         const startRow = (snap.gridRange.startRowIndex ?? 0) + 1;
-        const colLetter = String.fromCharCode(65 + (snap.gridRange.startColumnIndex ?? 0) + aliasesCol);
+        const colLetter = columnIndexToLetter((snap.gridRange.startColumnIndex ?? 0) + aliasesCol);
         return `'${snap.sheetTitle}'!${colLetter}${startRow + rowOffset}`;
       };
 
