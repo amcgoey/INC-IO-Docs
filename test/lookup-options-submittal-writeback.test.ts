@@ -356,24 +356,28 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
         sheetId: 103,
         title: '_Config Submittal Arch',
         grid: [
-          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type', '', 'Division Number', 'Division Folder'].map(c),
-          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture and Design', 'INC', '', '01', '01 General Requirements'].map(c),
-          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', '', '', '03', '03 Concrete'].map(c),
-          ['---', '', '---', '', '', '', '', '', '', '', '', '07', '07 Thermal and Moisture Protection'].map(c),
-          ['', '', '', '', '', '', '', '', '', '', '', '08', '08 Openings'].map(c),
-          ['', '', '', '', '', '', '', '', '', '', '', '09', '09 Finishes'].map(c),
-          ['', '', '', '', '', '', '', '', '', '', '', '---', ''].map(c),
+          ['Submittal Arch Configuration', '', '', '', '', '', '', '', '', '', '', '', '', ''].map(c),
+          ['Statuses', '', 'Actions', '', '', '', '', 'Contacts', '', '', '', '', 'Specification Divisions', ''].map(c),
+          ['Status', '', 'Key', 'Name', 'Suffix', 'Order', '', 'Type', 'Key', 'Name', 'Aliases', '', 'Division Number', 'Division Folder'].map(c),
+          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC', 'INC Architecture and Design', '', '', '01', '01 General Requirements'].map(c),
+          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', '', '', '', '03', '03 Concrete'].map(c),
+          ['---', '', '---', '', '', '', '', '', '', '', '', '', '07', '07 Thermal and Moisture Protection'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '', '08', '08 Openings'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '', '09', '09 Finishes'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '', '---', ''].map(c),
         ],
       },
       {
         sheetId: 104,
         title: '_Config Submittal FF&E',
         grid: [
-          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type', '', 'Vendor', 'Name', 'Vendor Type', '', 'Spec Tag', 'Spec Title'].map(c),
-          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture & Design', 'INC', '', 'BM', 'Berman Falk', 'Casegoods', '', 'AC102', 'HOOK'].map(c),
-          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', 'PARTIAL', '', '', '', '---', '', '', '', 'CG104', 'BED - KING'].map(c),
-          ['---', '', '---', '', '', '', '', '---', '', '', '', '', '', '', '', 'FB127', 'FABRIC - LEATHER'].map(c),
-          ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '---', ''].map(c),
+          ['Submittal FF&E Configuration', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''].map(c),
+          ['Statuses', '', 'Actions', '', '', '', '', 'Contacts', '', '', '', '', 'Vendors', '', '', '', '', 'Specs', '', ''].map(c),
+          ['Status', '', 'Key', 'Name', 'Suffix', 'Order', '', 'Type', 'Key', 'Name', 'Aliases', '', 'Type', 'Key', 'Name', 'Aliases', '', 'Tag', 'Title', 'Aliases'].map(c),
+          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC', 'INC Architecture & Design', '', '', 'Casegoods', 'BM', 'Berman Falk', '', '', 'AC102', 'HOOK', ''].map(c),
+          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '', 'PARTIAL', '', '', '', '---', '', '', '', '', 'CG104', 'BED - KING', ''].map(c),
+          ['---', '', '---', '', '', '', '', '---', '', '', '', '', '', '', '', '', '', 'FB127', 'FABRIC - LEATHER', ''].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '---', '', ''].map(c),
         ],
       },
     ],
@@ -391,77 +395,77 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
       {
         namedRangeId: 'nr-arch-statuses',
         name: 'Options_Submittal_Arch_Statuses',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-arch-val-statuses',
         name: 'Validation_Submittal_Arch_Statuses',
-        range: { sheetId: 103, startRowIndex: 1, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 103, startRowIndex: 3, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-arch-actions',
         name: 'Options_Submittal_Arch_Actions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-arch-contacts',
         name: 'Options_Submittal_Arch_Contacts',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
       },
       {
         namedRangeId: 'nr-arch-val-contacts',
         name: 'Validation_Submittal_Arch_Contacts',
-        range: { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 7, endColumnIndex: 8 },
+        range: { sheetId: 103, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 8, endColumnIndex: 9 },
       },
       {
         namedRangeId: 'nr-arch-csi-divisions',
         name: 'Options_Submittal_Arch_CSI_Divisions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 7, startColumnIndex: 11, endColumnIndex: 13 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 9, startColumnIndex: 12, endColumnIndex: 14 },
       },
       {
         namedRangeId: 'nr-ffe-statuses',
         name: 'Options_Submittal_FFE_Statuses',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-ffe-val-statuses',
         name: 'Validation_Submittal_FFE_Statuses',
-        range: { sheetId: 104, startRowIndex: 1, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 104, startRowIndex: 3, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-ffe-actions',
         name: 'Options_Submittal_FFE_Actions',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-ffe-contacts',
         name: 'Options_Submittal_FFE_Contacts',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 7, endColumnIndex: 10 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 7, endColumnIndex: 11 },
       },
       {
         namedRangeId: 'nr-ffe-val-contacts',
         name: 'Validation_Submittal_FFE_Contacts',
-        range: { sheetId: 104, startRowIndex: 1, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 8 },
+        range: { sheetId: 104, startRowIndex: 3, endRowIndex: 5, startColumnIndex: 8, endColumnIndex: 9 },
       },
       {
         namedRangeId: 'nr-ffe-vendors',
         name: 'Options_Submittal_FFE_Vendors',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 11, endColumnIndex: 14 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 12, endColumnIndex: 16 },
       },
       {
         namedRangeId: 'nr-ffe-val-vendors',
         name: 'Validation_Submittal_FFE_Vendors',
-        range: { sheetId: 104, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 11, endColumnIndex: 12 },
+        range: { sheetId: 104, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 14, endColumnIndex: 15 },
       },
       {
         namedRangeId: 'nr-ffe-specs',
         name: 'Options_Submittal_FFE_Specs',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 5, startColumnIndex: 15, endColumnIndex: 17 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 7, startColumnIndex: 17, endColumnIndex: 20 },
       },
       {
         namedRangeId: 'nr-ffe-val-specs',
         name: 'Validation_Submittal_FFE_Specs',
-        range: { sheetId: 104, startRowIndex: 1, endRowIndex: 4, startColumnIndex: 15, endColumnIndex: 16 },
+        range: { sheetId: 104, startRowIndex: 3, endRowIndex: 6, startColumnIndex: 17, endColumnIndex: 18 },
       },
     ],
     batchUpdates: [],
@@ -728,20 +732,20 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     expect(
       configGrid
         .slice(contactsNr.range.startRowIndex, contactsNr.range.endRowIndex)
-        .map((r) => r.slice(7, 10).map((cell) => cell.value))
+        .map((r) => r.slice(7, 11).map((cell) => cell.value))
     ).toEqual([
-      ['Contact', 'Name', 'Contact Type'],
-      ['INC', 'INC Architecture and Design', 'INC'],
-      ['Acme Studio', 'Acme Studio', ''],
-      ['---', '', ''],
+      ['Type', 'Key', 'Name', 'Aliases'],
+      ['INC', 'INC', 'INC Architecture and Design', ''],
+      ['', 'Acme Studio', 'Acme Studio', ''],
+      ['---', '', '', ''],
     ]);
     // Neighboring Statuses & Actions did not shift
-    expect(configGrid[3][0].value).toBe('---');
-    expect(configGrid[3][2].value).toBe('---');
-    // Companion Validation_Submittal_Arch_Contacts extended from 1..2 to 1..3
+    expect(configGrid[5][0].value).toBe('---');
+    expect(configGrid[5][2].value).toBe('---');
+    // Companion Validation_Submittal_Arch_Contacts extended from 3..4 to 3..5
     expect(sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_Arch_Contacts')?.range).toMatchObject({
-      startRowIndex: 1,
-      endRowIndex: 3,
+      startRowIndex: 3,
+      endRowIndex: 5,
     });
     // Log_Submittal_Arch written in same atomic batchUpdate
     expect(sim.sheets[0].grid[5].slice(0, 7).map((c) => c.value)).toEqual([
@@ -810,35 +814,35 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     const ffeConfig = sim.sheets[3].grid;
     const ffeContactsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_FFE_Contacts')!;
     const ffeVendorsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_FFE_Vendors')!;
-    // Contacts: PARTIAL row preserves blank Name (no backfill when key selected), no extra row inserted, Contact Type still blank
+    // Contacts: PARTIAL row preserves blank Name (no backfill when key selected), no extra row inserted, Type still blank
     expect(
       ffeConfig
         .slice(ffeContactsNr.range.startRowIndex, ffeContactsNr.range.endRowIndex)
-        .map((r) => r.slice(7, 10).map((cell) => cell.value))
+        .map((r) => r.slice(7, 11).map((cell) => cell.value))
     ).toEqual([
-      ['Contact', 'Name', 'Contact Type'],
-      ['INC', 'INC Architecture & Design', 'INC'],
-      ['PARTIAL', '', ''],
-      ['---', '', ''],
+      ['Type', 'Key', 'Name', 'Aliases'],
+      ['INC', 'INC', 'INC Architecture & Design', ''],
+      ['', 'PARTIAL', '', ''],
+      ['---', '', '', ''],
     ]);
-    // Vendors: Zenith Custom inserted above '---', Vendor Type left blank
+    // Vendors: Zenith Custom inserted above '---', Type left blank
     expect(
       ffeConfig
         .slice(ffeVendorsNr.range.startRowIndex, ffeVendorsNr.range.endRowIndex)
-        .map((r) => r.slice(11, 14).map((cell) => cell.value))
+        .map((r) => r.slice(12, 16).map((cell) => cell.value))
     ).toEqual([
-      ['Vendor', 'Name', 'Vendor Type'],
-      ['BM', 'Berman Falk', 'Casegoods'],
-      ['Zenith Custom', 'Zenith Custom', ''],
-      ['---', '', ''],
+      ['Type', 'Key', 'Name', 'Aliases'],
+      ['Casegoods', 'BM', 'Berman Falk', ''],
+      ['', 'Zenith Custom', 'Zenith Custom', ''],
+      ['---', '', '', ''],
     ]);
     expect(sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_FFE_Contacts')?.range).toMatchObject({
-      startRowIndex: 1,
-      endRowIndex: 3,
+      startRowIndex: 3,
+      endRowIndex: 5,
     });
     expect(sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_FFE_Vendors')?.range).toMatchObject({
-      startRowIndex: 1,
-      endRowIndex: 3,
+      startRowIndex: 3,
+      endRowIndex: 5,
     });
   });
 
@@ -847,17 +851,18 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     const sim = createFullMultiSim(logId);
     // Make Options_Submittal_Arch_Contacts empty (Header + '---' only)
     const archCfg = sim.sheets[2].grid;
-    archCfg[1][7] = { value: '---' };
-    archCfg[1][8] = { value: '' };
-    archCfg[1][9] = { value: '' };
-    archCfg[2][7] = { value: '' };
-    sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_Arch_Contacts')!.range.endRowIndex = 2;
+    archCfg[3][7] = { value: '---' };
+    archCfg[3][8] = { value: '' };
+    archCfg[3][9] = { value: '' };
+    archCfg[3][10] = { value: '' };
+    archCfg[4][7] = { value: '' };
+    sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_Arch_Contacts')!.range.endRowIndex = 4;
     sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_Arch_Contacts')!.range = {
       sheetId: 103,
-      startRowIndex: 1,
-      endRowIndex: 2,
-      startColumnIndex: 7,
-      endColumnIndex: 8,
+      startRowIndex: 3,
+      endRowIndex: 4,
+      startColumnIndex: 8,
+      endColumnIndex: 9,
     };
 
     const tmplFormat = { textFormat: { fontFamily: 'Inter', fontSize: 9 }, backgroundColor: { red: 1, green: 1, blue: 1 } };
@@ -868,13 +873,16 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
           sheetId: 903,
           title: '_Config Submittal Arch',
           grid: [
-            [{ value: 'Contact' }, { value: 'Name' }, { value: 'Contact Type' }],
+            [{ value: 'Submittal Arch Configuration' }, { value: '' }, { value: '' }, { value: '' }],
+            [{ value: 'Contacts' }, { value: '' }, { value: '' }, { value: '' }],
+            [{ value: 'Type' }, { value: 'Key' }, { value: 'Name' }, { value: 'Aliases' }],
             [
               { value: 'INC', userEnteredFormat: tmplFormat },
-              { value: 'INC Architecture and Design', userEnteredFormat: tmplFormat },
               { value: 'INC', userEnteredFormat: tmplFormat },
+              { value: 'INC Architecture and Design', userEnteredFormat: tmplFormat },
+              { value: '', userEnteredFormat: tmplFormat },
             ],
-            [{ value: '---' }, { value: '' }, { value: '' }],
+            [{ value: '---' }, { value: '' }, { value: '' }, { value: '' }],
           ],
         },
       ],
@@ -882,7 +890,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
         {
           namedRangeId: 'tmpl-contacts',
           name: 'Options_Submittal_Arch_Contacts',
-          range: { sheetId: 903, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 3 },
+          range: { sheetId: 903, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 4 },
         },
       ],
       batchUpdates: [],
@@ -931,16 +939,17 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
 
     expect(submitRes.statusCode).toBe(200);
     expect(sim.batchUpdates).toHaveLength(1);
-    expect(sim.sheets[2].grid[1][7]).toEqual({ value: 'FirstContact', userEnteredFormat: tmplFormat });
-    expect(sim.sheets[2].grid[1][8]).toEqual({ value: 'FirstContact', userEnteredFormat: tmplFormat });
-    expect(sim.sheets[2].grid[1][9]).toEqual({ value: '', userEnteredFormat: tmplFormat });
+    expect(sim.sheets[2].grid[3][7]).toEqual({ value: '', userEnteredFormat: tmplFormat });
+    expect(sim.sheets[2].grid[3][8]).toEqual({ value: 'FirstContact', userEnteredFormat: tmplFormat });
+    expect(sim.sheets[2].grid[3][9]).toEqual({ value: 'FirstContact', userEnteredFormat: tmplFormat });
+    expect(sim.sheets[2].grid[3][10]).toEqual({ value: '', userEnteredFormat: tmplFormat });
   });
 
   it('fails fast with config_error before MOVE_FILE or log mutation when target _Config table lacks "---" across Workspace Addon and POST /documents', async () => {
     const brokenLogId = 'log-broken-361';
     const brokenSim = createFullMultiSim(brokenLogId);
     // Remove '---' from Options_Submittal_Arch_Contacts
-    brokenSim.sheets[2].grid[2][7] = { value: '' };
+    brokenSim.sheets[2].grid[4][7] = { value: '' };
     mountSpreadsheetNock(brokenSim);
     nock('https://www.googleapis.com')
       .persist()

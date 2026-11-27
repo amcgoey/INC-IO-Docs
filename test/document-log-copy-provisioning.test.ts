@@ -27,7 +27,7 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
 
   const statusesRows = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['---']];
   const actionsRows = [
-    ['Action', 'Name', 'Suffix', 'Order'],
+    ['Key', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
     ['REF', 'Referred', '_REF', '2'],
     ['NR', 'Not Reviewed', '_NR', '3'],
@@ -64,12 +64,12 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
       {
         namedRangeId: 'nr-arch-statuses',
         name: 'Options_Submittal_Arch_Statuses',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 8, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-arch-actions',
         name: 'Options_Submittal_Arch_Actions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 11, startColumnIndex: 2, endColumnIndex: 6 },
       },
     ],
   });
@@ -105,7 +105,7 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
       spreadsheetId,
       valueRanges: ranges.map((r) => ({
         range: r,
-        values: r.includes('A1:') ? statusesRows : actionsRows,
+        values: r.includes('A3:') ? statusesRows : actionsRows,
       })),
     };
   });

@@ -598,42 +598,42 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
           {
             namedRangeId: 'nr-arch-statuses',
             name: 'Options_Submittal_Arch_Statuses',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
           },
           {
             namedRangeId: 'nr-arch-actions',
             name: 'Options_Submittal_Arch_Actions',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 2, endColumnIndex: 6 },
           },
           {
             namedRangeId: 'nr-arch-contacts',
             name: 'Options_Submittal_Arch_Contacts',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
           },
           {
             namedRangeId: 'nr-ffe-statuses',
             name: 'Options_Submittal_FFE_Statuses',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
           },
           {
             namedRangeId: 'nr-ffe-actions',
             name: 'Options_Submittal_FFE_Actions',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 2, endColumnIndex: 6 },
           },
           {
             namedRangeId: 'nr-ffe-contacts',
             name: 'Options_Submittal_FFE_Contacts',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
           },
           {
             namedRangeId: 'nr-ffe-vendors',
             name: 'Options_Submittal_FFE_Vendors',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 11, endColumnIndex: 14 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 11, endColumnIndex: 15 },
           },
           {
             namedRangeId: 'nr-ffe-specs',
             name: 'Options_Submittal_FFE_Specs',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 15, endColumnIndex: 18 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 15, endColumnIndex: 18 },
           },
         ],
       });
@@ -646,44 +646,44 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
         return {
           spreadsheetId: LOG_ID,
           valueRanges: requestedRanges.map((range) => {
-            if (range.includes('A1:A3')) {
+            if (range.includes('A3:A5')) {
               return { range, values: [['Status'], ['Open'], ['---']] };
             }
-            if (range.includes('C1:F3')) {
+            if (range.includes('C3:F5')) {
               return {
                 range,
                 values: [
-                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['Key', 'Name', 'Suffix', 'Order'],
                   ['REC', 'Received', '', '1'],
                   ['---', '', '', ''],
                 ],
               };
             }
-            if (range.includes('H1:J3')) {
+            if (range.includes('H3:K5')) {
               return {
                 range,
                 values: [
-                  ['Contact', 'Name', 'Aliases'],
-                  ['CUST', 'Custom Studio', '"Custom ""Studio"", Inc.", @custom-studio.com'],
-                  ['---', '', ''],
+                  ['Type', 'Key', 'Name', 'Aliases'],
+                  ['', 'CUST', 'Custom Studio', '"Custom ""Studio"", Inc.", @custom-studio.com'],
+                  ['', '---', '', ''],
                 ],
               };
             }
-            if (range.includes('L1:N3')) {
+            if (range.includes('L3:O5')) {
               return {
                 range,
                 values: [
-                  ['Vendor', 'Name', 'Aliases'],
-                  ['CUSTV', 'Custom Millwork Corp', '"Custom ""Design"", LLC", Custom Design'],
-                  ['---', '', ''],
+                  ['Type', 'Key', 'Name', 'Aliases'],
+                  ['', 'CUSTV', 'Custom Millwork Corp', '"Custom ""Design"", LLC", Custom Design'],
+                  ['', '---', '', ''],
                 ],
               };
             }
-            if (range.includes('P1:R3')) {
+            if (range.includes('P3:R5')) {
               return {
                 range,
                 values: [
-                  ['Spec Tag', 'Spec Title', 'Aliases'],
+                  ['Tag', 'Title', 'Aliases'],
                   ['CG104', 'BED - KING', 'XY999, CG-104X'],
                   ['---', '', ''],
                 ],

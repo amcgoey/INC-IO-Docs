@@ -173,7 +173,7 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
   ];
 
   const CONFIG_ACTIONS = [
-    ['Action', 'Name', 'Suffix', 'Order'],
+    ['Key', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
     ['REF', 'Referred', '_REF', '2'],
     ['NR', 'Not Reviewed', '_NR', '3'],
@@ -185,45 +185,45 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
   ];
 
   const CONFIG_ARCH_CONTACTS = [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture and Design', 'INC'],
-    ['PMG', 'Pavarini McGovern', 'Contractor'],
-    ['FXC', 'FX Collaborative', 'Architect'],
-    ['IE', 'Interface Engineering', 'MEP'],
-    ['VLD', 'Ventresca Lighting Design', 'Lighting'],
-    ['TT', 'Thornton Tomasetti', 'Structural'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['INC', 'INC', 'INC Architecture and Design', ''],
+    ['Contractor', 'PMG', 'Pavarini McGovern', ''],
+    ['Architect', 'FXC', 'FX Collaborative', ''],
+    ['MEP', 'IE', 'Interface Engineering', ''],
+    ['Lighting', 'VLD', 'Ventresca Lighting Design', ''],
+    ['Structural', 'TT', 'Thornton Tomasetti', ''],
+    ['', '---', '', ''],
   ];
 
   const CONFIG_FFE_CONTACTS = [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture & Design', 'INC'],
-    ['BW', 'Benjamin West', 'Procurement'],
-    ['VLD', 'Ventresca Lighting Design', 'Lighting'],
-    ['IHG', 'IHG Hotels & Resorts', 'Brand'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['INC', 'INC', 'INC Architecture & Design', ''],
+    ['Procurement', 'BW', 'Benjamin West', ''],
+    ['Lighting', 'VLD', 'Ventresca Lighting Design', ''],
+    ['Brand', 'IHG', 'IHG Hotels & Resorts', ''],
+    ['', '---', '', ''],
   ];
 
   const CONFIG_FFE_VENDORS = [
-    ['Vendor', 'Name', 'Vendor Type'],
-    ['BM', 'Berman Falk', 'Casegoods'],
-    ['AL', 'Ashley Lighting', 'Lighting'],
-    ['Carn', 'Carnegie', 'Fabric'],
-    ['Delta', 'Delta', 'Fabric'],
-    ['FDT', 'Fil Doux Textiles', 'Fabric'],
-    ['LA', 'Light Annex', 'Lighting'],
-    ['MH', 'Mohawk', 'Fabric'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['Casegoods', 'BM', 'Berman Falk', ''],
+    ['Lighting', 'AL', 'Ashley Lighting', ''],
+    ['Fabric', 'Carn', 'Carnegie', ''],
+    ['Fabric', 'Delta', 'Delta', ''],
+    ['Fabric', 'FDT', 'Fil Doux Textiles', ''],
+    ['Lighting', 'LA', 'Light Annex', ''],
+    ['Fabric', 'MH', 'Mohawk', ''],
+    ['', '---', '', ''],
   ];
 
   const CONFIG_FFE_SPECS = [
-    ['Spec Tag', 'Spec Title'],
-    ['AC102', 'HOOK'],
-    ['CG104', 'BED - KING'],
-    ['FB127', 'FABRIC - LEATHER'],
-    ['LT159A', 'SCONCE - CORRIDOR'],
-    ['LT159B', 'SCONCE - CORRIDOR'],
-    ['---', ''],
+    ['Tag', 'Title', 'Aliases'],
+    ['AC102', 'HOOK', ''],
+    ['CG104', 'BED - KING', ''],
+    ['FB127', 'FABRIC - LEATHER', ''],
+    ['LT159A', 'SCONCE - CORRIDOR', ''],
+    ['LT159B', 'SCONCE - CORRIDOR', ''],
+    ['---', '', ''],
   ];
 
   function buildConfigOptionBatchGetReply(uri: string) {
@@ -231,16 +231,16 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
     return {
       valueRanges: requestedRanges.map((range) => {
         if (range.includes('_Config Submittal Arch')) {
-          if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
-          if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
-          if (range.includes('H1:J')) return { range, values: CONFIG_ARCH_CONTACTS };
+          if (range.includes('A3:A')) return { range, values: CONFIG_STATUSES };
+          if (range.includes('C3:F')) return { range, values: CONFIG_ACTIONS };
+          if (range.includes('H3:K')) return { range, values: CONFIG_ARCH_CONTACTS };
         }
         if (range.includes('_Config Submittal FF&E')) {
-          if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
-          if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
-          if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACTS };
-          if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDORS };
-          if (range.includes('P1:')) return { range, values: CONFIG_FFE_SPECS };
+          if (range.includes('A3:A')) return { range, values: CONFIG_STATUSES };
+          if (range.includes('C3:F')) return { range, values: CONFIG_ACTIONS };
+          if (range.includes('H3:K')) return { range, values: CONFIG_FFE_CONTACTS };
+          if (range.includes('M3:P')) return { range, values: CONFIG_FFE_VENDORS };
+          if (range.includes('R3:T')) return { range, values: CONFIG_FFE_SPECS };
         }
         return { range, values: [] };
       }),
@@ -280,72 +280,72 @@ describe('Workspace-to-Drive E2E Integration (Ticket #171 Tracer Bullet)', () =>
         {
           namedRangeId: 'nr-arch-statuses',
           name: 'Options_Submittal_Arch_Statuses',
-          range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
+          range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
         },
         {
           namedRangeId: 'nr-arch-statuses-val',
           name: 'Validation_Submittal_Arch_Statuses',
-          range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_STATUSES.length - 1, startColumnIndex: 0, endColumnIndex: 1 },
+          range: { sheetId: 103, startRowIndex: 3, endRowIndex: 2 + CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
         },
         {
           namedRangeId: 'nr-arch-actions',
           name: 'Options_Submittal_Arch_Actions',
-          range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
+          range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
         },
         {
           namedRangeId: 'nr-arch-contacts',
           name: 'Options_Submittal_Arch_Contacts',
-          range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 10 },
+          range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + CONFIG_ARCH_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 11 },
         },
         {
           namedRangeId: 'nr-arch-contacts-val',
           name: 'Validation_Submittal_Arch_Contacts',
-          range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_ARCH_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+          range: { sheetId: 103, startRowIndex: 3, endRowIndex: 2 + CONFIG_ARCH_CONTACTS.length - 1, startColumnIndex: 8, endColumnIndex: 9 },
         },
         {
           namedRangeId: 'nr-ffe-statuses',
           name: 'Options_Submittal_FFE_Statuses',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
+          range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
         },
         {
           namedRangeId: 'nr-ffe-statuses-val',
           name: 'Validation_Submittal_FFE_Statuses',
-          range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_STATUSES.length - 1, startColumnIndex: 0, endColumnIndex: 1 },
+          range: { sheetId: 104, startRowIndex: 3, endRowIndex: 2 + CONFIG_STATUSES.length, startColumnIndex: 0, endColumnIndex: 1 },
         },
         {
           namedRangeId: 'nr-ffe-actions',
           name: 'Options_Submittal_FFE_Actions',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
+          range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_ACTIONS.length, startColumnIndex: 2, endColumnIndex: 6 },
         },
         {
           namedRangeId: 'nr-ffe-contacts',
           name: 'Options_Submittal_FFE_Contacts',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 10 },
+          range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_FFE_CONTACTS.length, startColumnIndex: 7, endColumnIndex: 11 },
         },
         {
           namedRangeId: 'nr-ffe-contacts-val',
           name: 'Validation_Submittal_FFE_Contacts',
-          range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+          range: { sheetId: 104, startRowIndex: 3, endRowIndex: 2 + CONFIG_FFE_CONTACTS.length - 1, startColumnIndex: 8, endColumnIndex: 9 },
         },
         {
           namedRangeId: 'nr-ffe-vendors',
           name: 'Options_Submittal_FFE_Vendors',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_VENDORS.length, startColumnIndex: 11, endColumnIndex: 14 },
+          range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_FFE_VENDORS.length, startColumnIndex: 12, endColumnIndex: 16 },
         },
         {
           namedRangeId: 'nr-ffe-vendors-val',
           name: 'Validation_Submittal_FFE_Vendors',
-          range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_VENDORS.length - 1, startColumnIndex: 11, endColumnIndex: 12 },
+          range: { sheetId: 104, startRowIndex: 3, endRowIndex: 2 + CONFIG_FFE_VENDORS.length - 1, startColumnIndex: 14, endColumnIndex: 15 },
         },
         {
           namedRangeId: 'nr-ffe-specs',
           name: 'Options_Submittal_FFE_Specs',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_SPECS.length, startColumnIndex: 15, endColumnIndex: 17 },
+          range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_FFE_SPECS.length, startColumnIndex: 17, endColumnIndex: 20 },
         },
         {
           namedRangeId: 'nr-ffe-specs-val',
           name: 'Validation_Submittal_FFE_Specs',
-          range: { sheetId: 104, startRowIndex: 1, endRowIndex: CONFIG_FFE_SPECS.length - 1, startColumnIndex: 15, endColumnIndex: 16 },
+          range: { sheetId: 104, startRowIndex: 3, endRowIndex: 2 + CONFIG_FFE_SPECS.length - 1, startColumnIndex: 17, endColumnIndex: 18 },
         },
       ],
     });

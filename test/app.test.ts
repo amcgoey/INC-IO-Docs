@@ -23,13 +23,15 @@ import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
 
-function createArchOptionTablesSheetsMock(
+function createSubmittalOptionTablesSheetsMock(
   manifestPath: string,
   options?: {
     getTables?: (spreadsheetId: string) => {
-      statuses: string[][];
-      actions: string[][];
+      statuses?: string[][];
+      actions?: string[][];
       contacts?: string[][];
+      vendors?: string[][];
+      specs?: string[][];
       csiDivisions?: string[][];
     };
   }
@@ -40,7 +42,7 @@ function createArchOptionTablesSheetsMock(
 } {
   const defaultStatuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['Billed'], ['---']];
   const defaultActions = [
-    ['Action', 'Name', 'Suffix', 'Order'],
+    ['Key', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
     ['REF', 'Referred', '_REF', '2'],
     ['NR', 'Not Reviewed', '_NR', '3'],
@@ -51,9 +53,22 @@ function createArchOptionTablesSheetsMock(
     ['---', '', '', ''],
   ];
   const defaultContacts = [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture and Design', 'INC'],
-    ['PMG', 'Pavarini McGovern', 'Contractor'],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['INC', 'INC', 'INC Architecture & Design', ''],
+    ['Contractor', 'PMG', 'Pavarini McGovern', ''],
+    ['Procurement', 'BW', 'Benjamin West', ''],
+    ['', '---', '', ''],
+  ];
+  const defaultVendors = [
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['Casegoods', 'BM', 'Berman Falk', ''],
+    ['Lighting', 'AL', 'Ashley Lighting', ''],
+    ['', '---', '', ''],
+  ];
+  const defaultSpecs = [
+    ['Tag', 'Title', 'Aliases'],
+    ['AC102', 'HOOK', ''],
+    ['CG104', 'BED - KING', ''],
     ['---', '', ''],
   ];
   const defaultCsiDivisions = [
@@ -64,21 +79,28 @@ function createArchOptionTablesSheetsMock(
     ['---', ''],
   ];
 
-  const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
-    const tables = options?.getTables?.(spreadsheetId) ?? {
-      statuses: defaultStatuses,
-      actions: defaultActions,
-      contacts: defaultContacts,
-      csiDivisions: defaultCsiDivisions,
+  const resolveTables = (spreadsheetId: string) => {
+    const overrides = options?.getTables?.(spreadsheetId);
+    return {
+      statuses: overrides?.statuses ?? defaultStatuses,
+      actions: overrides?.actions ?? defaultActions,
+      contacts: overrides?.contacts ?? defaultContacts,
+      vendors: overrides?.vendors ?? defaultVendors,
+      specs: overrides?.specs ?? defaultSpecs,
+      csiDivisions: overrides?.csiDivisions ?? defaultCsiDivisions,
     };
-    const contacts = tables.contacts ?? defaultContacts;
-    const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
+  };
+
+  const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
+    const tables = resolveTables(spreadsheetId);
     return {
       data: {
         spreadsheetId,
         sheets: [
           { properties: { sheetId: 101, title: 'Submittal Arch' } },
+          { properties: { sheetId: 102, title: 'Submittal FF&E' } },
           { properties: { sheetId: 103, title: '_Config Submittal Arch' } },
+          { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
         ],
         namedRanges: [
           {
@@ -93,12 +115,23 @@ function createArchOptionTablesSheetsMock(
             },
           },
           {
+            namedRangeId: 'nr-ffe-log',
+            name: 'Log_Submittal_FFE',
+            range: {
+              sheetId: 102,
+              startRowIndex: 2,
+              endRowIndex: 10,
+              startColumnIndex: 0,
+              endColumnIndex: 11,
+            },
+          },
+          {
             namedRangeId: 'nr-statuses',
             name: 'Options_Submittal_Arch_Statuses',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: tables.statuses.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.statuses.length,
               startColumnIndex: 0,
               endColumnIndex: 1,
             },
@@ -108,8 +141,8 @@ function createArchOptionTablesSheetsMock(
             name: 'Options_Submittal_Arch_Actions',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: tables.actions.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.actions.length,
               startColumnIndex: 2,
               endColumnIndex: 6,
             },
@@ -119,10 +152,10 @@ function createArchOptionTablesSheetsMock(
             name: 'Options_Submittal_Arch_Contacts',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: contacts.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.contacts.length,
               startColumnIndex: 7,
-              endColumnIndex: 10,
+              endColumnIndex: 11,
             },
           },
           {
@@ -130,10 +163,65 @@ function createArchOptionTablesSheetsMock(
             name: 'Options_Submittal_Arch_CSI_Divisions',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: csiDivisions.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.csiDivisions.length,
               startColumnIndex: 11,
               endColumnIndex: 13,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-statuses',
+            name: 'Options_Submittal_FFE_Statuses',
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.statuses.length,
+              startColumnIndex: 0,
+              endColumnIndex: 1,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-actions',
+            name: 'Options_Submittal_FFE_Actions',
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.actions.length,
+              startColumnIndex: 2,
+              endColumnIndex: 6,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-contacts',
+            name: 'Options_Submittal_FFE_Contacts',
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.contacts.length,
+              startColumnIndex: 7,
+              endColumnIndex: 11,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-vendors',
+            name: 'Options_Submittal_FFE_Vendors',
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.vendors.length,
+              startColumnIndex: 11,
+              endColumnIndex: 15,
+            },
+          },
+          {
+            namedRangeId: 'nr-ffe-specs',
+            name: 'Options_Submittal_FFE_Specs',
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + tables.specs.length,
+              startColumnIndex: 15,
+              endColumnIndex: 18,
             },
           },
         ],
@@ -143,27 +231,29 @@ function createArchOptionTablesSheetsMock(
 
   const batchGetSpy = vi.fn().mockImplementation(
     async ({ spreadsheetId, ranges }: { spreadsheetId: string; ranges?: string[] }) => {
-      const tables = options?.getTables?.(spreadsheetId) ?? {
-        statuses: defaultStatuses,
-        actions: defaultActions,
-        contacts: defaultContacts,
-        csiDivisions: defaultCsiDivisions,
-      };
-      const contacts = tables.contacts ?? defaultContacts;
-      const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
+      const tables = resolveTables(spreadsheetId);
       return {
         data: {
           spreadsheetId,
-          valueRanges: (ranges ?? []).map((r) => ({
-            range: r,
-            values: r.includes('A1:')
-              ? tables.statuses
-              : r.includes('C1:')
-                ? tables.actions
-                : r.includes('L1:')
-                  ? csiDivisions
-                  : contacts,
-          })),
+          valueRanges: (ranges ?? []).map((r) => {
+            const isArch = r.includes('_Config Submittal Arch');
+            const isFfe = r.includes('_Config Submittal FF&E');
+            let values: string[][] = [];
+            if (r.includes('!A3:')) {
+              values = tables.statuses;
+            } else if (r.includes('!C3:')) {
+              values = tables.actions;
+            } else if (r.includes('!H3:')) {
+              values = tables.contacts;
+            } else if (isArch && r.includes('!L3:')) {
+              values = tables.csiDivisions;
+            } else if (isFfe && r.includes('!L3:')) {
+              values = tables.vendors;
+            } else if (isFfe && r.includes('!P3:')) {
+              values = tables.specs;
+            }
+            return { range: r, values };
+          }),
         },
       };
     }
@@ -185,120 +275,6 @@ function createArchOptionTablesSheetsMock(
   });
 
   return { sheetsClient, getSpy, batchGetSpy };
-}
-
-function createFfeOptionTablesSheetsMock(manifestPath: string): {
-  sheetsClient: GoogleSheetsClient;
-} {
-  const statuses = [['Status'], ['Open'], ['Closed'], ['Waiting'], ['Manager'], ['Billed'], ['---']];
-  const actions = [
-    ['Action', 'Name', 'Suffix', 'Order'],
-    ['REC', 'Received', '', '1'],
-    ['REF', 'Referred', '_REF', '2'],
-    ['NR', 'Not Reviewed', '_NR', '3'],
-    ['REJ', 'Rejected', '_REJ', '4'],
-    ['RR', 'Revise & Resubmit', '_RR', '5'],
-    ['NOC', 'No Objections As Corrected', '_NOC', '6'],
-    ['NET', 'No Exceptions Taken', '_NET', '7'],
-    ['---', '', '', ''],
-  ];
-  const contacts = [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture & Design', 'INC'],
-    ['BW', 'Benjamin West', 'Procurement'],
-    ['---', '', ''],
-  ];
-  const vendors = [
-    ['Vendor', 'Name', 'Vendor Type'],
-    ['BM', 'Berman Falk', 'Casegoods'],
-    ['AL', 'Ashley Lighting', 'Lighting'],
-    ['---', '', ''],
-  ];
-  const specs = [
-    ['Spec Tag', 'Spec Title'],
-    ['AC102', 'HOOK'],
-    ['CG104', 'BED - KING'],
-    ['---', ''],
-  ];
-
-  const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => ({
-    data: {
-      spreadsheetId,
-      sheets: [
-        { properties: { sheetId: 102, title: 'Submittal FF&E' } },
-        { properties: { sheetId: 104, title: '_Config Submittal FF&E' } },
-      ],
-      namedRanges: [
-        {
-          namedRangeId: 'nr-ffe-log',
-          name: 'Log_Submittal_FFE',
-          range: { sheetId: 102, startRowIndex: 2, endRowIndex: 10, startColumnIndex: 0, endColumnIndex: 11 },
-        },
-        {
-          namedRangeId: 'nr-ffe-statuses',
-          name: 'Options_Submittal_FFE_Statuses',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: statuses.length, startColumnIndex: 0, endColumnIndex: 1 },
-        },
-        {
-          namedRangeId: 'nr-ffe-actions',
-          name: 'Options_Submittal_FFE_Actions',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: actions.length, startColumnIndex: 2, endColumnIndex: 6 },
-        },
-        {
-          namedRangeId: 'nr-ffe-contacts',
-          name: 'Options_Submittal_FFE_Contacts',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: contacts.length, startColumnIndex: 7, endColumnIndex: 10 },
-        },
-        {
-          namedRangeId: 'nr-ffe-vendors',
-          name: 'Options_Submittal_FFE_Vendors',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: vendors.length, startColumnIndex: 11, endColumnIndex: 14 },
-        },
-        {
-          namedRangeId: 'nr-ffe-specs',
-          name: 'Options_Submittal_FFE_Specs',
-          range: { sheetId: 104, startRowIndex: 0, endRowIndex: specs.length, startColumnIndex: 15, endColumnIndex: 17 },
-        },
-      ],
-    },
-  }));
-
-  const batchGetSpy = vi.fn().mockImplementation(
-    async ({ spreadsheetId, ranges }: { spreadsheetId: string; ranges?: string[] }) => ({
-      data: {
-        spreadsheetId,
-        valueRanges: (ranges ?? []).map((r) => ({
-          range: r,
-          values: r.includes('A1:')
-            ? statuses
-            : r.includes('C1:')
-              ? actions
-              : r.includes('H1:')
-                ? contacts
-                : r.includes('P1:')
-                  ? specs
-                  : vendors,
-        })),
-      },
-    })
-  );
-
-  const sheetsClient = new GoogleSheetsClient({
-    sheets: {
-      spreadsheets: {
-        get: getSpy,
-        batchUpdate: vi.fn().mockResolvedValue({ data: {} }),
-        values: {
-          get: vi.fn().mockResolvedValue({ data: { values: [] } }),
-          batchGet: batchGetSpy,
-          update: vi.fn().mockResolvedValue({ data: {} }),
-        },
-      },
-    } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>,
-    configProvider: new AppManifestProvider({ manifestPath }),
-  });
-
-  return { sheetsClient };
 }
 
 describe('App integration tests', () => {
@@ -854,7 +830,7 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath);
+      const { sheetsClient } = createSubmittalOptionTablesSheetsMock(manifestPath);
       const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
         {
           id: 'arch-log-app-1',
@@ -1042,7 +1018,7 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath);
+      const { sheetsClient } = createSubmittalOptionTablesSheetsMock(manifestPath);
       const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
         {
           id: 'arch-log-app-guard',
@@ -1202,7 +1178,7 @@ describe('App integration tests', () => {
       };
 
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const { sheetsClient } = createFfeOptionTablesSheetsMock(manifestPath);
+      const { sheetsClient } = createSubmittalOptionTablesSheetsMock(manifestPath);
       const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
         {
           id: 'ffe-log-app-1',
@@ -2408,11 +2384,11 @@ describe('App integration tests', () => {
       };
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
       let phase = 1;
-      const { sheetsClient, getSpy, batchGetSpy } = createArchOptionTablesSheetsMock(manifestPath, {
+      const { sheetsClient, getSpy, batchGetSpy } = createSubmittalOptionTablesSheetsMock(manifestPath, {
         getTables: () => ({
           statuses: phase === 1 ? [['Status'], ['Open'], ['---']] : [['Status'], ['Closed'], ['---']],
           actions: [
-            ['Name', 'Order', 'Action', 'Suffix'],
+            ['Name', 'Order', 'Key', 'Suffix'],
             ['No Objections As Corrected', '6', 'NOC', '_NOC'],
             ['---', '', '', ''],
           ],
@@ -2550,11 +2526,11 @@ describe('App integration tests', () => {
         dispatch: vi.fn().mockResolvedValue(undefined),
       };
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath, {
+      const { sheetsClient } = createSubmittalOptionTablesSheetsMock(manifestPath, {
         getTables: () => ({
           statuses: [['Status'], ['Open'], ['---']],
           actions: [
-            ['Action', 'Name', 'Suffix', 'Order'],
+            ['Key', 'Name', 'Suffix', 'Order'],
             ['REC', 'Received', '', '1'],
             ['---', '', '', ''],
           ],
@@ -2617,13 +2593,13 @@ describe('App integration tests', () => {
 
     it('POST /documents on ambiguous DocumentSpace resolves option validation from candidates[0] while WRITE_LOG still rejects ambiguous_log (#358)', async () => {
       const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
-      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath, {
+      const { sheetsClient } = createSubmittalOptionTablesSheetsMock(manifestPath, {
         getTables: (spreadsheetId) =>
           spreadsheetId === 'log-candidate-0'
             ? {
                 statuses: [['Status'], ['Open'], ['---']],
                 actions: [
-                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['Key', 'Name', 'Suffix', 'Order'],
                   ['REC', 'Received', '', '1'],
                   ['---', '', '', ''],
                 ],
@@ -2631,7 +2607,7 @@ describe('App integration tests', () => {
             : {
                 statuses: [['Status'], ['Closed'], ['---']],
                 actions: [
-                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['Key', 'Name', 'Suffix', 'Order'],
                   ['NET', 'No Exceptions Taken', '_NET', '7'],
                   ['---', '', '', ''],
                 ],

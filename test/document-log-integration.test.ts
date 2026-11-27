@@ -487,7 +487,7 @@ const CONFIG_STATUSES: SimCellValue[][] = [
 ];
 
 const CONFIG_ACTIONS: SimCellValue[][] = [
-  ['Action', 'Name', 'Suffix', 'Order'],
+  ['Key', 'Name', 'Suffix', 'Order'],
   ['REC', 'Received', '', '1'],
   ['REF', 'Referred', '_REF', '2'],
   ['NR', 'Not Reviewed', '_NR', '3'],
@@ -499,21 +499,21 @@ const CONFIG_ACTIONS: SimCellValue[][] = [
 ];
 
 const CONFIG_ARCH_CONTACTS: SimCellValue[][] = [
-  ['Contact', 'Name', 'Contact Type'],
-  ['INC', 'INC Architecture and Design', 'INC'],
-  ['PMG', 'Pavarini McGovern', 'Contractor'],
-  ['FXC', 'FX Collaborative', 'Architect'],
-  ['IE', 'Interface Engineering', 'MEP'],
-  ['VLD', 'Ventresca Lighting Design', 'Lighting'],
-  ['TT', 'Thornton Tomasetti', 'Structural'],
-  ['ARC', 'Apex Architecture Studio', 'Architect'],
-  ['MB', 'Meridian Builders', 'Contractor'],
-  ['SME', 'Summit MEP Engineers', 'MEP'],
-  ['PST', 'Pillar Structural Consultants', 'Structural'],
-  ['LMD', 'Lumen Lighting Design', 'Lighting'],
-  ['HPG', 'Harbor Procurement Group', 'Procurement'],
-  ['OBR', 'Oceanview Brand Standards', 'Brand'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['INC', 'INC', 'INC Architecture and Design', ''],
+  ['Contractor', 'PMG', 'Pavarini McGovern', ''],
+  ['Architect', 'FXC', 'FX Collaborative', ''],
+  ['MEP', 'IE', 'Interface Engineering', ''],
+  ['Lighting', 'VLD', 'Ventresca Lighting Design', ''],
+  ['Structural', 'TT', 'Thornton Tomasetti', ''],
+  ['Architect', 'ARC', 'Apex Architecture Studio', ''],
+  ['Contractor', 'MB', 'Meridian Builders', ''],
+  ['MEP', 'SME', 'Summit MEP Engineers', ''],
+  ['Structural', 'PST', 'Pillar Structural Consultants', ''],
+  ['Lighting', 'LMD', 'Lumen Lighting Design', ''],
+  ['Procurement', 'HPG', 'Harbor Procurement Group', ''],
+  ['Brand', 'OBR', 'Oceanview Brand Standards', ''],
+  ['---', '', '', ''],
 ];
 
 const CONFIG_ARCH_CSI_DIVISIONS: SimCellValue[][] = [
@@ -545,48 +545,48 @@ function createStaticCsiDivisionsOptionTablePort(): DocumentOptionTablePort {
 }
 
 const CONFIG_FFE_CONTACTS: SimCellValue[][] = [
-  ['Contact', 'Name', 'Contact Type'],
-  ['INC', 'INC Architecture & Design', 'INC'],
-  ['BW', 'Benjamin West', 'Procurement'],
-  ['VLD', 'Ventresca Lighting Design', 'Lighting'],
-  ['IHG', 'IHG Hotels & Resorts', 'Brand'],
-  ['ARC', 'Apex Architecture Studio', 'Architect'],
-  ['MB', 'Meridian Builders', 'Contractor'],
-  ['SME', 'Summit MEP Engineers', 'MEP'],
-  ['PST', 'Pillar Structural Consultants', 'Structural'],
-  ['LMD', 'Lumen Lighting Design', 'Lighting'],
-  ['HPG', 'Harbor Procurement Group', 'Procurement'],
-  ['OBR', 'Oceanview Brand Standards', 'Brand'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['INC', 'INC', 'INC Architecture & Design', ''],
+  ['Procurement', 'BW', 'Benjamin West', ''],
+  ['Lighting', 'VLD', 'Ventresca Lighting Design', ''],
+  ['Brand', 'IHG', 'IHG Hotels & Resorts', ''],
+  ['Architect', 'ARC', 'Apex Architecture Studio', ''],
+  ['Contractor', 'MB', 'Meridian Builders', ''],
+  ['MEP', 'SME', 'Summit MEP Engineers', ''],
+  ['Structural', 'PST', 'Pillar Structural Consultants', ''],
+  ['Lighting', 'LMD', 'Lumen Lighting Design', ''],
+  ['Procurement', 'HPG', 'Harbor Procurement Group', ''],
+  ['Brand', 'OBR', 'Oceanview Brand Standards', ''],
+  ['---', '', '', ''],
 ];
 
 const CONFIG_FFE_VENDORS: SimCellValue[][] = [
-  ['Vendor', 'Name', 'Vendor Type'],
-  ['BM', 'Berman Falk', 'Casegoods'],
-  ['AL', 'Ashley Lighting', 'Lighting'],
-  ['Carn', 'Carnegie', 'Fabric'],
-  ['Delta', 'Delta', 'Fabric'],
-  ['FDT', 'Fil Doux Textiles', 'Fabric'],
-  ['LA', 'Light Annex', 'Lighting'],
-  ['MH', 'Mohawk', 'Fabric'],
-  ['KC', 'Keystone Casegoods', 'Casegoods'],
-  ['CL', 'Crestline Lighting', 'Lighting'],
-  ['AT', 'Atlas Textiles', 'Fabric'],
-  ['VM', 'Vanguard Mills', 'Carpet'],
-  ['NF', 'Northstar Furnishings', 'Furniture'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['Casegoods', 'BM', 'Berman Falk', ''],
+  ['Lighting', 'AL', 'Ashley Lighting', ''],
+  ['Fabric', 'Carn', 'Carnegie', ''],
+  ['Fabric', 'Delta', 'Delta', ''],
+  ['Fabric', 'FDT', 'Fil Doux Textiles', ''],
+  ['Lighting', 'LA', 'Light Annex', ''],
+  ['Fabric', 'MH', 'Mohawk', ''],
+  ['Casegoods', 'KC', 'Keystone Casegoods', ''],
+  ['Lighting', 'CL', 'Crestline Lighting', ''],
+  ['Fabric', 'AT', 'Atlas Textiles', ''],
+  ['Carpet', 'VM', 'Vanguard Mills', ''],
+  ['Furniture', 'NF', 'Northstar Furnishings', ''],
+  ['---', '', '', ''],
 ];
 
 const CONFIG_FFE_SPECS: SimCellValue[][] = [
-  ['Spec Tag', 'Spec Title'],
-  ['AC102', 'HOOK'],
-  ['CG104', 'BED - KING'],
-  ['CP119', 'CARPET'],
-  ['FB127', 'FABRIC - LEATHER'],
-  ['LT108', 'SCONCE'],
-  ['LT159A', 'SCONCE - CORRIDOR'],
-  ['TA139', 'TABLE - WORK'],
-  ['---', ''],
+  ['Tag', 'Title', 'Aliases'],
+  ['AC102', 'HOOK', ''],
+  ['CG104', 'BED - KING', ''],
+  ['CP119', 'CARPET', ''],
+  ['FB127', 'FABRIC - LEATHER', ''],
+  ['LT108', 'SCONCE', ''],
+  ['LT159A', 'SCONCE - CORRIDOR', ''],
+  ['TA139', 'TABLE - WORK', ''],
+  ['---', '', ''],
 ];
 
 function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsClientOptions['sheets']> {
@@ -599,7 +599,7 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
     ['---'],
   ];
   const archActionsRows = state.archActionsRows ?? [
-    ['Action', 'Name', 'Suffix', 'Order'],
+    ['Key', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
     ['REF', 'Referred', '_REF', '2'],
     ['NR', 'Not Reviewed', '_NR', '3'],
@@ -641,8 +641,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_Arch_Statuses',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: archStatusesRows.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + archStatusesRows.length,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -652,8 +652,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_Arch_Statuses',
           range: {
             sheetId: 103,
-            startRowIndex: 1,
-            endRowIndex: archStatusesRows.length - 1,
+            startRowIndex: 3,
+            endRowIndex: 2 + archStatusesRows.length,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -663,8 +663,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_Arch_Actions',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: archActionsRows.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + archActionsRows.length,
             startColumnIndex: 2,
             endColumnIndex: 6,
           },
@@ -674,10 +674,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_Arch_Contacts',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_ARCH_CONTACTS.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_ARCH_CONTACTS.length,
             startColumnIndex: 7,
-            endColumnIndex: 10,
+            endColumnIndex: 11,
           },
         },
         {
@@ -685,10 +685,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_Arch_Contacts',
           range: {
             sheetId: 103,
-            startRowIndex: 1,
-            endRowIndex: CONFIG_ARCH_CONTACTS.length - 1,
-            startColumnIndex: 7,
-            endColumnIndex: 8,
+            startRowIndex: 3,
+            endRowIndex: 2 + CONFIG_ARCH_CONTACTS.length - 1,
+            startColumnIndex: 8,
+            endColumnIndex: 9,
           },
         },
         {
@@ -696,10 +696,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_Arch_CSI_Divisions',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_ARCH_CSI_DIVISIONS.length,
-            startColumnIndex: 11,
-            endColumnIndex: 13,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_ARCH_CSI_DIVISIONS.length,
+            startColumnIndex: 12,
+            endColumnIndex: 14,
           },
         },
         {
@@ -707,8 +707,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_FFE_Statuses',
           range: {
             sheetId: 104,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_STATUSES.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_STATUSES.length,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -718,8 +718,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_FFE_Statuses',
           range: {
             sheetId: 104,
-            startRowIndex: 1,
-            endRowIndex: CONFIG_STATUSES.length - 1,
+            startRowIndex: 3,
+            endRowIndex: 2 + CONFIG_STATUSES.length,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -729,8 +729,8 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_FFE_Actions',
           range: {
             sheetId: 104,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_ACTIONS.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_ACTIONS.length,
             startColumnIndex: 2,
             endColumnIndex: 6,
           },
@@ -740,10 +740,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_FFE_Contacts',
           range: {
             sheetId: 104,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_FFE_CONTACTS.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_FFE_CONTACTS.length,
             startColumnIndex: 7,
-            endColumnIndex: 10,
+            endColumnIndex: 11,
           },
         },
         {
@@ -751,10 +751,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_FFE_Contacts',
           range: {
             sheetId: 104,
-            startRowIndex: 1,
-            endRowIndex: CONFIG_FFE_CONTACTS.length - 1,
-            startColumnIndex: 7,
-            endColumnIndex: 8,
+            startRowIndex: 3,
+            endRowIndex: 2 + CONFIG_FFE_CONTACTS.length - 1,
+            startColumnIndex: 8,
+            endColumnIndex: 9,
           },
         },
         {
@@ -762,10 +762,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_FFE_Vendors',
           range: {
             sheetId: 104,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_FFE_VENDORS.length,
-            startColumnIndex: 11,
-            endColumnIndex: 14,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_FFE_VENDORS.length,
+            startColumnIndex: 12,
+            endColumnIndex: 16,
           },
         },
         {
@@ -773,10 +773,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_FFE_Vendors',
           range: {
             sheetId: 104,
-            startRowIndex: 1,
-            endRowIndex: CONFIG_FFE_VENDORS.length - 1,
-            startColumnIndex: 11,
-            endColumnIndex: 12,
+            startRowIndex: 3,
+            endRowIndex: 2 + CONFIG_FFE_VENDORS.length - 1,
+            startColumnIndex: 14,
+            endColumnIndex: 15,
           },
         },
         {
@@ -784,10 +784,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Options_Submittal_FFE_Specs',
           range: {
             sheetId: 104,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_FFE_SPECS.length,
-            startColumnIndex: 15,
-            endColumnIndex: 17,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_FFE_SPECS.length,
+            startColumnIndex: 17,
+            endColumnIndex: 20,
           },
         },
         {
@@ -795,10 +795,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           name: 'Validation_Submittal_FFE_Specs',
           range: {
             sheetId: 104,
-            startRowIndex: 1,
-            endRowIndex: CONFIG_FFE_SPECS.length - 1,
-            startColumnIndex: 15,
-            endColumnIndex: 16,
+            startRowIndex: 3,
+            endRowIndex: 2 + CONFIG_FFE_SPECS.length - 1,
+            startColumnIndex: 17,
+            endColumnIndex: 18,
           },
         },
         ...(!state.namedRange
@@ -832,13 +832,13 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       if (bounds.startColumnIndex === 7) {
         return CONFIG_ARCH_CONTACTS;
       }
-      if (bounds.startColumnIndex === 11) {
+      if (bounds.startColumnIndex === 12) {
         return CONFIG_ARCH_CSI_DIVISIONS;
       }
       return [];
     }
     if (range.includes('_Config Submittal FF&E')) {
-      const bounds = parseA1RangeBounds(range, 30, 17);
+      const bounds = parseA1RangeBounds(range, 30, 20);
       if (bounds.startColumnIndex === 0) {
         return CONFIG_STATUSES;
       }
@@ -848,10 +848,10 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       if (bounds.startColumnIndex === 7) {
         return CONFIG_FFE_CONTACTS;
       }
-      if (bounds.startColumnIndex === 11) {
+      if (bounds.startColumnIndex === 12) {
         return CONFIG_FFE_VENDORS;
       }
-      if (bounds.startColumnIndex === 15) {
+      if (bounds.startColumnIndex === 17) {
         return CONFIG_FFE_SPECS;
       }
       return [];
@@ -3848,10 +3848,12 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       ['<--->'],
     ];
     const configGrid: SimCellValue[][] = [
-      ['Status', '', 'Contact', 'Name', 'Contact Type', '', 'Action', 'Name', 'Suffix', 'Order'],
-      ['Open', '', 'INC', 'INC Architecture and Design', 'INC', '', 'REC', 'Received', '', '1'],
-      ['Closed', '', '---', '', '', '', '---', '', '', ''],
-      ['---', '', '', '', '', '', '', '', '', ''],
+      ['Submittal Arch Configuration', '', '', '', '', '', '', '', '', '', ''],
+      ['Statuses', '', 'Contacts', '', '', '', '', 'Actions', '', '', ''],
+      ['Status', '', 'Type', 'Key', 'Name', 'Aliases', '', 'Key', 'Name', 'Suffix', 'Order'],
+      ['Open', '', 'INC', 'INC', 'INC Architecture and Design', '', '', 'REC', 'Received', '', '1'],
+      ['Closed', '', '---', '', '', '', '', '---', '', '', ''],
+      ['---', '', '', '', '', '', '', '', '', '', ''],
     ];
 
     const namedRanges = [
@@ -3863,28 +3865,28 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       {
         namedRangeId: 'nr-statuses',
         name: 'Options_Submittal_Arch_Statuses',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-contacts',
         name: 'Options_Submittal_Arch_Contacts',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 5 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-val-contacts',
         name: 'Validation_Submittal_Arch_Contacts',
-        range: { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 2, endColumnIndex: 3 },
+        range: { sheetId: 103, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 3, endColumnIndex: 4 },
       },
       {
         namedRangeId: 'nr-actions',
         name: 'Options_Submittal_Arch_Actions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 6, endColumnIndex: 10 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
       },
     ];
 
     const sliceRange = (a1Range: string): SimCellValue[][] => {
       const sheetGrid = a1Range.includes('_Config Submittal Arch') ? configGrid : logGrid;
-      const bounds = parseA1RangeBounds(a1Range, sheetGrid.length, 10);
+      const bounds = parseA1RangeBounds(a1Range, sheetGrid.length, 11);
       return sheetGrid.slice(bounds.startRowIndex, bounds.endRowIndex).map((row) => {
         const out: SimCellValue[] = [];
         for (let c = bounds.startColumnIndex; c < bounds.endColumnIndex; c++) {
@@ -4108,25 +4110,25 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
     expect(batchCallPayloads[0].some((r) => 'insertRange' in r)).toBe(true);
     expect(batchCallPayloads[1].some((r) => 'insertRange' in r)).toBe(false);
 
-    // Only ONE Acme Builders row exists above '---' (never duplicated), Contact Type left blank
+    // Only ONE Acme Builders row exists above '---' (never duplicated), Type and Aliases left blank
     const contactsNr = namedRanges.find((nr) => nr.name === 'Options_Submittal_Arch_Contacts')!;
     const contactRows = configGrid
       .slice(contactsNr.range.startRowIndex, contactsNr.range.endRowIndex)
-      .map((r) => r.slice(2, 5));
+      .map((r) => r.slice(2, 6));
     expect(contactRows).toEqual([
-      ['Contact', 'Name', 'Contact Type'],
-      ['INC', 'INC Architecture and Design', 'INC'],
-      ['Acme Builders', 'Acme Builders', ''],
-      ['---', '', ''],
+      ['Type', 'Key', 'Name', 'Aliases'],
+      ['INC', 'INC', 'INC Architecture and Design', ''],
+      ['', 'Acme Builders', 'Acme Builders', ''],
+      ['---', '', '', ''],
     ]);
-    // Validation_Submittal_Arch_Contacts expanded from endRowIndex 2 -> 3 (not 4)
+    // Validation_Submittal_Arch_Contacts expanded from endRowIndex 4 -> 5 (not 6)
     expect(namedRanges.find((nr) => nr.name === 'Validation_Submittal_Arch_Contacts')?.range).toMatchObject({
-      startRowIndex: 1,
-      endRowIndex: 3,
+      startRowIndex: 3,
+      endRowIndex: 5,
     });
     // Neighboring tables unshifted
-    expect(configGrid[3][0]).toBe('---');
-    expect(configGrid[2][6]).toBe('---');
+    expect(configGrid[5][0]).toBe('---');
+    expect(configGrid[4][7]).toBe('---');
     // Both submittal rows written to Log_Submittal_Arch
     expect(logGrid.filter((r) => r[0] === 'Open')).toHaveLength(2);
   });
@@ -4200,7 +4202,7 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       },
       archStatusesRows: [['Status'], ['In Review'], ['---']],
       archActionsRows: [
-        ['Action', 'Name', 'Suffix', 'Order'],
+        ['Key', 'Name', 'Suffix', 'Order'],
         ['CUST', 'Custom Action', '_CUST', '9'],
         ['---', '', '', ''],
       ],
