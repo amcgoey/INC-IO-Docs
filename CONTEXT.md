@@ -131,7 +131,7 @@ The domain feature responsible for inspecting a `SourceContext` to infer routing
 _Avoid_: PrePopulator, ContextExtractor, FieldExtractor
 
 **AliasDictionary**:
-A shared, option-source-scoped mapping of canonical `LookupField` option keys to alternate recognition phrases and email domains, referenced from the `Manifest` to resolve external entities across `DocumentType`s without polluting `DocumentSchema`.
+A shared, option-source-scoped Tier 3 mapping of canonical `LookupField` option keys to alternate recognition phrases and email domains, referenced from the `Manifest` to augment `DocumentType` local `aliases` (Tier 1) and `DocumentLog` `_Config` `aliasesColumn` entries (Tier 2) additively per token without polluting `DocumentSchema`.
 _Avoid_: MatchList, SynonymMap, LookupMap
 
 **LookupOptions**:
@@ -143,5 +143,13 @@ A storage-agnostic declaration inside `DocumentSchema` defining a dynamic option
 _Avoid_: DynamicConfig, OptionProviderConfig
 
 **OptionBinding**:
-A storage-specific declaration inside `DocumentLogSchema` mapping an `OptionSource` key to a spreadsheet tab, Named Range, optional companion `validationRangeName`, sentinel `endMarker`, header-to-property column map, and optional RFC 4180 CSV `aliasesColumn`.
+A storage-specific declaration inside `DocumentLogSchema` mapping an `OptionSource` key to a `_Config` spreadsheet tab, `Options_*` Named Range (starting on Row 3 unprefixed headers beneath Row 2 merged table-group headers), optional companion `Validation_*` `validationRangeName`, sentinel `endMarker`, unprefixed header-to-property `columns` map, and optional RFC 4180 CSV `aliasesColumn`.
 _Avoid_: SheetOptionConfig, OptionTableConfig
+
+## DocumentLog _Config & Architecture Cross-References
+
+- **`_Config` Table-Group Layout & `_Config Submittal Arch` `Aliases` Migration**: `_Config Submittal Arch` and `_Config Submittal FF&E` arrange side-by-side option tables under Row 1 sheet titles and Row 2 merged table-group headers (`Statuses`, `Actions`, `Contacts`, `Vendors`, `Specs`, `Specification Divisions`), with `Options_*` Named Ranges beginning on Row 3 unprefixed headers (`Status`; `Key`/`Name`/`Suffix`/`Order`; `Key`/`Name`; `Tag`/`Title`; `Division Number`/`Division Folder`) and terminating at `endMarker: "---"` (while main `DocumentLog` tabs retain prefixed headers and informational `Type` columns stay unmapped). `DocumentLogSchema.optionBindings` declares `aliasesColumn: "Aliases"` on `_Config Submittal Arch` (`contacts`) and `_Config Submittal FF&E` (`contacts`, `vendors`, `specs`)—parsed as RFC 4180 CSV (`""`-escaped quotes) and concatenated case-insensitively across duplicate keys—while omitting `validationRangeName` on `actions` (`allowUserInput: false`) and `csiDivisions`.
+- **Authoritative ADRs**:
+  - When resolving `LookupField` aliases across Tier 1 local `aliases`, Tier 2 `_Config` `Aliases`, and Tier 3 `AliasDictionary`, see [ADR 0017](docs/adr/0017-two-pass-source-parser-architecture.md) for per-token shadowing and additive Tier 3 retention.
+  - When configuring `DocumentLogSchema` (`target`, `columns`, `historyDisplay`, `optionBindings`) or `Manifest` `DocumentLog` discovery defaults, see [ADR 0021](docs/adr/0021-document-log-schema-and-resilient-hydration.md).
+  - When extending `LookupOptions`, `_Config` option-table hydration, `Validation_*` range expansion, or atomic `WRITE_LOG` write-back, see [ADR 0023](docs/adr/0023-lookup-options-feature-and-document-log-option-tables.md).
