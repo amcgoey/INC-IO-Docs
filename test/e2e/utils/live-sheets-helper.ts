@@ -20,7 +20,22 @@ export const DEFAULT_LIVE_RETRY_OPTIONS = {
   backoffFactor: 2,
 };
 
-export const SHEET_ERROR_TOKENS = ['#REF!', '#ERROR!', '#N/A', '#VALUE!'] as const;
+export const SHEET_ERROR_TOKENS = [
+  '#REF!',
+  '#ERROR!',
+  '#N/A',
+  '#VALUE!',
+  '#NAME?',
+  '#DIV/0!',
+] as const;
+
+export interface SpreadsheetErrorFinding {
+  sheetTitle: string;
+  rowNumber: number;
+  columnIndex: number;
+  value: string;
+  tokens: string[];
+}
 
 export interface FixtureSubmittalEntry {
   documentData: Record<string, string>;
@@ -173,6 +188,68 @@ export function findSheetErrorTokens(values: RowRecord): string[] {
     }
   }
   return found;
+}
+
+/**
+ * Scans every sheet tab in a spreadsheet for Google Sheets formula evaluation error tokens.
+ */
+export async function findSpreadsheetErrorTokens(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<SpreadsheetErrorFinding[]> {
+  const metaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(title))',
+      }),
+    retryOptions
+  );
+
+  const sheetTitles = (metaResponse.data.sheets ?? [])
+    .map((sheet) => sheet.properties?.title)
+    .filter((title): title is string => typeof title === 'string' && title.length > 0);
+
+  if (sheetTitles.length === 0) {
+    return [];
+  }
+
+  const quotedRanges = sheetTitles.map((title) => `'${title.replace(/'/g, "''")}'`);
+  const valuesResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: quotedRanges,
+        valueRenderOption: 'FORMATTED_VALUE',
+      }),
+    retryOptions
+  );
+
+  const findings: SpreadsheetErrorFinding[] = [];
+  const valueRanges = valuesResponse.data.valueRanges ?? [];
+  sheetTitles.forEach((sheetTitle, sheetIdx) => {
+    const rows = (valueRanges[sheetIdx]?.values as CellValue[][] | undefined) ?? [];
+    rows.forEach((row, rowIdx) => {
+      row.forEach((cellVal, columnIndex) => {
+        if (typeof cellVal !== 'string') {
+          return;
+        }
+        const tokens = SHEET_ERROR_TOKENS.filter((token) => cellVal.includes(token));
+        if (tokens.length > 0) {
+          findings.push({
+            sheetTitle,
+            rowNumber: rowIdx + 1,
+            columnIndex,
+            value: cellVal,
+            tokens,
+          });
+        }
+      });
+    });
+  });
+
+  return findings;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
+  findSpreadsheetErrorTokens,
   findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   partialHydrationRowToCellInputs,
@@ -510,9 +511,16 @@ describe('live-sheets-helper', () => {
     });
   });
 
-  describe('findSheetErrorTokens and findCleanDividerViolations', () => {
-    it('detects Google Sheets error tokens in row records', () => {
-      expect(SHEET_ERROR_TOKENS).toEqual(['#REF!', '#ERROR!', '#N/A', '#VALUE!']);
+  describe('findSheetErrorTokens, findSpreadsheetErrorTokens, and findCleanDividerViolations', () => {
+    it('detects Google Sheets error tokens including #NAME? and #DIV/0! in row records', () => {
+      expect(SHEET_ERROR_TOKENS).toEqual([
+        '#REF!',
+        '#ERROR!',
+        '#N/A',
+        '#VALUE!',
+        '#NAME?',
+        '#DIV/0!',
+      ]);
       expect(
         findSheetErrorTokens({
           Status: 'Open',
@@ -526,8 +534,53 @@ describe('live-sheets-helper', () => {
         findSheetErrorTokens({
           'Spec Title': 'Lookup failed: #N/A',
           Notes: 'Broken ref #REF!',
+          Formula1: '#NAME?',
+          Formula2: '#DIV/0!',
         })
-      ).toEqual(['#N/A', '#REF!']);
+      ).toEqual(['#N/A', '#REF!', '#NAME?', '#DIV/0!']);
+    });
+
+    it('scans all sheets via values.batchGet and reports any formula error tokens with coordinates', async () => {
+      const sheetsApi = {
+        spreadsheets: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              sheets: [
+                { properties: { title: 'Submittal Arch' } },
+                { properties: { title: '_Config Submittal Arch' } },
+              ],
+            },
+          }),
+          values: {
+            batchGet: vi.fn().mockResolvedValue({
+              data: {
+                valueRanges: [
+                  { values: [['Header'], ['Clean row']] },
+                  { values: [['Settings'], ['Bad formula', '#NAME?'], ['Zero div', '#DIV/0!']] },
+                ],
+              },
+            }),
+          },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const findings = await findSpreadsheetErrorTokens(sheetsApi, 'sheet-123');
+      expect(findings).toEqual([
+        {
+          sheetTitle: '_Config Submittal Arch',
+          rowNumber: 2,
+          columnIndex: 1,
+          value: '#NAME?',
+          tokens: ['#NAME?'],
+        },
+        {
+          sheetTitle: '_Config Submittal Arch',
+          rowNumber: 3,
+          columnIndex: 1,
+          value: '#DIV/0!',
+          tokens: ['#DIV/0!'],
+        },
+      ]);
     });
 
     it('reports zero violations for clean Column-0-only dividers and flags adjacent, consecutive, or polluted dividers', () => {

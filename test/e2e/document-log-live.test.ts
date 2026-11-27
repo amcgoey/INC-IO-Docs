@@ -1,13 +1,16 @@
 import * as path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 // nosemgrep: adapter-leakage-warning
 import type { sheets_v4 } from 'googleapis';
 import { createDocumentLogWiring, type DocumentLogWiring } from '../../src/app/document-log.wiring';
+import { createDocumentSpaceFeatureWiring } from '../../src/app/document-space.wiring';
 import {
   createDocumentFeatureWiring,
   createDocumentServiceFactory,
 } from '../../src/app/document.wiring';
-import { createLookupOptionsWiring } from '../../src/app/lookup-options.wiring';
+import { createLookupOptionsWiring, type LookupOptionsWiring } from '../../src/app/lookup-options.wiring';
+import { createSourceParserWiring, type SourceParserWiring } from '../../src/app/source-parser.wiring';
 import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wiring';
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
@@ -26,6 +29,7 @@ import {
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
+  findSpreadsheetErrorTokens,
   findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   loadDocumentLogSampleFixture,
@@ -45,6 +49,8 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
   let sheetsApi: sheets_v4.Sheets;
   let sheetsClient: GoogleSheetsClient;
   let logWiring: DocumentLogWiring;
+  let lookupOptionsWiring: LookupOptionsWiring;
+  let sourceParserWiring: SourceParserWiring;
   let documentServiceFactory: DocumentServiceFactory;
 
   let spaceName: string;
@@ -128,7 +134,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     });
     await logWiring.logSchemaRegistry.initialize();
 
-    const lookupOptionsWiring = createLookupOptionsWiring({
+    lookupOptionsWiring = createLookupOptionsWiring({
       manifestProvider,
       documentSchemaRegistry,
       driveClient: liveDriveClient,
@@ -136,6 +142,23 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       getDocumentLogService: (ctx) => logWiring.getPerRequestService(ctx),
       ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
     });
+
+    const spaceWiring = createDocumentSpaceFeatureWiring({
+      rawManifestProvider: manifestProvider,
+      driveClient: liveDriveClient,
+    });
+    await spaceWiring.documentSpaceService.initialize();
+
+    sourceParserWiring = createSourceParserWiring({
+      spaceTypesProvider: spaceWiring.documentSpaceService,
+      manifestProvider,
+      driveClient: liveDriveClient,
+      configProvider: manifestProvider,
+      templateEvaluator: handlebars,
+      getCanonicalOptionsProvider: (ctx) =>
+        lookupOptionsWiring.createCanonicalOptionsProvider(ctx),
+    });
+    await sourceParserWiring.parseSchemaRegistry.initialize();
 
     documentServiceFactory = createDocumentServiceFactory({
       manifestProvider,
@@ -201,10 +224,9 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     await ensureClearedPositiveTable(sheetsApi, archTarget());
     await ensureClearedPositiveTable(sheetsApi, ffeTarget());
 
-    const dummyPdfBytes = Buffer.from(
-      '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
-      'utf-8'
-    );
+    const dummyPdfDoc = await PDFDocument.create();
+    dummyPdfDoc.addPage([612, 792]).drawText('Live DocumentLog E2E Target Content');
+    const dummyPdfBytes = Buffer.from(await dummyPdfDoc.save());
 
     archFileName = `Live_Arch_Submittal_${runId}.pdf`;
     const archFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
@@ -955,49 +977,28 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     expect(ffeFb127.warnings).toEqual([]);
   }, 90_000);
 
-  it('verifies live DocumentLog option reads, empty-table template formatting inheritance, Named Range expansion, VLOOKUP Spec Title resolution, and side-by-side _Config stability on a fresh copied template with finally cleanup', async () => {
+  it('verifies live submittal-arch DocumentLog option reads, seeded Aliases, Validation_* bounds, empty-table Row 4 format cloning, Named Range expansion, and side-by-side _Config stability on a fresh copied template', async () => {
     const liveDriveClient = requireDriveClient();
     const templateId = sampleFixture.metadata.templateSpreadsheetId;
     const discoveryConfig = logWiring.logSchemaRegistry.getDiscoveryConfig('proposals');
     expect(discoveryConfig?.templateSpreadsheetId).toBe(templateId);
     const archLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-arch');
-    const ffeLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-ffe');
     expect(archLogSchema).toBeDefined();
-    expect(ffeLogSchema).toBeDefined();
-    if (!archLogSchema || !ffeLogSchema) {
+    if (!archLogSchema) {
       return;
     }
 
     const archContactsBinding = archLogSchema.optionBindings?.contacts;
     const archStatusesBinding = archLogSchema.optionBindings?.statuses;
     const archActionsBinding = archLogSchema.optionBindings?.actions;
-    const ffeSpecsBinding = ffeLogSchema.optionBindings?.specs;
-    const ffeVendorsBinding = ffeLogSchema.optionBindings?.vendors;
-    const ffeContactsBinding = ffeLogSchema.optionBindings?.contacts;
-    const ffeStatusesBinding = ffeLogSchema.optionBindings?.statuses;
-    const ffeActionsBinding = ffeLogSchema.optionBindings?.actions;
     expect(archContactsBinding).toBeDefined();
     expect(archStatusesBinding).toBeDefined();
     expect(archActionsBinding).toBeDefined();
-    expect(ffeSpecsBinding).toBeDefined();
-    expect(ffeVendorsBinding).toBeDefined();
-    expect(ffeContactsBinding).toBeDefined();
-    expect(ffeStatusesBinding).toBeDefined();
-    expect(ffeActionsBinding).toBeDefined();
-    if (
-      !archContactsBinding ||
-      !archStatusesBinding ||
-      !archActionsBinding ||
-      !ffeSpecsBinding ||
-      !ffeVendorsBinding ||
-      !ffeContactsBinding ||
-      !ffeStatusesBinding ||
-      !ffeActionsBinding
-    ) {
+    if (!archContactsBinding || !archStatusesBinding || !archActionsBinding) {
       return;
     }
 
-    const runId = `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const runId = `opt-arch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const localCleanupIds: string[] = [];
     const trackLocal = (id: string | undefined): void => {
       if (!id || id.trim().length === 0) return;
@@ -1006,12 +1007,12 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     };
 
     try {
-      const optSpaceName = `Harborview Options Live ${runId}`;
+      const optSpaceName = `Harborview Arch Options Live ${runId}`;
       const optSpaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID!, optSpaceName);
       trackLocal(optSpaceFolder.id);
 
       const optSpace = {
-        id: `live-opt-space-${runId}`,
+        id: `live-opt-arch-space-${runId}`,
         typeId: 'proposals',
         name: optSpaceName,
         abstractStorageId: optSpaceFolder.id,
@@ -1035,17 +1036,12 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         extentMarker: archLogSchema.target.extentMarker,
         groupDividerMarker: archLogSchema.target.groupDividerMarker,
       };
-      const optFfeTarget: PositiveTableTarget = {
-        spreadsheetId: optSpreadsheetId,
-        sheetName: ffeLogSchema.target.sheetName,
-        rangeName: ffeLogSchema.target.rangeName,
-        extentMarker: ffeLogSchema.target.extentMarker,
-        groupDividerMarker: ffeLogSchema.target.groupDividerMarker,
-      };
       await ensureClearedPositiveTable(sheetsApi, optArchTarget);
-      await ensureClearedPositiveTable(sheetsApi, optFfeTarget);
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, optSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
 
-      // 1) Live option reads from untouched copied firm template
+      // 1) Live option reads from untouched copied template (unprefixed Row 3 headers + 6 seeded Aliases rows)
       const initialArchOptions = await logWiring.documentLogService.readOptionTables!({
         documentTypeKey: 'submittal-arch',
         space: optSpace,
@@ -1059,34 +1055,80 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       expect(initialArchOptions.tables.actions?.status).toBe('ready');
       expect(initialArchOptions.tables.actions?.tuples.length).toBeGreaterThan(0);
       expect(initialArchOptions.tables.contacts?.status).toBe('ready');
-      expect(initialArchOptions.tables.contacts?.tuples.length).toBeGreaterThan(0);
+      expect(initialArchOptions.tables.contacts?.tuples).toEqual([
+        {
+          key: 'INC',
+          name: 'INC Architecture and Design',
+          aliases: ['@inc.nyc', 'INC Architecture', 'INC Architecture and Design', 'INC Architecture & Design'],
+        },
+        {
+          key: 'PMG',
+          name: 'Pavarini McGovern',
+          aliases: ['@pavarini.com', 'Pavarini McGovern', 'Pavarini'],
+        },
+        {
+          key: 'FXC',
+          name: 'FX Collaborative',
+          aliases: ['@fxcollaborative.com', 'FX Collaborative', 'FXCollaborative', 'FXFOWLE'],
+        },
+        {
+          key: 'IE',
+          name: 'Interface Engineering',
+          aliases: ['@interfaceeng.com', 'Interface Engineering', 'Interface Eng'],
+        },
+        {
+          key: 'VLD',
+          name: 'Ventresca Lighting Design',
+          aliases: ['@ventresca.com', 'Ventresca Lighting Design', 'Ventresca Lighting', 'Ventresca'],
+        },
+        {
+          key: 'TT',
+          name: 'Thornton Tomasetti',
+          aliases: ['@thorntontomasetti.com', 'Thornton Tomasetti', 'Thorton Tomasetti'],
+        },
+      ]);
 
-      const initialFfeOptions = await logWiring.documentLogService.readOptionTables!({
-        documentTypeKey: 'submittal-ffe',
-        space: optSpace,
-        selectedLogId: optSpreadsheetId,
+      // Verify split Validation_* policy: Arch Contacts targets Key and excludes "---", Statuses keeps "---" at index 6
+      const initialSnapshots = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        [
+          archStatusesBinding.validationRangeName!,
+          archContactsBinding.validationRangeName!,
+        ],
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const initialValidationValues = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        initialSnapshots,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      expect(initialSnapshots[archContactsBinding.validationRangeName!].gridRange).toMatchObject({
+        startColumnIndex: 6,
+        endColumnIndex: 7,
       });
-      expect(initialFfeOptions.status).toBe('ready');
-      if (initialFfeOptions.status !== 'ready') return;
-      expect(initialFfeOptions.spreadsheetId).toBe(optSpreadsheetId);
-      for (const sourceKey of ['statuses', 'actions', 'contacts', 'vendors', 'specs']) {
-        expect(initialFfeOptions.tables[sourceKey]?.status).toBe('ready');
-        expect(initialFfeOptions.tables[sourceKey]?.tuples.length).toBeGreaterThan(0);
-      }
+      const contactValidationItems = (
+        initialValidationValues[archContactsBinding.validationRangeName!] ?? []
+      ).map((row) => String(row[0] ?? ''));
+      expect(contactValidationItems).toEqual(['INC', 'PMG', 'FXC', 'IE', 'VLD', 'TT']);
+      expect(contactValidationItems).not.toContain('---');
 
-      // Create source folders and PDFs for DocumentService.processDocument()
+      const statusValidationItems = (
+        initialValidationValues[archStatusesBinding.validationRangeName!] ?? []
+      ).map((row) => String(row[0] ?? ''));
+      expect(statusValidationItems[5]).toBe('---');
+
+      // Create source folder and PDF for DocumentService.processDocument()
       const constructionFolder = await liveDriveClient.findOrCreateFolder(
         optSpaceFolder.id,
         '6 Construction'
       );
       trackLocal(constructionFolder.id);
-      const ffeFolder = await liveDriveClient.findOrCreateFolder(optSpaceFolder.id, '3 FFE');
-      trackLocal(ffeFolder.id);
 
-      const dummyPdfBytes = Buffer.from(
-        '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
-        'utf-8'
-      );
+      const dummyPdfDoc = await PDFDocument.create();
+      dummyPdfDoc.addPage([612, 792]).drawText('Live Arch Options E2E Target Content');
+      const dummyPdfBytes = Buffer.from(await dummyPdfDoc.save());
       const optArchFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
         action: 'create',
         name: `Opt_Arch_${runId}.pdf`,
@@ -1094,13 +1136,6 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         mimeType: 'application/pdf',
       });
       trackLocal(optArchFile.id);
-      const optFfeFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
-        action: 'create',
-        name: `Opt_FFE_${runId}.pdf`,
-        targetFolderId: optSpaceFolder.id,
-        mimeType: 'application/pdf',
-      });
-      trackLocal(optFfeFile.id);
 
       // 2) Clear Options_Submittal_Arch_Contacts to empty and verify empty-table formatting inheritance + NamedRange expansion + side-by-side stability
       const templateContactsGrid = await readOptionTableGridFormats(sheetsApi, {
@@ -1109,6 +1144,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         rangeName: archContactsBinding.rangeName,
         endMarker: archContactsBinding.endMarker,
       });
+      expect(templateContactsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
       const templateDataRow = templateContactsGrid.dataRows.find((r) =>
         r.cells.some((c) => c.formattedValue.trim().length > 0)
       );
@@ -1224,8 +1260,10 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         rangeName: archContactsBinding.rangeName,
         endMarker: archContactsBinding.endMarker,
       });
+      const keyColIndex = copiedContactsGrid.headerRow.indexOf('Key');
+      expect(keyColIndex).toBeGreaterThanOrEqual(0);
       const insertedContactRow = copiedContactsGrid.dataRows.find(
-        (r) => r.cells[0]?.formattedValue.trim() === customArchContact
+        (r) => r.cells[keyColIndex]?.formattedValue.trim() === customArchContact
       );
       expect(insertedContactRow).toBeDefined();
       expect(insertedContactRow?.cells.map((c) => c.userEnteredFormat)).toEqual(
@@ -1242,8 +1280,339 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       expect(updatedArchRead.tables.contacts?.tuples).toContainEqual(
         expect.objectContaining({ key: customArchContact, name: customArchContact })
       );
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, optSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
+    } finally {
+      for (const id of [...localCleanupIds].reverse()) {
+        try {
+          await liveDriveClient.trash(id);
+        } catch {
+          // Best-effort cleanup of every created artifact
+        }
+      }
+    }
+  }, 180_000);
 
-      // 3) Custom Spec Tag + Spec Title atomic WRITE_LOG, Validation_* expansion, VLOOKUP resolution, and side-by-side _Config Submittal FF&E stability
+  it('resolves submittal-arch Contacts via SourceParser Pass 2 using seeded and RFC 4180 CSV Tier 2 Aliases alongside additive Tier 3 @domain fallback on a copied DocumentLog', async () => {
+    const liveDriveClient = requireDriveClient();
+    const templateId = sampleFixture.metadata.templateSpreadsheetId;
+    const archLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-arch');
+    expect(archLogSchema).toBeDefined();
+    if (!archLogSchema) {
+      return;
+    }
+
+    const archContactsBinding = archLogSchema.optionBindings?.contacts;
+    expect(archContactsBinding).toBeDefined();
+    if (!archContactsBinding) {
+      return;
+    }
+
+    const runId = `sp-arch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localCleanupIds: string[] = [];
+    const trackLocal = (id: string | undefined): void => {
+      if (!id || id.trim().length === 0) return;
+      if (id === TEST_FOLDER_ID || id === templateId) return;
+      if (!localCleanupIds.includes(id)) localCleanupIds.push(id);
+    };
+
+    try {
+      const spSpaceName = `Harborview SourceParser Live ${runId}`;
+      const spSpaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID!, spSpaceName);
+      trackLocal(spSpaceFolder.id);
+
+      const spSpace = {
+        id: `live-sp-arch-space-${runId}`,
+        typeId: 'proposals',
+        name: spSpaceName,
+        abstractStorageId: spSpaceFolder.id,
+      };
+
+      const spCopy = await logWiring.documentLogService.copyLog(spSpace);
+      const spSpreadsheetId = spCopy.candidate.id;
+      const spAdminId = spCopy.candidate.parents?.[0];
+      if (spAdminId && spAdminId !== spSpaceFolder.id) {
+        trackLocal(spAdminId);
+      }
+      trackLocal(spSpreadsheetId);
+
+      // 1) Seeded Tier 2 Aliases match out of the box on untouched copied template
+      const seededParser = sourceParserWiring.createSourceParser({});
+      const seededDomainMatch = await seededParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-seeded-domain-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'Structural Engineer <structural@thorntontomasetti.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(seededDomainMatch.fields.contact).toBe('TT');
+
+      const seededPhraseMatch = await seededParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-seeded-phrase-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'FXFOWLE <noreply@external-relay.example>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(seededPhraseMatch.fields.contact).toBe('FXC');
+
+      // 2) Customize Tier 2 Aliases on copied DocumentLog:
+      //    - PMG gets RFC 4180 CSV with comma + escaped "" quotes and omits @pavarini.com (verifying additive Tier 3 retention)
+      //    - FXC gets @ventresca.com (verifying Tier 2 token override over Tier 3 VLD)
+      const contactsSnapshot = await snapshotNamedRanges(
+        sheetsApi,
+        spSpreadsheetId,
+        [archContactsBinding.rangeName],
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const contactsRange = contactsSnapshot[archContactsBinding.rangeName];
+      const contactsValues = (
+        await readNamedRangesFormattedValues(
+          sheetsApi,
+          spSpreadsheetId,
+          contactsSnapshot,
+          DEFAULT_LIVE_RETRY_OPTIONS
+        )
+      )[archContactsBinding.rangeName] ?? [];
+      const headerRow = contactsValues[0] ?? [];
+      const keyColOffset = headerRow.findIndex((c) => String(c).trim() === 'Key');
+      const aliasesColOffset = headerRow.findIndex((c) => String(c).trim() === 'Aliases');
+      expect(keyColOffset).toBeGreaterThanOrEqual(0);
+      expect(aliasesColOffset).toBeGreaterThanOrEqual(0);
+
+      const pmgRowOffset = contactsValues.findIndex((r) => String(r[keyColOffset] ?? '').trim() === 'PMG');
+      const fxcRowOffset = contactsValues.findIndex((r) => String(r[keyColOffset] ?? '').trim() === 'FXC');
+      expect(pmgRowOffset).toBeGreaterThan(0);
+      expect(fxcRowOffset).toBeGreaterThan(0);
+
+      const startRow = (contactsRange.gridRange.startRowIndex ?? 0) + 1;
+      const aliasesColLetter = String.fromCharCode(
+        65 + (contactsRange.gridRange.startColumnIndex ?? 0) + aliasesColOffset
+      );
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        spreadsheetId: spSpreadsheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            {
+              range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + pmgRowOffset}`,
+              values: [['"Pavarini, ""NYC"" Group", PMG-Custom']],
+            },
+            {
+              range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + fxcRowOffset}`,
+              values: [['@ventresca.com, FXC-Custom']],
+            },
+          ],
+        },
+      });
+
+      // Use a fresh WorkspaceExecutionContext so per-request LookupOptions cache reads updated Aliases
+      const customParser = sourceParserWiring.createSourceParser({});
+
+      const rfc4180CsvMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-csv-quoted-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'Pavarini, "NYC" Group <noreply@relay.example.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(rfc4180CsvMatch.fields.contact).toBe('PMG');
+
+      const additiveTier3DomainMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-tier3-retained-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'Alice <alice@pavarini.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(additiveTier3DomainMatch.fields.contact).toBe('PMG');
+
+      const tier2OverrideMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-tier2-override-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'Lighting <lighting@ventresca.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(tier2OverrideMatch.fields.contact).toBe('FXC');
+
+      const tier3NonCollidingPhraseMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-arch',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-tier3-vld-${runId}`,
+            subject: '071200-001 Waterproofing Membrane',
+            from: 'Ventresca Lighting <noreply@other.example.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(tier3NonCollidingPhraseMatch.fields.contact).toBe('VLD');
+
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, spSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
+    } finally {
+      for (const id of [...localCleanupIds].reverse()) {
+        try {
+          await liveDriveClient.trash(id);
+        } catch {
+          // Best-effort cleanup of every created artifact
+        }
+      }
+    }
+  }, 120_000);
+
+  it('verifies live submittal-ffe DocumentLog option reads, Named Range expansion, VLOOKUP Spec Title resolution, and side-by-side _Config Submittal FF&E stability on a fresh copied template', async () => {
+    const liveDriveClient = requireDriveClient();
+    const templateId = sampleFixture.metadata.templateSpreadsheetId;
+    const discoveryConfig = logWiring.logSchemaRegistry.getDiscoveryConfig('proposals');
+    expect(discoveryConfig?.templateSpreadsheetId).toBe(templateId);
+    const ffeLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-ffe');
+    expect(ffeLogSchema).toBeDefined();
+    if (!ffeLogSchema) {
+      return;
+    }
+
+    const ffeSpecsBinding = ffeLogSchema.optionBindings?.specs;
+    const ffeVendorsBinding = ffeLogSchema.optionBindings?.vendors;
+    const ffeContactsBinding = ffeLogSchema.optionBindings?.contacts;
+    const ffeStatusesBinding = ffeLogSchema.optionBindings?.statuses;
+    const ffeActionsBinding = ffeLogSchema.optionBindings?.actions;
+    expect(ffeSpecsBinding).toBeDefined();
+    expect(ffeVendorsBinding).toBeDefined();
+    expect(ffeContactsBinding).toBeDefined();
+    expect(ffeStatusesBinding).toBeDefined();
+    expect(ffeActionsBinding).toBeDefined();
+    if (
+      !ffeSpecsBinding ||
+      !ffeVendorsBinding ||
+      !ffeContactsBinding ||
+      !ffeStatusesBinding ||
+      !ffeActionsBinding
+    ) {
+      return;
+    }
+
+    const runId = `opt-ffe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localCleanupIds: string[] = [];
+    const trackLocal = (id: string | undefined): void => {
+      if (!id || id.trim().length === 0) return;
+      if (id === TEST_FOLDER_ID || id === templateId) return;
+      if (!localCleanupIds.includes(id)) localCleanupIds.push(id);
+    };
+
+    try {
+      const optSpaceName = `Harborview FFE Options Live ${runId}`;
+      const optSpaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID!, optSpaceName);
+      trackLocal(optSpaceFolder.id);
+
+      const optSpace = {
+        id: `live-opt-ffe-space-${runId}`,
+        typeId: 'proposals',
+        name: optSpaceName,
+        abstractStorageId: optSpaceFolder.id,
+      };
+
+      const optCopy = await logWiring.documentLogService.copyLog(optSpace);
+      const optSpreadsheetId = optCopy.candidate.id;
+      const optAdminId = optCopy.candidate.parents?.[0];
+      if (optAdminId && optAdminId !== optSpaceFolder.id) {
+        trackLocal(optAdminId);
+      }
+      trackLocal(optSpreadsheetId);
+
+      expect(optCopy.created).toBe(true);
+      expect(optSpreadsheetId).not.toBe(templateId);
+
+      const optFfeTarget: PositiveTableTarget = {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeLogSchema.target.sheetName,
+        rangeName: ffeLogSchema.target.rangeName,
+        extentMarker: ffeLogSchema.target.extentMarker,
+        groupDividerMarker: ffeLogSchema.target.groupDividerMarker,
+      };
+      await ensureClearedPositiveTable(sheetsApi, optFfeTarget);
+
+      const initialFfeOptions = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-ffe',
+        space: optSpace,
+        selectedLogId: optSpreadsheetId,
+      });
+      expect(initialFfeOptions.status).toBe('ready');
+      if (initialFfeOptions.status !== 'ready') return;
+      expect(initialFfeOptions.spreadsheetId).toBe(optSpreadsheetId);
+      for (const sourceKey of ['statuses', 'actions', 'contacts', 'vendors', 'specs']) {
+        expect(initialFfeOptions.tables[sourceKey]?.status).toBe('ready');
+        expect(initialFfeOptions.tables[sourceKey]?.tuples.length).toBeGreaterThan(0);
+      }
+
+      const ffeFolder = await liveDriveClient.findOrCreateFolder(optSpaceFolder.id, '3 FFE');
+      trackLocal(ffeFolder.id);
+
+      const dummyPdfDoc = await PDFDocument.create();
+      dummyPdfDoc.addPage([612, 792]).drawText('Live Arch Options E2E Target Content');
+      const dummyPdfBytes = Buffer.from(await dummyPdfDoc.save());
+      const optFfeFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
+        action: 'create',
+        name: `Opt_FFE_${runId}.pdf`,
+        targetFolderId: optSpaceFolder.id,
+        mimeType: 'application/pdf',
+      });
+      trackLocal(optFfeFile.id);
+
+      // Custom Spec Tag + Spec Title atomic WRITE_LOG, Validation_* expansion, VLOOKUP resolution, and side-by-side _Config Submittal FF&E stability
       const ffeConfigRanges = [
         ffeStatusesBinding.rangeName,
         ...(ffeStatusesBinding.validationRangeName ? [ffeStatusesBinding.validationRangeName] : []),

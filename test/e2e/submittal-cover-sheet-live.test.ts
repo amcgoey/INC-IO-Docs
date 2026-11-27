@@ -291,10 +291,14 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
       const reviewDoc = await PDFDocument.load(reviewBytes);
       expect(reviewDoc.getPageCount()).toBe(2);
 
+      const templateBytes = await liveDriveClient.downloadAsBuffer(COVER_SHEET_TEMPLATE_ID!);
+      const templateFields = await pdfProcessor.extractFormData(templateBytes);
+
       const extracted = await pdfProcessor.extractFormData(reviewBytes);
       expect(extracted['Submittal No']).toBe('071200-001-0');
-      expect(extracted['Submittal Response']).toBeUndefined();
-      expect(extracted['Date']).toBeUndefined();
+      expect(extracted['Submittal Response']).toBe(templateFields['Submittal Response']);
+      expect(extracted['Date']).toBe(templateFields['Date']);
+      expect(extracted['Date']).not.toBe('2026-11-04');
 
       // Verify DocumentLog links to moveOriginal (Closed/), not the review duplicate
       const logRead = await logWiring.documentLogService.readLog({
