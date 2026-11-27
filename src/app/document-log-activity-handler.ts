@@ -1,10 +1,11 @@
 import { Type, type Static } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import type { Activity } from '../features/document/domain';
-import type {
-  ActivityExecutionContext,
-  ActivityHandler,
-  ActivityOutput,
+import {
+  findPrimaryFiledFile,
+  type ActivityExecutionContext,
+  type ActivityHandler,
+  type ActivityOutput,
 } from '../features/document/ports';
 import {
   LogFilterBySchema,
@@ -143,9 +144,9 @@ export class DocumentLogActivityHandler implements ActivityHandler {
           error: `WRITE_LOG fileSourceStepId "${payload.fileSourceStepId}" references an unexecuted step.`,
         };
       }
-      fileUri = stepOutput.files?.[0]?.uri;
+      fileUri = findPrimaryFiledFile(stepOutput.files)?.uri;
     } else {
-      fileUri = context.files[0]?.uri;
+      fileUri = findPrimaryFiledFile(context.files)?.uri;
     }
 
     try {
@@ -167,8 +168,10 @@ export class DocumentLogActivityHandler implements ActivityHandler {
           documentLogWrite: {
             spreadsheetId: result.spreadsheetId,
             sheetName: result.sheetName,
+            ...(result.sheetId !== undefined ? { sheetId: result.sheetId } : {}),
             rowNumber: result.rowNumber,
             action: result.action,
+            ...(result.uri !== undefined ? { uri: result.uri } : {}),
           },
         },
       };

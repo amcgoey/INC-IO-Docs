@@ -18,6 +18,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { PRIMARY_ACTION_BUTTON_COLOR } from '../src/features/schema-driven-ui/blocks/common';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 interface ButtonWidgetShape {
   button?: {
@@ -106,6 +109,16 @@ const CONFIG_ARCH_CONTACT_VALUES = [
   ['---', '', ''],
 ];
 
+const CONFIG_ARCH_CSI_DIVISION_VALUES = [
+  ['Division Number', 'Division Folder'],
+  ['01', '01 General Requirements'],
+  ['03', '03 Concrete'],
+  ['07', '07 Thermal and Moisture Protection'],
+  ['08', '08 Openings'],
+  ['09', '09 Finishes'],
+  ['---', ''],
+];
+
 function mockConfigSubmittalArchBatchGet(
   spreadsheetId: string,
   applyOpt: <T extends nock.Interceptor>(interceptor: T) => T = (i) => i
@@ -137,6 +150,9 @@ function mockConfigSubmittalArchBatchGet(
         }
         if (range.includes('H1:J')) {
           return { range, values: CONFIG_ARCH_CONTACT_VALUES };
+        }
+        if (range.includes('L1:M')) {
+          return { range, values: CONFIG_ARCH_CSI_DIVISION_VALUES };
         }
         return { range, values: [] };
       }),
@@ -185,6 +201,11 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
         namedRangeId: 'nr-arch-contacts',
         name: 'Options_Submittal_Arch_Contacts',
         range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+      },
+      {
+        namedRangeId: 'nr-arch-csi-divisions',
+        name: 'Options_Submittal_Arch_CSI_Divisions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length, startColumnIndex: 11, endColumnIndex: 13 },
       },
     ],
   });
@@ -268,6 +289,17 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
             endColumnIndex: 10,
           },
         },
+        {
+          namedRangeId: 'nr-arch-csi-divisions',
+          name: 'Options_Submittal_Arch_CSI_Divisions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length,
+            startColumnIndex: 11,
+            endColumnIndex: 13,
+          },
+        },
       ],
     });
 
@@ -313,6 +345,59 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
     .reply(200, {});
 
   return captured;
+}
+
+function mockInsertCoverSheetNock(options: {
+  copyFileId: string;
+  copyFileName: string;
+  copyParentId: string;
+  pdfBytes: Uint8Array;
+}): void {
+  const { copyFileId, copyFileName, copyParentId, pdfBytes } = options;
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt !== 'media')
+    .times(2)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: [copyParentId],
+    });
+
+  nock('https://www.googleapis.com')
+    .get(`/drive/v3/files/${copyFileId}`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .patch(`/upload/drive/v3/files/${copyFileId}`)
+    .query(true)
+    .reply(200, {
+      id: copyFileId,
+      name: copyFileName,
+      mimeType: 'application/pdf',
+      parents: [copyParentId],
+      webViewLink: `https://drive.google.com/file/d/${copyFileId}/view`,
+    });
 }
 
 describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log Status Bar, Space Memoization & Pre-Flight Gating', () => {
@@ -446,6 +531,7 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -1024,6 +1110,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
   });
 
   it('renders resolved Document Log bar with Open Log URL (webViewLink & fallback) and forwards selectedLogId on submit skipping duplicate Drive search (Drive + Gmail)', async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
+    const coverSheetPdfBytes = cachedCoverSheetPdfBytes;
+
     const driveId = 'drive-resolved-1';
     const rawSpaceName = 'Harbor & <Bay> Hotel';
     const logId = 'sheet-log-349';
@@ -1100,18 +1190,29 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         ],
       });
 
-    // MOVE_FILE mocks for submittal-arch: ['6 Construction', 'Submittals']
+    // MOVE_FILE & DUPLICATE_FILE mocks for submittal-arch: ['6 Construction', 'Submittals']
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${driveId}' in parents`) && q.q.includes("name = '6 Construction'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [driveId] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-submittals' in parents") && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-submittals'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-closed' in parents") && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files/arch-res-file')
       .query(true)
+      .times(2)
       .reply(200, {
         id: 'arch-res-file',
         name: '071200-001_Waterproofing.pdf',
@@ -1125,9 +1226,28 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         id: 'arch-res-file',
         name: '071200-001_Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/arch-res-file/view',
       });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/arch-res-file/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'arch-res-file-copy',
+          name: reqBody.name ?? '_071200-001_Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/arch-res-file-copy/view',
+        };
+      });
+    mockInsertCoverSheetNock({
+      copyFileId: 'arch-res-file-copy',
+      copyFileName: '_071200-001_Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const driveCapturedSheets = mockSubmittalArchLogWrite(logId);
 
@@ -1159,7 +1279,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     });
     expect(driveSubmitRes.statusCode).toBe(200);
     const driveSubmitBody = JSON.parse(driveSubmitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(driveSubmitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(driveSubmitBody.action?.notification).toBeUndefined();
+    expect(driveSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(driveSearch.isDone()).toBe(true);
     expect(driveCapturedSheets).toHaveLength(1);
     expect(JSON.stringify(driveCapturedSheets[0])).toContain('071200');
@@ -1188,11 +1311,21 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes(`'${driveId}' in parents`) && q.q.includes("name = '6 Construction'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-6-const', name: '6 Construction', parents: [driveId] }] });
     nock('https://www.googleapis.com')
       .get('/drive/v3/files')
       .query((q) => typeof q.q === 'string' && q.q.includes("'folder-6-const' in parents") && q.q.includes("name = 'Submittals'"))
+      .times(2)
       .reply(200, { files: [{ id: 'folder-submittals', name: 'Submittals', parents: ['folder-6-const'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-submittals' in parents") && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-submittals'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("'folder-closed' in parents") && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
     nock('https://www.googleapis.com')
       .post('/upload/drive/v3/files')
       .query(true)
@@ -1200,9 +1333,28 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
         id: 'drive-saved-gmail-349',
         name: '071200-001-A Waterproofing.pdf',
         mimeType: 'application/pdf',
-        parents: ['folder-submittals'],
+        parents: ['folder-csi-07'],
         webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-349/view',
       });
+    nock('https://www.googleapis.com')
+      .post('/drive/v3/files/drive-saved-gmail-349/copy')
+      .query(true)
+      .reply(200, (_uri, body) => {
+        const reqBody = body as { name?: string; parents?: string[] };
+        return {
+          id: 'drive-saved-gmail-349-copy',
+          name: reqBody.name ?? '_071200-001-A Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          parents: reqBody.parents ?? ['folder-submittals'],
+          webViewLink: 'https://drive.google.com/file/d/drive-saved-gmail-349-copy/view',
+        };
+      });
+    mockInsertCoverSheetNock({
+      copyFileId: 'drive-saved-gmail-349-copy',
+      copyFileName: '_071200-001-A Waterproofing.pdf',
+      copyParentId: 'folder-submittals',
+      pdfBytes: coverSheetPdfBytes,
+    });
 
     const gmailCapturedSheets = mockSubmittalArchLogWrite(logId);
 
@@ -1241,7 +1393,10 @@ describe('Ticket #349 Tracer Bullet: UiContextQueryPort, Mid-Card Document Log S
     });
     expect(gmailSubmitRes.statusCode).toBe(200);
     const gmailSubmitBody = JSON.parse(gmailSubmitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(gmailSubmitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(gmailSubmitBody.action?.notification).toBeUndefined();
+    expect(gmailSubmitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(gmailSearch.isDone()).toBe(true);
     expect(gmailCapturedSheets).toHaveLength(1);
     expect(JSON.stringify(gmailCapturedSheets[0])).toContain('071200');

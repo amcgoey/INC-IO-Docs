@@ -365,8 +365,17 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       .query((q) => typeof q.q === 'string' && q.q.includes("name = 'Submittals'"))
       .reply(200, { files: [{ id: 'folder-subs', name: 'Submittals', parents: ['folder-6c'] }] });
     nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("name = 'Closed'"))
+      .reply(200, { files: [{ id: 'folder-closed', name: 'Closed', parents: ['folder-subs'] }] });
+    nock('https://www.googleapis.com')
+      .get('/drive/v3/files')
+      .query((q) => typeof q.q === 'string' && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+      .reply(200, { files: [{ id: 'folder-csi-07', name: '07 Thermal and Moisture Protection', parents: ['folder-closed'] }] });
+    nock('https://www.googleapis.com')
       .get(`/drive/v3/files/${FILE_ID}`)
       .query(true)
+      .times(2)
       .reply(200, {
         id: FILE_ID,
         name: FILE_NAME,
@@ -381,6 +390,16 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
         name: '071200-001-0 Waterproofing & Drainage - 261120 PMG_NOC.pdf',
         webViewLink: `https://drive.google.com/file/d/${FILE_ID}/view`,
       });
+
+    const csiRows = [
+      ['Division Number', 'Division Folder'],
+      ['01', '01 General Requirements'],
+      ['03', '03 Concrete'],
+      ['07', '07 Thermal and Moisture Protection'],
+      ['08', '08 Openings'],
+      ['09', '09 Finishes'],
+      ['---', ''],
+    ];
 
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${logId}`)
@@ -413,6 +432,11 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
             name: 'Options_Submittal_Arch_Contacts',
             range: { sheetId: 103, startRowIndex: 0, endRowIndex: contactsRows.length, startColumnIndex: 11, endColumnIndex: 14 },
           },
+          {
+            namedRangeId: 'nr-csi-divisions',
+            name: 'Options_Submittal_Arch_CSI_Divisions',
+            range: { sheetId: 103, startRowIndex: 0, endRowIndex: csiRows.length, startColumnIndex: 15, endColumnIndex: 17 },
+          },
         ],
       });
     nock('https://sheets.googleapis.com')
@@ -429,7 +453,9 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
               ? statusesRows
               : r.includes('E1:')
                 ? actionsRows
-                : contactsRows,
+                : r.includes('P1:')
+                  ? csiRows
+                  : contactsRows,
           })),
         };
       });
@@ -484,7 +510,10 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
 
     expect(submitRes.statusCode).toBe(200);
     const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-    expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(nock.isDone()).toBe(true);
   });
 

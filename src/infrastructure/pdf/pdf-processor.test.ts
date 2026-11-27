@@ -1,12 +1,26 @@
-import { describe, it, expect, vi } from 'vitest';
-import { PDFDocument, PDFName, PDFPage, StandardFonts } from 'pdf-lib';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  PDFPage,
+  PDFRef,
+  PDFString,
+  StandardFonts,
+} from 'pdf-lib';
 import { PdfProcessor } from './pdf-processor';
 import type { EmailPdfRenderInput } from './types';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
+  PdfFileTooLargeError,
+  PdfFormFieldError,
   PdfOutOfBoundsError,
+  PdfProcessorError,
+  PdfUnsupportedFormError,
 } from './errors';
+import { createAnonymizedSubmittalCoverSheetPdf } from '../../../test/fixtures/submittal-cover-sheet.fixture';
 
 describe('PdfProcessor', () => {
   const processor = new PdfProcessor();
@@ -1366,6 +1380,876 @@ describe('PdfProcessor', () => {
       expect(doc.getPageCount()).toBe(1);
 
       drawImageSpy.mockRestore();
+    });
+  });
+
+  describe('centralized in-memory file-size guard', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('enforces async size-limit provider across single-buffer operations and cumulative mergeDocuments', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      const limit = pdfBytes.byteLength + 10;
+      const getMaxInMemoryFileBytes = vi.fn().mockResolvedValue(limit);
+      const guarded = new PdfProcessor({ getMaxInMemoryFileBytes });
+
+      // Single buffer within limit passes
+      await expect(guarded.extractPages(pdfBytes, [1])).resolves.toBeInstanceOf(Uint8Array);
+      await expect(guarded.extractFormData(pdfBytes)).resolves.toEqual({});
+
+      // Cumulative mergeDocuments exceeds limit even though each buffer is below limit
+      await expect(guarded.mergeDocuments([pdfBytes, pdfBytes])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
+
+      // Strict lower limit rejects single-buffer operations before parsing
+      const tightGuarded = new PdfProcessor({
+        getMaxInMemoryFileBytes: async () => pdfBytes.byteLength - 1,
+      });
+      await expect(tightGuarded.extractPages(pdfBytes, [1])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(tightGuarded.extractFormData(pdfBytes)).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(
+        tightGuarded.processFormSubmission(pdfBytes, { Field: 'val' })
+      ).rejects.toThrow(PdfFileTooLargeError);
+      await expect(tightGuarded.extractTextFromPages(pdfBytes, [1])).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+      await expect(
+        tightGuarded.generateEmailPdf({
+          messageId: 'msg-oversized',
+          inlineImages: [
+            {
+              cid: 'img-1',
+              mimeType: 'image/png',
+              data: new Uint8Array(pdfBytes.byteLength),
+            },
+          ],
+        })
+      ).rejects.toThrow(PdfFileTooLargeError);
+    });
+
+    it('honors MAX_IN_MEMORY_FILE_BYTES environment override when no custom provider is passed', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', String(pdfBytes.byteLength - 1));
+
+      const defaultProcessor = new PdfProcessor();
+      await expect(defaultProcessor.extractFormData(pdfBytes)).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+    });
+
+    it('rejects non-positive or non-finite maxInMemoryFileBytes overrides consistently', async () => {
+      const pdfBytes = await createSamplePdf(1);
+      const invalidProcessor = new PdfProcessor({ getMaxInMemoryFileBytes: () => -10 });
+
+      await expect(invalidProcessor.extractFormData(pdfBytes)).rejects.toThrow(
+        /Invalid maxInMemoryFileBytes configuration.*must be a positive finite number/
+      );
+    });
+  });
+
+  describe('insertPages', () => {
+    it('prepends an anonymized editable cover sheet with single-pass form fill, preserving target metadata, widget /P refs, and zero flattening', async () => {
+      const targetDoc = await PDFDocument.create();
+      targetDoc.setTitle('Manufacturer Product Data');
+      targetDoc.setAuthor('Vendor Engineering');
+      const p1 = targetDoc.addPage([612, 792]);
+      p1.drawText('Target Page 1');
+      const p2 = targetDoc.addPage([612, 792]);
+      p2.drawText('Target Page 2');
+      const targetBytes = await targetDoc.save();
+
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      const resultBytes = await processor.insertPages(targetBytes, coverBytes, {
+        position: 'start',
+        sourcePages: [1],
+        formData: {
+          'Submittal No': '08 11 00-001-0',
+        },
+      });
+
+      const resultDoc = await PDFDocument.load(resultBytes);
+      expect(resultDoc.getPageCount()).toBe(3);
+      expect(resultDoc.getTitle()).toBe('Manufacturer Product Data');
+      expect(resultDoc.getAuthor()).toBe('Vendor Engineering');
+
+      // Ensure no ghost pages were created in context
+      const pageLeafCount = resultDoc.context
+        .enumerateIndirectObjects()
+        .filter(([, obj]) => obj instanceof PDFDict && obj.get(PDFName.of('Type')) === PDFName.of('Page')).length;
+      expect(pageLeafCount).toBe(3);
+
+      // Verify cover sheet is page 1 and target pages follow
+      const page1Text = await processor.extractTextFromPages(resultBytes, [1]);
+      const page2Text = await processor.extractTextFromPages(resultBytes, [2]);
+      expect(page1Text).toContain('SUBMITTAL COVER SHEET');
+      expect(page2Text).toContain('Target Page 1');
+
+      // Verify all cover-sheet AcroForm fields remain unflattened and editable
+      const resultForm = resultDoc.getForm();
+      expect(resultForm.getFields().map((f) => f.getName())).toEqual([
+        'Submittal No',
+        'Submittal Response',
+        'Date',
+        'Reviewed By',
+        'REMARKS',
+      ]);
+
+      // Verify every widget on page 1 points /P to page 1's actual PDFRef
+      const insertedPageRef = resultDoc.getPage(0).ref;
+      for (const field of resultForm.getFields()) {
+        for (const widget of field.acroField.getWidgets()) {
+          expect(widget.P()).toBe(insertedPageRef);
+        }
+      }
+
+      // Verify extractFormData round-trip and subsequent editability
+      expect(await processor.extractFormData(resultBytes)).toEqual({
+        'Submittal No': '08 11 00-001-0',
+        'Submittal Response': undefined,
+        Date: undefined,
+        'Reviewed By': undefined,
+        REMARKS: undefined,
+      });
+
+      const editedBytes = await processor.processFormSubmission(resultBytes, {
+        'Submittal Response': 'No Exceptions Taken',
+        Date: '2026-11-26',
+        'Reviewed By': 'A. Reviewer',
+        REMARKS: 'Approved for fabrication.',
+      });
+      expect(await processor.extractFormData(editedBytes)).toEqual({
+        'Submittal No': '08 11 00-001-0',
+        'Submittal Response': 'No Exceptions Taken',
+        Date: '2026-11-26',
+        'Reviewed By': 'A. Reviewer',
+        REMARKS: 'Approved for fabrication.',
+      });
+    });
+
+    it('supports position "end" and numeric insertion indices while rejecting out-of-bounds or invalid sourcePages', async () => {
+      const targetBytes = await createSamplePdf(2);
+      const insertDoc = await PDFDocument.create();
+      for (let i = 1; i <= 3; i++) {
+        const p = insertDoc.addPage([300, 300]);
+        p.drawText(`Insert ${i}`);
+      }
+      const insertBytes = await insertDoc.save();
+
+      // Insert at 'end'
+      const atEnd = await processor.insertPages(targetBytes, insertBytes, {
+        position: 'end',
+        sourcePages: [2],
+      });
+      expect(await processor.extractTextFromPages(atEnd, [1, 2, 3])).toBe(
+        'Page 1\nPage 2\nInsert 2'
+      );
+
+      // Insert at numeric index 1 (between Page 1 and Page 2)
+      const atMiddle = await processor.insertPages(targetBytes, insertBytes, {
+        position: 1,
+        sourcePages: [3, 1],
+      });
+      expect(await processor.extractTextFromPages(atMiddle, [1, 2, 3, 4])).toBe(
+        'Page 1\nInsert 3\nInsert 1\nPage 2'
+      );
+
+      // Reject empty, out-of-range, non-integer, and duplicate sourcePages
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { sourcePages: [] })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { sourcePages: [0] })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { sourcePages: [4] })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { sourcePages: [1.5] })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { sourcePages: [1, 1] })
+      ).rejects.toThrow(PdfProcessorError);
+
+      // Reject out-of-bounds numeric position
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { position: -1 })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { position: 3 })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+      await expect(
+        processor.insertPages(targetBytes, insertBytes, { position: 0.5 })
+      ).rejects.toThrow(PdfOutOfBoundsError);
+    });
+
+    it('filters /AcroForm/Fields, multi-page widget /Kids, and /CO strictly to sourcePages without ghost pages', async () => {
+      const targetBytes = await createSamplePdf(1);
+
+      const insertDoc = await PDFDocument.create();
+      const page1 = insertDoc.addPage([400, 400]);
+      const page2 = insertDoc.addPage([400, 400]);
+      const form = insertDoc.getForm();
+
+      const p1Field = form.createTextField('Page1Only');
+      p1Field.setText('KeepMe');
+      p1Field.addToPage(page1, { x: 20, y: 300, width: 100, height: 20 });
+
+      const p2Field = form.createTextField('Page2Only');
+      p2Field.setText('DropMe');
+      p2Field.addToPage(page2, { x: 20, y: 300, width: 100, height: 20 });
+
+      // Multi-widget field spanning both page 1 and page 2
+      const sharedField = form.createTextField('SharedSpanning');
+      sharedField.setText('SharedVal');
+      sharedField.addToPage(page1, { x: 20, y: 240, width: 100, height: 20 });
+      sharedField.addToPage(page2, { x: 20, y: 240, width: 100, height: 20 });
+
+      // Populate /CO referencing both selected and unselected fields
+      form.acroForm.dict.set(
+        PDFName.of('CO'),
+        insertDoc.context.obj([p1Field.ref, p2Field.ref])
+      );
+
+      const insertBytes = await insertDoc.save();
+
+      const resultBytes = await processor.insertPages(targetBytes, insertBytes, {
+        position: 'start',
+        sourcePages: [1],
+      });
+
+      const resultDoc = await PDFDocument.load(resultBytes);
+      expect(resultDoc.getPageCount()).toBe(2);
+
+      // No ghost page 2 in indirect objects
+      const pageLeafCount = resultDoc.context
+        .enumerateIndirectObjects()
+        .filter(
+          ([, obj]) =>
+            obj instanceof PDFDict && obj.get(PDFName.of('Type')) === PDFName.of('Page')
+        ).length;
+      expect(pageLeafCount).toBe(2);
+
+      const resultForm = resultDoc.getForm();
+      expect(resultForm.getFields().map((f) => f.getName())).toEqual([
+        'Page1Only',
+        'SharedSpanning',
+      ]);
+      expect(resultForm.getTextField('SharedSpanning').acroField.getWidgets()).toHaveLength(
+        1
+      );
+
+      const co = resultForm.acroForm.dict.lookupMaybe(PDFName.of('CO'), PDFArray);
+      expect(co?.size()).toBe(1);
+    });
+
+    it('isolates colliding target root fields (including hierarchical /Kids and unsigned PDFSignature) under PDFAcroNonTerminal namespace and avoids collision on re-submission', async () => {
+      // Build target PDF with colliding, non-colliding, hierarchical, and unsigned signature fields
+      const targetDoc = await PDFDocument.create();
+      const tPage = targetDoc.addPage([612, 792]);
+      const tForm = targetDoc.getForm();
+
+      const tSubmittalNo = tForm.createTextField('Submittal No');
+      tSubmittalNo.setText('TARGET-001');
+      tSubmittalNo.addToPage(tPage, { x: 50, y: 700, width: 150, height: 20 });
+
+      const tProjectName = tForm.createTextField('Project Name');
+      tProjectName.setText('Tower North');
+      tProjectName.addToPage(tPage, { x: 50, y: 660, width: 150, height: 20 });
+
+      const tGroupField = tForm.createTextField('Group.ItemA');
+      tGroupField.setText('GroupVal');
+      tGroupField.addToPage(tPage, { x: 50, y: 620, width: 150, height: 20 });
+
+      const tSigRef = targetDoc.context.register(
+        targetDoc.context.obj({
+          FT: 'Sig',
+          T: PDFString.of('ApproverSig'),
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [50, 560, 200, 600],
+          P: tPage.ref,
+        })
+      );
+      tForm.acroForm.addField(tSigRef);
+      tPage.node.addAnnot(tSigRef);
+
+      const targetBytes = await targetDoc.save();
+
+      // Build cover sheet with colliding "Submittal No", "Group.CoverItem", and unsigned "ApproverSig"
+      const insertDoc = await PDFDocument.create();
+      const iPage = insertDoc.addPage([612, 792]);
+      const iForm = insertDoc.getForm();
+      iForm.createTextField('Submittal No').addToPage(iPage, { x: 50, y: 700, width: 150, height: 20 });
+      const iGroup = iForm.createTextField('Group.CoverItem');
+      iGroup.setText('CoverGroupVal');
+      iGroup.addToPage(iPage, { x: 50, y: 660, width: 150, height: 20 });
+      const iSigRef = insertDoc.context.register(
+        insertDoc.context.obj({
+          FT: 'Sig',
+          T: PDFString.of('ApproverSig'),
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [50, 560, 200, 600],
+          P: iPage.ref,
+        })
+      );
+      iForm.acroForm.addField(iSigRef);
+      iPage.node.addAnnot(iSigRef);
+      const insertBytes = await insertDoc.save();
+
+      const onceBytes = await processor.insertPages(targetBytes, insertBytes, {
+        formData: { 'Submittal No': 'COVER-001' },
+      });
+
+      const onceExtracted = await processor.extractFormData(onceBytes);
+      expect(onceExtracted).toEqual({
+        '__target.Submittal No': 'TARGET-001',
+        'Project Name': 'Tower North',
+        '__target.Group.ItemA': 'GroupVal',
+        '__target.ApproverSig': undefined,
+        'Submittal No': 'COVER-001',
+        'Group.CoverItem': 'CoverGroupVal',
+        ApproverSig: undefined,
+      });
+
+      // Target namespaced field remains editable
+      const editedOnce = await processor.processFormSubmission(onceBytes, {
+        '__target.Submittal No': 'TARGET-001-REV',
+      });
+      expect((await processor.extractFormData(editedOnce))['__target.Submittal No']).toBe(
+        'TARGET-001-REV'
+      );
+
+      // Re-submit onto already-grafted PDF: uses non-colliding __target_1 namespace
+      const cover2Bytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const twiceBytes = await processor.insertPages(onceBytes, cover2Bytes, {
+        formData: { 'Submittal No': 'COVER-002' },
+      });
+      const twiceExtracted = await processor.extractFormData(twiceBytes);
+      expect(twiceExtracted['Submittal No']).toBe('COVER-002');
+      expect(twiceExtracted['__target_1.Submittal No']).toBe('COVER-001');
+      expect(twiceExtracted['__target.Submittal No']).toBe('TARGET-001');
+      expect(twiceExtracted['Project Name']).toBe('Tower North');
+    });
+
+    it('supports targetAcroFormPolicy "strip" without flattening while preserving non-widget annotations', async () => {
+      const targetDoc = await PDFDocument.create();
+      const page = targetDoc.addPage([400, 400]);
+      const form = targetDoc.getForm();
+      const tf = form.createTextField('TargetField');
+      tf.setText('TargetText');
+      tf.addToPage(page, { x: 20, y: 300, width: 100, height: 20 });
+
+      const linkAnnotRef = targetDoc.context.register(
+        targetDoc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Link',
+          Rect: [20, 200, 120, 220],
+        })
+      );
+      page.node.addAnnot(linkAnnotRef);
+      const targetBytes = await targetDoc.save();
+
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const resultBytes = await processor.insertPages(targetBytes, coverBytes, {
+        targetAcroFormPolicy: 'strip',
+        formData: { 'Submittal No': 'STRIP-001' },
+      });
+
+      const resultDoc = await PDFDocument.load(resultBytes);
+      expect(resultDoc.getPageCount()).toBe(2);
+
+      // Target page retains its Link annotation, has no Widget annotations
+      const targetPageAnnots = resultDoc.getPage(1).node.Annots();
+      expect(targetPageAnnots?.size()).toBe(1);
+      expect(
+        targetPageAnnots?.lookupMaybe(0, PDFDict)?.get(PDFName.of('Subtype'))
+      ).toBe(PDFName.of('Link'));
+
+      // Only cover-sheet fields remain editable
+      expect(await processor.extractFormData(resultBytes)).toEqual({
+        'Submittal No': 'STRIP-001',
+        'Submittal Response': undefined,
+        Date: undefined,
+        'Reviewed By': undefined,
+        REMARKS: undefined,
+      });
+    });
+
+    it('rejects XFA on cover sheets and pure-XFA targets with PdfUnsupportedFormError, while allowing hybrid XFA fallback by default', async () => {
+      const targetBytes = await createSamplePdf(1);
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      // Cover sheet with XFA is always rejected
+      const xfaCoverDoc = await PDFDocument.load(coverBytes);
+      const xfaStream = xfaCoverDoc.context.flateStream('<xdp:xdp/>');
+      xfaCoverDoc.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), xfaCoverDoc.context.register(xfaStream));
+      const xfaCoverBytes = await xfaCoverDoc.save({ updateFieldAppearances: false });
+
+      await expect(
+        processor.insertPages(targetBytes, xfaCoverBytes)
+      ).rejects.toThrow(PdfUnsupportedFormError);
+
+      // Pure XFA target (has /XFA, empty /Fields, 0 widgets) is rejected
+      const pureXfaTargetDoc = await PDFDocument.create();
+      pureXfaTargetDoc.addPage([400, 400]);
+      const pureAcro = pureXfaTargetDoc.catalog.getOrCreateAcroForm();
+      pureAcro.dict.set(
+        PDFName.of('XFA'),
+        pureXfaTargetDoc.context.register(pureXfaTargetDoc.context.flateStream('<xdp/>'))
+      );
+      const pureXfaBytes = await pureXfaTargetDoc.save({ updateFieldAppearances: false });
+
+      await expect(
+        processor.insertPages(pureXfaBytes, coverBytes)
+      ).rejects.toThrow(PdfUnsupportedFormError);
+
+      // Hybrid XFA target (has /XFA AND real AcroForm field + widget) falls back by default
+      const hybridTargetDoc = await PDFDocument.create();
+      const hPage = hybridTargetDoc.addPage([400, 400]);
+      const hForm = hybridTargetDoc.getForm();
+      const hField = hForm.createTextField('ExistingHybrid');
+      hField.setText('HybridVal');
+      hField.addToPage(hPage, { x: 20, y: 300, width: 100, height: 20 });
+      hForm.acroForm.dict.set(
+        PDFName.of('XFA'),
+        hybridTargetDoc.context.register(hybridTargetDoc.context.flateStream('<xdp/>'))
+      );
+      const hybridBytes = await hybridTargetDoc.save({ updateFieldAppearances: false });
+
+      const graftedHybrid = await processor.insertPages(hybridBytes, coverBytes, {
+        formData: { 'Submittal No': 'HYB-001' },
+      });
+      const graftedHybridDoc = await PDFDocument.load(graftedHybrid);
+      expect(
+        graftedHybridDoc.catalog.getAcroForm()?.dict.has(PDFName.of('XFA'))
+      ).toBe(false);
+      expect(await processor.extractFormData(graftedHybrid)).toMatchObject({
+        ExistingHybrid: 'HybridVal',
+        'Submittal No': 'HYB-001',
+      });
+
+      // Hybrid XFA rejected under xfaPolicy: 'error'
+      await expect(
+        processor.insertPages(hybridBytes, coverBytes, { xfaPolicy: 'error' })
+      ).rejects.toThrow(PdfUnsupportedFormError);
+    });
+
+    it('treats /XFA with non-empty /Fields (0 widgets) or empty /Fields with page widgets as hybrid XFA rather than pure XFA', async () => {
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      // Case 1: /XFA + non-empty /Fields (field dict without /Subtype /Widget or /Rect) and 0 widgets
+      const fieldsOnlyDoc = await PDFDocument.create();
+      fieldsOnlyDoc.addPage([400, 400]);
+      const fieldsOnlyAcro = fieldsOnlyDoc.catalog.getOrCreateAcroForm();
+      const nonWidgetFieldRef = fieldsOnlyDoc.context.register(
+        fieldsOnlyDoc.context.obj({
+          FT: 'Tx',
+          T: PDFString.of('NonWidgetField'),
+          V: PDFString.of('FieldVal'),
+        })
+      );
+      fieldsOnlyAcro.addField(nonWidgetFieldRef);
+      fieldsOnlyAcro.dict.set(
+        PDFName.of('XFA'),
+        fieldsOnlyDoc.context.register(fieldsOnlyDoc.context.flateStream('<xdp/>'))
+      );
+      const fieldsOnlyBytes = await fieldsOnlyDoc.save({ updateFieldAppearances: false });
+
+      const graftedFieldsOnly = await processor.insertPages(fieldsOnlyBytes, coverBytes, {
+        formData: { 'Submittal No': 'HYB-FIELDS-001' },
+      });
+      const graftedFieldsOnlyDoc = await PDFDocument.load(graftedFieldsOnly);
+      expect(
+        graftedFieldsOnlyDoc.catalog.getAcroForm()?.dict.has(PDFName.of('XFA'))
+      ).toBe(false);
+      expect(graftedFieldsOnlyDoc.getPageCount()).toBe(2);
+
+      // Case 2: /XFA + empty /Fields + page widget annotation in /Annots
+      const pageWidgetDoc = await PDFDocument.create();
+      const page = pageWidgetDoc.addPage([400, 400]);
+      const pageWidgetAcro = pageWidgetDoc.catalog.getOrCreateAcroForm();
+      const widgetAnnotRef = pageWidgetDoc.context.register(
+        pageWidgetDoc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 300, 120, 320],
+          P: page.ref,
+        })
+      );
+      page.node.set(PDFName.of('Annots'), pageWidgetDoc.context.obj([widgetAnnotRef]));
+      pageWidgetAcro.dict.set(
+        PDFName.of('XFA'),
+        pageWidgetDoc.context.register(pageWidgetDoc.context.flateStream('<xdp/>'))
+      );
+      const pageWidgetBytes = await pageWidgetDoc.save({ updateFieldAppearances: false });
+
+      const graftedPageWidget = await processor.insertPages(pageWidgetBytes, coverBytes, {
+        formData: { 'Submittal No': 'HYB-WIDGET-001' },
+      });
+      const graftedPageWidgetDoc = await PDFDocument.load(graftedPageWidget);
+      expect(
+        graftedPageWidgetDoc.catalog.getAcroForm()?.dict.has(PDFName.of('XFA'))
+      ).toBe(false);
+      expect(graftedPageWidgetDoc.getPageCount()).toBe(2);
+    });
+
+    it('detects active cryptographic signatures (ByteRange/Contents) and throws PdfUnsupportedFormError without touching unsigned PDFSignature fields', async () => {
+      const signedDoc = await PDFDocument.create();
+      const page = signedDoc.addPage([400, 400]);
+      const form = signedDoc.getForm();
+      const sigValRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          Type: 'Sig',
+          Filter: 'Adobe.PPKLite',
+          ByteRange: [0, 100, 200, 300],
+          Contents: PDFString.of('0000'),
+        })
+      );
+      const sigRef = signedDoc.context.register(
+        signedDoc.context.obj({
+          FT: 'Sig',
+          T: PDFString.of('DigitalSig'),
+          V: sigValRef,
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 300, 180, 340],
+          P: page.ref,
+        })
+      );
+      form.acroForm.addField(sigRef);
+      form.acroForm.dict.set(PDFName.of('SigFlags'), signedDoc.context.obj(3));
+      page.node.addAnnot(sigRef);
+      const signedBytes = await signedDoc.save({ updateFieldAppearances: false });
+
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      let caught: unknown;
+      try {
+        await processor.insertPages(signedBytes, coverBytes);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(PdfUnsupportedFormError);
+      expect((caught as PdfUnsupportedFormError).reason).toBe('signed');
+    });
+
+    it('validates choice options before WinAnsi sanitization, rejects unknown dropdown/radio options and ExceededMaxLengthError with PdfFormFieldError, registers /DR/Font, and clears /NeedAppearances', async () => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([400, 500]);
+      const form = doc.getForm();
+
+      const limitedText = form.createTextField('Code');
+      limitedText.setMaxLength(5);
+      limitedText.addToPage(page, { x: 20, y: 420, width: 120, height: 20 });
+      limitedText.acroField.setDefaultAppearance('/Helv 10 Tf 0 g');
+
+      const dropdown = form.createDropdown('Status');
+      dropdown.setOptions(['Option--A', 'Option B', 'Café — Special']);
+      dropdown.addToPage(page, { x: 20, y: 380, width: 120, height: 20 });
+
+      const radio = form.createRadioGroup('Decision');
+      radio.addOptionToPage('Yes', page, { x: 20, y: 350, width: 14, height: 14 });
+      radio.addOptionToPage('No', page, { x: 50, y: 350, width: 14, height: 14 });
+
+      const notes = form.createTextField('Notes');
+      notes.addToPage(page, { x: 20, y: 300, width: 200, height: 40 });
+
+      const untouched = form.createTextField('Untouched');
+      untouched.setText('KeepOriginalAp');
+      untouched.addToPage(page, { x: 20, y: 240, width: 140, height: 20 });
+      untouched.defaultUpdateAppearances(await doc.embedFont(StandardFonts.Helvetica));
+      const originalUntouchedApRef = untouched.acroField.getWidgets()[0]!.getNormalAppearance();
+
+      // Set /NeedAppearances true on source form
+      form.acroForm.dict.set(PDFName.of('NeedAppearances'), doc.context.obj(true));
+      const templateBytes = await doc.save({ updateFieldAppearances: false });
+      const targetBytes = await createSamplePdf(1);
+
+      // Unknown dropdown option (even when em-dash would sanitize to '--') throws PdfFormFieldError
+      await expect(
+        processor.insertPages(targetBytes, templateBytes, {
+          formData: { Status: 'Option\u2014A' },
+        })
+      ).rejects.toThrow(PdfFormFieldError);
+
+      await expect(
+        processor.processFormSubmission(templateBytes, { Status: 'UnknownOption' })
+      ).rejects.toThrow(PdfFormFieldError);
+
+      await expect(
+        processor.processFormSubmission(templateBytes, { Decision: 'Maybe' })
+      ).rejects.toThrow(PdfFormFieldError);
+
+      // ExceededMaxLengthError throws PdfFormFieldError
+      await expect(
+        processor.insertPages(targetBytes, templateBytes, {
+          formData: { Code: '123456' },
+        })
+      ).rejects.toThrow(PdfFormFieldError);
+
+      // Valid fill with non-WinAnsi text sanitizes text field cleanly, keeps valid non-WinAnsi dropdown option in /V, registers /DR/Font, clears /NeedAppearances, and leaves untouched AP stream intact
+      const filledBytes = await processor.insertPages(targetBytes, templateBytes, {
+        formData: {
+          Code: 'A1',
+          Status: 'Café — Special',
+          Decision: 'Yes',
+          Notes: '“Smart” — ellipsis… 🚀',
+        },
+      });
+
+      const filledDoc = await PDFDocument.load(filledBytes);
+      const acro = filledDoc.catalog.getAcroForm()!;
+      expect(acro.dict.has(PDFName.of('NeedAppearances'))).toBe(false);
+
+      const drFont = acro.dict
+        .lookupMaybe(PDFName.of('DR'), PDFDict)
+        ?.lookupMaybe(PDFName.of('Font'), PDFDict);
+      expect(drFont?.has(PDFName.of('Helv'))).toBe(true);
+      expect(drFont?.has(PDFName.of('Helvetica'))).toBe(true);
+
+      // Untouched field was not needlessly marked dirty or given a new appearance stream when checking processFormSubmission
+      const resubmitted = await processor.processFormSubmission(templateBytes, {
+        Code: 'B2',
+      });
+      const resubDoc = await PDFDocument.load(resubmitted);
+      const resubUntouched = resubDoc.getForm().getTextField('Untouched');
+      expect(resubUntouched.getText()).toBe('KeepOriginalAp');
+      expect(originalUntouchedApRef).toBeInstanceOf(PDFRef);
+
+      expect(await processor.extractFormData(filledBytes)).toEqual({
+        Code: 'A1',
+        Status: ['Café — Special'],
+        Decision: 'Yes',
+        Notes: '"Smart" -- ellipsis... ?',
+        Untouched: 'KeepOriginalAp',
+      });
+    });
+
+    it('preserves merged field+widget identity via shared PDFObjectCopier and skips regenerating untouched fields appearances', async () => {
+      const targetBytes = await createSamplePdf(1);
+
+      const insertDoc = await PDFDocument.create();
+      const page = insertDoc.addPage([400, 400]);
+      const form = insertDoc.getForm();
+
+      // Merged field+widget dictionary (no /Kids)
+      const mergedStream = insertDoc.context.formXObject([]);
+      const mergedApRef = insertDoc.context.register(mergedStream);
+      const mergedFieldRef = insertDoc.context.register(
+        insertDoc.context.obj({
+          FT: 'Tx',
+          T: PDFString.of('MergedWidget'),
+          V: PDFString.of('InitialMerged'),
+          Type: 'Annot',
+          Subtype: 'Widget',
+          Rect: [20, 320, 180, 340],
+          P: page.ref,
+          AP: { N: mergedApRef },
+        })
+      );
+      form.acroForm.addField(mergedFieldRef);
+      page.node.addAnnot(mergedFieldRef);
+
+      const editableField = form.createTextField('EditedField');
+      editableField.addToPage(page, { x: 20, y: 260, width: 160, height: 20 });
+
+      const insertBytes = await insertDoc.save({ updateFieldAppearances: false });
+
+      const resultBytes = await processor.insertPages(targetBytes, insertBytes, {
+        formData: { EditedField: 'Stamped' },
+      });
+      const resultDoc = await PDFDocument.load(resultBytes);
+      const insertedPage = resultDoc.getPage(0);
+      const resultForm = resultDoc.getForm();
+
+      const mergedField = resultForm.getTextField('MergedWidget');
+      const widgets = mergedField.acroField.getWidgets();
+      expect(widgets).toHaveLength(1);
+      expect(widgets[0]!.P()).toBe(insertedPage.ref);
+
+      // Merged ref in /AcroForm/Fields matches annot ref on page
+      const annots = insertedPage.node.Annots()!;
+      const annotRefs = Array.from({ length: annots.size() }, (_, i) => annots.get(i));
+      expect(annotRefs).toContain(mergedField.ref);
+
+      // Untouched MergedWidget kept its original custom AP stream (not overwritten)
+      expect(mergedField.getText()).toBe('InitialMerged');
+      expect(widgets[0]!.getNormalAppearance()).toBeInstanceOf(PDFRef);
+      expect(await processor.extractFormData(resultBytes)).toEqual({
+        MergedWidget: 'InitialMerged',
+        EditedField: 'Stamped',
+      });
+    });
+
+    it('enforces cumulative byte limit across targetBuffer and insertBuffer in insertPages', async () => {
+      const targetBytes = await createSamplePdf(1);
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+      const singleMax = Math.max(targetBytes.byteLength, coverBytes.byteLength);
+
+      const guarded = new PdfProcessor({
+        getMaxInMemoryFileBytes: async () => singleMax + 10,
+      });
+
+      // Individual buffers fit, cumulative sum exceeds limit
+      await expect(guarded.insertPages(targetBytes, coverBytes)).rejects.toThrow(
+        PdfFileTooLargeError
+      );
+    });
+  });
+
+  describe('mergeDocuments AcroForm preservation', () => {
+    it('preserves colliding and non-colliding AcroForm fields across merged documents using namespace isolation without flattening', async () => {
+      const doc1 = await PDFDocument.create();
+      const p1 = doc1.addPage([400, 400]);
+      const f1 = doc1.getForm();
+      const f1Shared = f1.createTextField('Title');
+      f1Shared.setText('First Doc');
+      f1Shared.addToPage(p1, { x: 20, y: 300, width: 120, height: 20 });
+      const f1Unique = f1.createTextField('Doc1Only');
+      f1Unique.setText('Alpha');
+      f1Unique.addToPage(p1, { x: 20, y: 260, width: 120, height: 20 });
+
+      const doc2 = await PDFDocument.create();
+      const p2 = doc2.addPage([400, 400]);
+      const f2 = doc2.getForm();
+      const f2Shared = f2.createTextField('Title');
+      f2Shared.setText('Second Doc');
+      f2Shared.addToPage(p2, { x: 20, y: 300, width: 120, height: 20 });
+      const f2Unique = f2.createTextField('Doc2Only');
+      f2Unique.setText('Beta');
+      f2Unique.addToPage(p2, { x: 20, y: 260, width: 120, height: 20 });
+
+      const mergedBytes = await processor.mergeDocuments([
+        await doc1.save(),
+        await doc2.save(),
+      ]);
+
+      expect(await processor.extractFormData(mergedBytes)).toEqual({
+        '__target.Title': 'First Doc',
+        Doc1Only: 'Alpha',
+        Title: 'Second Doc',
+        Doc2Only: 'Beta',
+      });
+
+      // Merged fields remain editable
+      const editedMerged = await processor.processFormSubmission(mergedBytes, {
+        '__target.Title': 'Updated First',
+        Title: 'Updated Second',
+      });
+      expect(await processor.extractFormData(editedMerged)).toEqual({
+        '__target.Title': 'Updated First',
+        Doc1Only: 'Alpha',
+        Title: 'Updated Second',
+        Doc2Only: 'Beta',
+      });
+    });
+
+    it('supports acroFormPolicy "strip" and rejects pure XFA in mergeDocuments', async () => {
+      const doc1 = await PDFDocument.create();
+      const p1 = doc1.addPage([400, 400]);
+      const tf = doc1.getForm().createTextField('KeepOrStrip');
+      tf.setText('Val1');
+      tf.addToPage(p1, { x: 20, y: 300, width: 120, height: 20 });
+
+      const doc2 = await PDFDocument.create();
+      doc2.addPage([400, 400]);
+
+      const strippedBytes = await processor.mergeDocuments(
+        [await doc1.save(), await doc2.save()],
+        { acroFormPolicy: 'strip' }
+      );
+      expect(await processor.extractFormData(strippedBytes)).toEqual({});
+
+      const pureXfa = await PDFDocument.create();
+      pureXfa.addPage([400, 400]);
+      pureXfa.catalog
+        .getOrCreateAcroForm()
+        .dict.set(
+          PDFName.of('XFA'),
+          pureXfa.context.register(pureXfa.context.flateStream('<xdp/>'))
+        );
+      await expect(
+        processor.mergeDocuments([await doc2.save(), await pureXfa.save({ updateFieldAppearances: false })])
+      ).rejects.toThrow(PdfUnsupportedFormError);
+    });
+  });
+
+  describe('createDocumentFromPages & sourceRole attribution (#380)', () => {
+    it('creates a standalone editable PDF from selected sourcePages and formData without flattening', async () => {
+      const coverDoc = await PDFDocument.load(await createAnonymizedSubmittalCoverSheetPdf());
+      const page2 = coverDoc.addPage([612, 792]);
+      page2.drawText('Extra Template Instructions');
+      const twoPageCoverBytes = await coverDoc.save({ updateFieldAppearances: false });
+
+      const siblingBytes = await processor.createDocumentFromPages(twoPageCoverBytes, {
+        sourcePages: [1],
+        formData: { 'Submittal No': '071200-001-0' },
+      });
+
+      const siblingDoc = await PDFDocument.load(siblingBytes);
+      expect(siblingDoc.getPageCount()).toBe(1);
+      expect(await processor.extractFormData(siblingBytes)).toEqual({
+        'Submittal No': '071200-001-0',
+        'Submittal Response': undefined,
+        Date: undefined,
+        'Reviewed By': undefined,
+        REMARKS: undefined,
+      });
+
+      // Verify remaining fields stay editable
+      const edited = await processor.processFormSubmission(siblingBytes, {
+        'Submittal Response': 'No Exceptions Taken',
+      });
+      expect((await processor.extractFormData(edited))['Submittal Response']).toBe(
+        'No Exceptions Taken'
+      );
+    });
+
+    it('tags sourceRole as insert vs target on XFA errors in insertPages', async () => {
+      const targetBytes = await createSamplePdf(1);
+      const coverBytes = await createAnonymizedSubmittalCoverSheetPdf();
+
+      const xfaCover = await PDFDocument.load(coverBytes);
+      xfaCover.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), xfaCover.context.register(xfaCover.context.flateStream('<xdp/>')));
+      const xfaCoverBytes = await xfaCover.save({ updateFieldAppearances: false });
+
+      let insertErr: unknown;
+      try {
+        await processor.insertPages(targetBytes, xfaCoverBytes);
+      } catch (err) {
+        insertErr = err;
+      }
+      expect(insertErr).toBeInstanceOf(PdfUnsupportedFormError);
+      expect((insertErr as PdfUnsupportedFormError).sourceRole).toBe('insert');
+
+      const pureXfaTarget = await PDFDocument.create();
+      pureXfaTarget.addPage([400, 400]);
+      pureXfaTarget.catalog
+        .getOrCreateAcroForm()
+        .dict.set(PDFName.of('XFA'), pureXfaTarget.context.register(pureXfaTarget.context.flateStream('<xdp/>')));
+      const pureXfaTargetBytes = await pureXfaTarget.save({ updateFieldAppearances: false });
+
+      let targetErr: unknown;
+      try {
+        await processor.insertPages(pureXfaTargetBytes, coverBytes);
+      } catch (err) {
+        targetErr = err;
+      }
+      expect(targetErr).toBeInstanceOf(PdfUnsupportedFormError);
+      expect((targetErr as PdfUnsupportedFormError).sourceRole).toBe('target');
     });
   });
 });

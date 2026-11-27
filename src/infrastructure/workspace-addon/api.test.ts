@@ -258,9 +258,14 @@ describe('Workspace Add-on Infrastructure API', () => {
       const actionOrchestrator: WorkspaceUiOrchestratorPort = {
         processUiEvent: vi.fn().mockResolvedValue({
           action: {
-            notification: {
-              text: 'Document processed successfully',
-            },
+            navigations: [
+              {
+                pushCard: {
+                  header: { title: 'Communication Project Filed' },
+                  sections: [{ widgets: [{ textParagraph: { text: 'Filed.' } }] }],
+                },
+              },
+            ],
           },
         }),
       };
@@ -304,7 +309,7 @@ describe('Workspace Add-on Infrastructure API', () => {
         })
       );
       const body = JSON.parse(response.payload);
-      expect(body.action.notification.text).toBe('Document processed successfully');
+      expect(body.action.navigations[0].pushCard.header.title).toBe('Communication Project Filed');
     });
   });
 

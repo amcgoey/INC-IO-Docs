@@ -17,6 +17,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { SELECT_DOCUMENT_LOG_KEY } from '../src/features/schema-driven-ui/blocks/document-log';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 const MANIFEST_PATH = path.resolve(__dirname, '../assets/manifest.json');
 const DRIVE_ID = 'drive-362-e2e';
@@ -464,6 +467,33 @@ function mockDriveForFfe(logs: Array<{ id: string; name: string; modifiedTime?: 
 
   nock('https://www.googleapis.com')
     .persist()
+    .get('/drive/v3/files')
+    .query(
+      (q) =>
+        typeof q.q === 'string' &&
+        q.q.includes("mimeType = 'application/vnd.google-apps.folder'") &&
+        !q.q.includes("name = '1 Admin'") &&
+        !q.q.includes("name = '3 FFE'") &&
+        !q.q.includes("name = '05 Submittals'")
+    )
+    .reply(200, { files: [] });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post('/drive/v3/files')
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `folder-${reqBody.name ?? 'dyn'}`,
+        name: reqBody.name ?? 'dyn',
+        parents: reqBody.parents ?? ['ffe-sub-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
     .patch(`/drive/v3/files/${fileId}`)
     .query(true)
     .reply(200, {
@@ -472,12 +502,81 @@ function mockDriveForFfe(logs: Array<{ id: string; name: string; modifiedTime?: 
       parents: ['ffe-sub-id'],
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post(`/drive/v3/files/${fileId}/copy`)
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `${fileId}-copy`,
+        name: reqBody.name ?? '_Filed_Submittal.pdf',
+        parents: reqBody.parents ?? ['ffe-sub-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+      };
+    });
+
+  const pdfBytes = cachedCoverSheetPdfBytes;
+  if (!pdfBytes) {
+    throw new Error('cachedCoverSheetPdfBytes must be initialized in beforeEach');
+  }
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: '_Filed_Submittal.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: ['ffe-sub-id'],
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .patch(`/upload/drive/v3/files/${fileId}-copy`)
+    .query(true)
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: '_Filed_Submittal.pdf',
+      mimeType: 'application/pdf',
+      parents: ['ffe-sub-id'],
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+    });
 }
 
 describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedField Locking & Submittal FF&E specs Cutover', () => {
   let app: AppInstance;
 
   beforeEach(async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
     app = createApp({
       manifestProvider: new AppManifestProvider({ manifestPath: MANIFEST_PATH }),
       authVerifier: createAuthVerifier(),
@@ -491,6 +590,7 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -668,7 +768,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(coalescedRes.statusCode).toBe(200);
-    expect(coalescedRes.payload).toContain('processed successfully');
+    expect(JSON.parse(coalescedRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(coalescedRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(1);
 
     // 3. Known specTag 'AC102' (with specTitle omitted as decoratedText) + new relatedTag 'REL200' -> succeeds, inserts REL200 with blank Spec Title
@@ -683,7 +786,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(relatedOnlyRes.statusCode).toBe(200);
-    expect(relatedOnlyRes.payload).toContain('processed successfully');
+    expect(JSON.parse(relatedOnlyRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(relatedOnlyRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(2);
 
     // 4. Later submittal using specTag 'rel200' with non-blank specTitle -> backfills existing REL200 row without duplicate row
@@ -698,7 +804,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(backfillRes.statusCode).toBe(200);
-    expect(backfillRes.payload).toContain('processed successfully');
+    expect(JSON.parse(backfillRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(backfillRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(3);
 
     // 5. Distinct key 'FB999' sharing 'FABRIC - LEATHER' title with FB127 -> allowed as new row
@@ -713,7 +822,10 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
       action: 'REC',
     });
     expect(sharedTitleRes.statusCode).toBe(200);
-    expect(sharedTitleRes.payload).toContain('processed successfully');
+    expect(JSON.parse(sharedTitleRes.payload).action?.notification).toBeUndefined();
+    expect(
+      JSON.parse(sharedTitleRes.payload).action?.navigations?.[0]?.pushCard?.header?.title
+    ).toBe('Submittal FF&E Filed');
     expect(sim.batchUpdates).toHaveLength(4);
 
     const cfgGrid = sim.sheets[1].grid;

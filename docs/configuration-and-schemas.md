@@ -80,7 +80,7 @@ During startup initialization, `DocumentSchemaRegistryAdapter` (`src/features/do
 
 ### `configuration` (`AppConfiguration`)
 
-`AppConfiguration` (`AppConfigurationSchema` in `AppManifestProvider`) centralizes domain and administrative defaults across three sub-objects:
+`AppConfiguration` (`AppConfigurationSchema` in `AppManifestProvider`) centralizes domain and administrative defaults across `workspace`, `drive`, `sheets`, and top-level runtime limits:
 
 | Block | Schema | Key | Production Value | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
@@ -93,6 +93,18 @@ During startup initialization, `DocumentSchemaRegistryAdapter` (`src/features/do
 | **`sheets`** | `SheetsConfigurationSchema` | `defaultHeaderRangeName` | `"Headers"` | Default named range identifying column headers in target Google Sheets. |
 | **`sheets`** | `SheetsConfigurationSchema` | `defaultDataRangeName` | `"Data"` | Default named range identifying the data table body in target Google Sheets. |
 | **`sheets`** | `SheetsConfigurationSchema` | `maxRetries` / `initialDelayMs` / `backoffFactor` | *(optional; defaults to `3` / `1000` / `2`)* | Optional exponential backoff overrides for Google Sheets API rate limits (`429`). |
+| **`templates`** | `AppConfigurationSchema` | `templates` | `{ "submittalCoverSheet": "SUBMITTAL_COVER_SHEET_TEMPLATE_ID" }` | Maps logical `DocumentTemplate` keys to runtime environment variable names holding confidential Drive file IDs (`AppManifestProvider.getTemplatesConfig()`). |
+| **`(root)`** | `AppConfigurationSchema` | `maxInMemoryFileBytes` | `209715200` *(200 MB default per [ADR-0007](adr/0007-drive-content-memory-models.md); optional `MAX_IN_MEMORY_FILE_BYTES` env override)* | Maximum in-memory file byte limit enforced across `GoogleDriveClient`, `PdfProcessor`, and `DriveFormExtractorAdapter`. |
+
+### `configuration.templates`, `TemplateRegistryPort` & Pre-Flight Checks
+
+Confidential `DocumentTemplate` Google Drive file IDs stay out of tracked JSON schemas via environment-variable indirection:
+
+- **Manifest Indirection (`configuration.templates`)**: [`assets/manifest.json`](../assets/manifest.json) maps logical template keys to environment variable names (e.g., `"submittalCoverSheet": "SUBMITTAL_COVER_SHEET_TEMPLATE_ID"`). `AppManifestProvider.getTemplatesConfig()` validates that every key and env var name is a non-empty string.
+- **Runtime Resolution & Redaction (`TemplateRegistryPort` / `EnvTemplateRegistryAdapter`)**: `EnvTemplateRegistryAdapter` (`src/features/document/adapters/env-template-registry.adapter.ts`) implements `TemplateRegistryPort` (`src/features/document/ports.ts`). `resolveTemplate(templateKey)` looks up the env var name via `getTemplatesConfig()`, reads `process.env[envVarName]`, throws `DocumentTemplateError` if the key is undeclared or the env var is missing/empty, and tracks resolved IDs so `redactSecrets()` replaces any leaked value in error messages with `REDACTED_TEMPLATE_ID_PLACEHOLDER` (`"[REDACTED_TEMPLATE_ID]"`).
+- **Startup & Pre-Flight Validation**:
+  - At startup, `validateManifestTemplates()` / `validateWorkflowSteps()` (`src/features/document/domain.ts`) verify that static `INSERT_PAGES` `templateKey` values are declared in `configuration.templates`.
+  - At execution time before running step 1, `DocumentService.processDocument()` scans the target workflow's `activitySequence` for `INSERT_PAGES` steps specifying `templateKey`, resolves each via `TemplateRegistryPort.resolveTemplate()`, and fails fast with a redacted error if `TemplateRegistryPort` is unconfigured or any referenced template env var is unset—preventing partial Drive/Sheets mutations when a template is missing.
 
 ### `DocumentSpaceTypes` & Hydration via `DocumentSpaceManifestRegistryAdapter`
 
@@ -331,6 +343,27 @@ Handlebars is used strictly as a logic-less variable interpolation engine behind
 | **`CREATE_DOCUMENT`** | `ActivityEngine` / Document Creation Handler | `rootStorageId`, `parentPath`, `folderName`, `templateId` or document creation metadata, and `Document.data` fields. | Creates or duplicates the target document in storage and returns `{ success: true, files: [FileLocator], documentDataPatch, contextVariables }`. |
 | **`GENERATE_EMAIL_PDF`** | `GmailSourceFileHydratorAdapter` & `PdfProcessor` (`src/features/document/adapters/gmail-source-file-hydrator.adapter.ts`) | Gmail `messageId` (or synthetic `SourceFile` with `id: "email-pdf-<messageId>"`), message headers (`subject`, `from`, `to`, `cc`, `date`), `htmlBody` / `plainTextBody`, `inlineImages`, and `attachmentNames`. | Renders the open Gmail message into an in-memory `Uint8Array` PDF buffer named `"Email - <Sanitized Subject>.pdf"` (`mimeType: "application/pdf"`, [ADR-0008](adr/0008-hybrid-pdf-processor-stack.md)) so `MOVE_FILE` saves it to the target Drive folder and returns its `FileLocator` in `ActivityOutput.files`. |
 | **`APPEND_SHEET_ROW`** | `GoogleSheetsClient` (`src/infrastructure/sheets/google-sheets-client.ts`) | `target` (`spreadsheetId`, `sheetName`, `headerRangeName` defaulting to `"Headers"`, `dataRangeName` defaulting to `"Data"`), `rowData` (`Record<string, CellValue>`), `groupConfig` (`{ columnName, value }`), and `sortConfig` (`{ columnName, value }`). | Acquires a per-spreadsheet async lock, aligns columns against the `"Headers"` named range, inserts the row into the matching group and sort position inside `"Data"` (healing group boundary blank rows), and returns `{ success: true, documentDataPatch, contextVariables }`. |
+| **`INSERT_PAGES`** | `DocumentContentActivityHandler` & `DocumentContentEditorAdapter` (`src/features/document/adapters/document-content-activity-handler.ts`) | `fileSourceStepId` (optional target step ID), mutually exclusive `templateKey` or `sourceStepId`, optional `position` (`"start" \| "end" \| number`), optional `sourcePages` (`number[]`), and optional `fillForm` (`boolean`). | Downloads target and source PDFs, optionally stamps writable `documentFormSchema` fields onto the source pages when `fillForm: true`, grafts selected pages via `PdfProcessor.insertPages()` using `"namespace"` AcroForm isolation without flattening, updates the target file in Drive, and returns `{ success: true, files: FileLocator[] }`. |
+
+### `INSERT_PAGES` Activity Schema & Submittal Cover Sheet Wiring
+
+`DocumentContentActivityHandler` handles `INSERT_PAGES` by validating the payload (`InsertPagesPayloadSchema` / `validateInsertPagesActivityPayload()`), resolving the source PDF, optionally populating writable `documentFormSchema` fields, and calling `DocumentContentEditorPort.insertPages()` (`DocumentContentInsertPagesRequest` in `src/features/document/ports.ts`):
+
+| Payload Property | Type & Constraints | Purpose |
+| :--- | :--- | :--- |
+| **`fileSourceStepId`** | `string` *(optional)* | `Activity.id` of an earlier workflow step whose `files` output supplies the target PDF(s); defaults to execution context `files` when omitted. |
+| **`templateKey`** | `string` *(mutually exclusive with `sourceStepId`)* | Logical key in `configuration.templates` resolved via `TemplateRegistryPort.resolveTemplate()` (sets `sourceIsTemplate: true` and enables secret redaction on errors). |
+| **`sourceStepId`** | `string` *(mutually exclusive with `templateKey`)* | `Activity.id` of an earlier workflow step resolving a single source PDF (`files.length === 1`). |
+| **`position`** | `"start" \| "end" \| number` *(optional, defaults to `"start"`)* | 0-indexed page insertion position inside the target PDF. |
+| **`sourcePages`** | `number[]` *(optional, non-empty unique 1-indexed integers)* | 1-indexed pages extracted from the source PDF (e.g., `[1]`). |
+| **`fillForm`** | `boolean` *(optional)* | When `true`, evaluates writable `documentFormSchema` fields via `evaluateWritableDocumentFormFields()` and writes them into matching AcroForm fields on the inserted source pages before grafting. |
+
+- **Non-Flattening `"namespace"` AcroForm Grafting**: `DocumentContentEditorAdapter.insertPages()` invokes `PdfProcessor.insertPages()` with `targetAcroFormPolicy: "namespace"` (`targetFieldNamespace: "__target"`). Target PDF AcroForm fields are preserved intact—colliding root fields are isolated under `__target` (or `__target_1`, etc.)—and **no PDF form flattening is ever performed**.
+- **`SubmittalReceived` Workflow Wiring**: Both [`assets/document-types/submittal-arch.json`](../assets/document-types/submittal-arch.json) and [`assets/document-types/submittal-ffe.json`](../assets/document-types/submittal-ffe.json) wire `SubmittalReceived` across four steps:
+  1. `moveOriginal` (`MOVE_FILE`) — files the original PDF into the `Closed` target folder.
+  2. `duplicateForReview` (`DUPLICATE_FILE`, `fileSourceStepId: "moveOriginal"`, `fileNamePrefix: "_"`) — creates the review copy in the parent submittals folder.
+  3. `insertCoverSheet` (`INSERT_PAGES`, `fileSourceStepId: "duplicateForReview"`, `templateKey: "submittalCoverSheet"`, `position: "start"`, `sourcePages: [1]`, `fillForm: true`) — prepends and populates page 1 of the cover sheet template onto the review copy.
+  4. `writeLog` (`WRITE_LOG`, `fileSourceStepId: "moveOriginal"`) — logs the archived original file.
 
 ### `SourceFile` Input Flow
 

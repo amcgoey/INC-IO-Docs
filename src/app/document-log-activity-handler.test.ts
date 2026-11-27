@@ -64,6 +64,7 @@ describe('DocumentLogActivityHandler', () => {
       sheetName: 'Submittal Arch',
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/sheet-log-1/edit',
     });
     const handler = new DocumentLogActivityHandler(
       {
@@ -90,14 +91,54 @@ describe('DocumentLogActivityHandler', () => {
           sheetName: 'Submittal Arch',
           rowNumber: 6,
           action: 'inserted',
+          uri: 'https://docs.google.com/spreadsheets/d/sheet-log-1/edit',
         },
       },
     });
+    expect('sheetId' in (output.contextVariables?.documentLogWrite as Record<string, unknown>)).toBe(
+      false
+    );
     expect(writeLog).toHaveBeenCalledWith({
       document: baseContext.document,
       fileUri: 'https://drive.google.com/file/d/moved-file-1/view',
       selectedLogId: 'sheet-log-1',
     });
+  });
+
+  it('forwards sheetId === 0 and uri in contextVariables.documentLogWrite while keeping ActivityOutput.files unset', async () => {
+    const writeLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'sheet-zero-1',
+      sheetName: 'Submittal Arch',
+      sheetId: 0,
+      rowNumber: 12,
+      action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/sheet-zero-1/edit#gid=0&range=12:12',
+    });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
+
+    const output = await handler.handle({ type: 'WRITE_LOG', payload: {} }, baseContext);
+
+    expect(output).toEqual({
+      success: true,
+      contextVariables: {
+        documentLogWrite: {
+          spreadsheetId: 'sheet-zero-1',
+          sheetName: 'Submittal Arch',
+          sheetId: 0,
+          rowNumber: 12,
+          action: 'updated',
+          uri: 'https://docs.google.com/spreadsheets/d/sheet-zero-1/edit#gid=0&range=12:12',
+        },
+      },
+    });
+    expect('files' in output).toBe(false);
   });
 
   it('selects context.stepOutputs[fileSourceStepId].files[0].uri when fileSourceStepId is specified', async () => {
@@ -144,6 +185,92 @@ describe('DocumentLogActivityHandler', () => {
     expect(writeLog).toHaveBeenCalledWith({
       document: baseContext.document,
       fileUri: 'https://drive.google.com/file/d/pkg-file/view',
+    });
+  });
+
+  it('leaves fileUri undefined when context.files or stepOutput.files contains only a folder-only placeholder and selects the next non-placeholder FileLocator.uri', async () => {
+    const writeLog = vi.fn().mockResolvedValue({
+      spreadsheetId: 'sheet-log-3',
+      sheetName: 'Submittal Arch',
+      rowNumber: 9,
+      action: 'inserted',
+    });
+    const handler = new DocumentLogActivityHandler({
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn().mockResolvedValue(undefined),
+      readLog: vi.fn(),
+      writeLog,
+    });
+
+    const folderPlaceholderWithMime = {
+      id: 'folder-target-1',
+      name: 'Target Folder',
+      parentId: 'folder-target-1',
+      mimeType: 'application/vnd.google-apps.folder',
+      uri: 'https://drive.google.com/drive/folders/folder-target-1',
+    };
+    const folderPlaceholderWithoutMime = {
+      id: 'folder-target-2',
+      name: 'Target Folder 2',
+      parentId: 'folder-target-2',
+      uri: 'https://drive.google.com/drive/folders/folder-target-2',
+    };
+    const filedPdf = {
+      id: 'filed-pdf-1',
+      name: 'Filed.pdf',
+      parentId: 'folder-target-1',
+      mimeType: 'application/pdf',
+      uri: 'https://drive.google.com/file/d/filed-pdf-1/view',
+    };
+
+    const placeholderOnlyOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: {} },
+      {
+        ...baseContext,
+        files: [folderPlaceholderWithMime, folderPlaceholderWithoutMime],
+      }
+    );
+    expect(placeholderOnlyOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(1, {
+      document: baseContext.document,
+    });
+
+    const stepPlaceholderOnlyOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveFiles' } },
+      {
+        ...baseContext,
+        files: [filedPdf],
+        stepOutputs: {
+          moveFiles: {
+            success: true,
+            files: [folderPlaceholderWithoutMime],
+          },
+        },
+      }
+    );
+    expect(stepPlaceholderOnlyOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(2, {
+      document: baseContext.document,
+    });
+
+    const nextNonPlaceholderOutput = await handler.handle(
+      { type: 'WRITE_LOG', payload: { fileSourceStepId: 'moveFiles' } },
+      {
+        ...baseContext,
+        stepOutputs: {
+          moveFiles: {
+            success: true,
+            files: [folderPlaceholderWithMime, folderPlaceholderWithoutMime, filedPdf],
+          },
+        },
+      }
+    );
+    expect(nextNonPlaceholderOutput.success).toBe(true);
+    expect(writeLog).toHaveBeenNthCalledWith(3, {
+      document: baseContext.document,
+      fileUri: 'https://drive.google.com/file/d/filed-pdf-1/view',
     });
   });
 

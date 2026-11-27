@@ -8,11 +8,20 @@ import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manif
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import { ensureEvaluationOrder } from '../../src/infrastructure/validation/json-logic-graph';
 import {
+  DocumentFormFieldBindingSchema as DocumentFeatureFormFieldBindingSchema,
+  DocumentFormSchemaSchema as DocumentFeatureFormSchemaSchema,
   DocumentTypeSchema,
   formatValidationErrors,
 } from '../../src/features/document/domain';
 import { FormSchemaType, type RawManifestProviderPort } from '../../src/features/document/ports';
+import {
+  DocumentFormFieldBindingSchema as SourceParserFormFieldBindingSchema,
+  DocumentFormSchemaSchema as SourceParserFormSchemaSchema,
+} from '../../src/features/source-parser/ports';
 import { UiSchema, type UiSchema as UiSchemaType } from '../../src/features/schema-driven-ui/domain';
+import { ManifestUiAdapter } from '../../src/features/schema-driven-ui/adapters/manifest.adapter';
+import { createSchemaDrivenUiWiring } from '../../src/app/schema-driven-ui.wiring';
+import { DOCUMENT_SUCCESS_CARD_VIEW_ID } from '../../src/features/schema-driven-ui/adapters/document-success-card.adapter';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentSpaceService,
@@ -286,6 +295,9 @@ describe('DocumentType JSON files schema validation', () => {
 
       const driveConfig = await manifestProvider.getDriveConfig();
       expect(driveConfig?.defaultFolderName).toBe('Unfiled');
+
+      const maxInMemoryFileBytes = await manifestProvider.getMaxInMemoryFileBytes();
+      expect(maxInMemoryFileBytes).toBe(200 * 1024 * 1024);
     });
 
     it('should validate shared contacts and vendors AliasDictionaries and DocumentParseSchemas across all four DocumentTypes', async () => {
@@ -372,6 +384,7 @@ describe('DocumentType JSON files schema validation', () => {
         fields: {
           'Submittal No': {
             template: '{{section}}-{{number}}-{{revision}}',
+            writable: true,
           },
           'Submittal Response': {
             template: '{{action.name}}',
@@ -415,6 +428,7 @@ describe('DocumentType JSON files schema validation', () => {
         fields: {
           'Submittal No': {
             template: '{{specTag.key}}-{{revision}}',
+            writable: true,
           },
           'Submittal Response': {
             template: '{{action.name}}',
@@ -446,6 +460,7 @@ describe('DocumentType JSON files schema validation', () => {
         statuses: { provider: 'document_log', properties: ['key'] },
         actions: { provider: 'document_log', properties: ['key', 'name', 'suffix', 'order'] },
         contacts: { provider: 'document_log', properties: ['key', 'name'] },
+        csiDivisions: { provider: 'document_log', properties: ['key', 'folder'] },
       });
       expect(archTargetSchema?.options?.statuses).toBeUndefined();
       expect(archTargetSchema?.options?.actions).toBeUndefined();
@@ -536,6 +551,15 @@ describe('DocumentType JSON files schema validation', () => {
               Name: 'name',
             },
             aliasesColumn: 'Aliases',
+          },
+          csiDivisions: {
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_CSI_Divisions',
+            endMarker: '---',
+            columns: {
+              'Division Number': 'key',
+              'Division Folder': 'folder',
+            },
           },
         },
       });
@@ -646,6 +670,34 @@ describe('DocumentType JSON files schema validation', () => {
 
       const ffeUiFields = (ffeDocType?.documentUiSchema as UiSchemaType | undefined)?.fields;
       expect(ffeUiFields?.specTag?.onChange).toBe(true);
+
+      // Verify declarative folder-routing CalculatedFields on Submittal Arch & FF&E (#374)
+      expect(
+        archDocType?.documentSchema.calculatedFields?.find((f) => f.key === 'csiDivisionFolder')
+      ).toEqual({
+        name: 'CSI Division Folder',
+        key: 'csiDivisionFolder',
+        template: '{{section}}',
+        transforms: [{ type: 'prefix', length: 2 }],
+        lookup: {
+          source: 'csiDivisions',
+          matchProperty: 'key',
+          resultProperty: 'folder',
+        },
+        required: true,
+      });
+      expect(
+        ffeDocType?.documentSchema.calculatedFields?.find((f) => f.key === 'specTagGroup')
+      ).toEqual({
+        name: 'Spec Tag Group',
+        key: 'specTagGroup',
+        template: '{{specTag.key}}',
+        transforms: [
+          { type: 'prefix', length: 2 },
+          { type: 'uppercase' },
+        ],
+        required: true,
+      });
     });
   });
 });
@@ -1156,8 +1208,15 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
     const loadedDocs = await docRegistry.loadAll();
     expect(loadedDocs).toHaveLength(4);
     const archDoc = loadedDocs.find((d) => d.key === 'submittal-arch');
+    const ffeDoc = loadedDocs.find((d) => d.key === 'submittal-ffe');
+    const commProjDoc = loadedDocs.find((d) => d.key === 'communication-project');
+    const commPropDoc = loadedDocs.find((d) => d.key === 'communication-proposal');
     expect(archDoc).toBeDefined();
     expect(archDoc!.documentSchema.fields.length).toBeGreaterThan(0);
+    expect(archDoc!.maxSourceFiles).toBe(1);
+    expect(ffeDoc?.maxSourceFiles).toBe(1);
+    expect(commProjDoc?.maxSourceFiles).toBeUndefined();
+    expect(commPropDoc?.maxSourceFiles).toBeUndefined();
 
     const logRegistry = new LogSchemaRegistryAdapter(manifestProvider, handlebars);
     await expect(logRegistry.initialize()).resolves.toBeUndefined();
@@ -1165,6 +1224,251 @@ describe('Split Option Schemas (optionSources & optionBindings) & Manifest Immut
     expect(logRegistry.getDocumentLogSchema('submittal-arch')?.target.sheetName).toBe(
       'Submittal Arch'
     );
+  });
+
+  it('maintains strict structural and hydration parity between document and source-parser DocumentFormSchema schemas (#378)', async () => {
+    expect(JSON.parse(JSON.stringify(DocumentFeatureFormFieldBindingSchema))).toEqual(
+      JSON.parse(JSON.stringify(SourceParserFormFieldBindingSchema))
+    );
+    expect(JSON.parse(JSON.stringify(DocumentFeatureFormSchemaSchema))).toEqual(
+      JSON.parse(JSON.stringify(SourceParserFormSchemaSchema))
+    );
+
+    const validSamples: unknown[] = [
+      { fields: { 'Submittal No': { template: '{{section}}-{{number}}-{{revision}}', writable: true } } },
+      { fields: { 'Submittal Response': { template: '{{action.name}}', valueMap: { RR: 'Revise and Resubmit' }, writable: false } } },
+      { fields: { Date: { template: '{{date}}', format: 'date' } } },
+    ];
+    for (const sample of validSamples) {
+      expect(Value.Check(DocumentFeatureFormSchemaSchema, sample)).toBe(true);
+      expect(Value.Check(SourceParserFormSchemaSchema, sample)).toBe(true);
+    }
+
+    const invalidSamples: unknown[] = [
+      { fields: {} },
+      { fields: { 'Submittal No': { template: '{{section}}', writable: 'true' } } },
+      { fields: { 'Submittal No': { template: '{{section}}', extraProp: true } } },
+      { fields: { 'Submittal No': { template: '{{section}}', valueMap: {} } } },
+    ];
+    for (const sample of invalidSamples) {
+      expect(Value.Check(DocumentFeatureFormSchemaSchema, sample)).toBe(false);
+      expect(Value.Check(SourceParserFormSchemaSchema, sample)).toBe(false);
+    }
+
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const handlebars = new HandlebarsAdapter();
+    const docRegistry = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const parseRegistry = new ParseSchemaRegistryAdapter(manifestProvider, handlebars);
+    const [loadedDocTypes] = await Promise.all([
+      docRegistry.loadAll(),
+      parseRegistry.initialize(),
+    ]);
+
+    for (const docType of loadedDocTypes) {
+      expect(docType.documentFormSchema).toEqual(parseRegistry.getDocumentFormSchema(docType.key));
+    }
+
+    const archDoc = loadedDocTypes.find((d) => d.key === 'submittal-arch');
+    const ffeDoc = loadedDocTypes.find((d) => d.key === 'submittal-ffe');
+    expect(archDoc?.documentFormSchema?.fields['Submittal No']?.writable).toBe(true);
+    expect(archDoc?.documentFormSchema?.fields['Submittal Response']?.writable).toBeUndefined();
+    expect(archDoc?.documentFormSchema?.fields.Date?.writable).toBeUndefined();
+    expect(ffeDoc?.documentFormSchema?.fields['Submittal No']?.writable).toBe(true);
+    expect(ffeDoc?.documentFormSchema?.fields['Submittal Response']?.writable).toBeUndefined();
+    expect(ffeDoc?.documentFormSchema?.fields.Date?.writable).toBeUndefined();
+  });
+});
+
+describe('Declarative documentUiSchema.successView across all 4 production DocumentTypes (#385)', () => {
+  it('retains configured successView across DocumentSchemaRegistryAdapter and ManifestUiAdapter and renders Summary + Created & Filed for all 4 DocumentTypes', async () => {
+    const manifestPath = path.resolve(__dirname, '../../assets/manifest.json');
+    const manifestProvider = new AppManifestProvider({ manifestPath });
+    const handlebars = new HandlebarsAdapter();
+    const docRegistry = new DocumentSchemaRegistryAdapter(
+      manifestProvider,
+      handlebars,
+      ensureEvaluationOrder
+    );
+    const manifestUiAdapter = new ManifestUiAdapter(
+      manifestProvider,
+      (uiSchema, docSchema) => ensureEvaluationOrder<UiSchemaType>(uiSchema, docSchema) ?? uiSchema
+    );
+
+    const docTypes = await docRegistry.loadAll();
+    const byKey = new Map(docTypes.map((d) => [d.key, d]));
+
+    expect(byKey.get('communication-project')?.documentWorkflowConfig?.workflows[0]?.activitySequence?.[0]?.id).toBe('moveFiles');
+    expect(byKey.get('communication-proposal')?.documentWorkflowConfig?.workflows[0]?.activitySequence?.[0]?.id).toBe('moveFiles');
+
+    const expectedSubmittalArtifacts = [
+      {
+        stepId: 'insertCoverSheet',
+        label: 'Review Copy (with Cover Sheet)',
+        fallbackLabel: 'Transmittal Cover Sheet',
+      },
+      {
+        stepId: 'duplicateForReview',
+        label: 'Review Copy',
+      },
+      {
+        stepId: 'moveOriginal',
+        label: 'Filed Original',
+        whenWorkflow: {
+          SubmittalReceived: 'Archived Original',
+          SubmittalSent: 'Filed Submittal',
+        },
+      },
+    ];
+
+    const expectedSuccessViews: Record<string, UiSchemaType['successView']> = {
+      'submittal-arch': {
+        summary: {
+          topLabel: '{{section}}-{{number}}-{{revision}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> • {{date}} ({{contact.key}})',
+          bottomLabel: '{{title}}',
+        },
+        artifacts: expectedSubmittalArtifacts,
+      },
+      'submittal-ffe': {
+        summary: {
+          topLabel: '{{specTag.key}}-{{revision}} • {{status.key}}',
+          text: '<b>{{action.name}}</b> • {{date}} ({{contact.key}})',
+          bottomLabel: '{{vendor.name}} — {{specTitle}}',
+        },
+        artifacts: expectedSubmittalArtifacts,
+      },
+      'communication-project': {
+        summary: {
+          topLabel: '{{contact.name}} • {{direction.name}}',
+          text: '<b>{{date}}</b> — {{description}}',
+        },
+        artifacts: [{ stepId: 'moveFiles', label: 'Filed File' }],
+      },
+      'communication-proposal': {
+        summary: {
+          topLabel: '{{contact.name}} • {{direction.name}}',
+          text: '<b>{{date}}</b> — {{description}}',
+        },
+        artifacts: [{ stepId: 'moveFiles', label: 'Filed File' }],
+      },
+    };
+
+    for (const [docKey, expectedSv] of Object.entries(expectedSuccessViews)) {
+      expect(byKey.get(docKey)?.documentUiSchema?.successView).toEqual(expectedSv);
+      const uiSchema = await manifestUiAdapter.getUiSchema(docKey);
+      expect(uiSchema?.successView).toEqual(expectedSv);
+    }
+
+    const { schemaDrivenUiService } = createSchemaDrivenUiWiring({ manifestProvider });
+
+    const archView = await schemaDrivenUiService.generateView({
+      viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+      documentTypeKey: 'submittal-arch',
+      executionOutcome: {
+        success: true,
+        workflowName: 'SubmittalReceived',
+        completedStepCount: 3,
+        spaceName: 'Harborview',
+        documentData: {
+          section: '071200',
+          number: '001',
+          revision: '0',
+          status: { key: 'Open' },
+          action: { name: 'Received' },
+          date: '260920',
+          contact: { key: 'ACME' },
+          title: 'Waterproofing',
+        },
+        stepResults: [
+          { stepId: 'moveOriginal', activityType: 'MOVE_FILE', files: [{ id: 'orig', name: 'Orig.pdf' }] },
+          { stepId: 'duplicateForReview', activityType: 'DUPLICATE_FILE', files: [{ id: 'rev', name: '_Rev.pdf' }] },
+          { stepId: 'insertCoverSheet', activityType: 'INSERT_PAGES', files: [{ id: 'rev', name: '_Rev.pdf' }] },
+        ],
+        notices: [],
+        errors: [],
+      },
+    });
+    expect(archView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+      topLabel: '071200-001-0 • Open',
+      text: '<b>Received</b> • 260920 (ACME)',
+      wrapText: true,
+      bottomLabel: 'Waterproofing',
+    });
+    expect(
+      archView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+    ).toEqual(['Review Copy (with Cover Sheet)', 'Archived Original']);
+
+    const ffeView = await schemaDrivenUiService.generateView({
+      viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+      documentTypeKey: 'submittal-ffe',
+      executionOutcome: {
+        success: true,
+        workflowName: 'SubmittalSent',
+        completedStepCount: 1,
+        spaceName: 'Harborview',
+        documentData: {
+          specTag: { key: 'PL001' },
+          revision: '1',
+          status: { key: 'Closed' },
+          action: { name: 'Approved' },
+          date: '260921',
+          contact: { key: 'VEND' },
+          vendor: { name: 'Kohler' },
+          specTitle: 'Plumbing Fixture',
+        },
+        stepResults: [
+          { stepId: 'moveOriginal', activityType: 'MOVE_FILE', files: [{ id: 'orig', name: 'Sent.pdf' }] },
+        ],
+        notices: [],
+        errors: [],
+      },
+    });
+    expect(ffeView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+      topLabel: 'PL001-1 • Closed',
+      text: '<b>Approved</b> • 260921 (VEND)',
+      wrapText: true,
+      bottomLabel: 'Kohler — Plumbing Fixture',
+    });
+    expect(
+      ffeView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+    ).toEqual(['Filed Submittal']);
+
+    for (const commKey of ['communication-project', 'communication-proposal']) {
+      const commView = await schemaDrivenUiService.generateView({
+        viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+        documentTypeKey: commKey,
+        executionOutcome: {
+          success: true,
+          workflowName: commKey === 'communication-project' ? 'FileCommProject' : 'FileCommProposal',
+          completedStepCount: 1,
+          spaceName: 'Space A',
+          documentData: {
+            contact: { name: 'Acme Client' },
+            direction: { name: 'Incoming' },
+            date: '260922',
+            description: 'RFI <01> & Notes',
+          },
+          stepResults: [
+            { stepId: 'moveFiles', activityType: 'MOVE_FILE', files: [{ id: 'f1', name: 'Email.pdf' }] },
+          ],
+          notices: [],
+          errors: [],
+        },
+      });
+      expect(commView.sections.find((s) => s.header === 'Summary')?.widgets[0].decoratedText).toEqual({
+        topLabel: 'Acme Client • Incoming',
+        text: '<b>260922</b> — RFI &lt;01&gt; &amp; Notes',
+        wrapText: true,
+      });
+      expect(
+        commView.sections.find((s) => s.header === 'Created & Filed')?.widgets.map((w) => w.decoratedText?.topLabel)
+      ).toEqual(['Filed File']);
+    }
   });
 });
 

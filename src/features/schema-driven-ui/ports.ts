@@ -22,6 +22,62 @@ export const SelectionStateSchema = Type.Object({
 
 export type SelectionState = Static<typeof SelectionStateSchema>;
 
+export const ExecutionFileLocatorSchema = Type.Object(
+  {
+    id: Type.String(),
+    name: Type.String(),
+    parentId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    parentName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    parentUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    uri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ExecutionFileLocator = Static<typeof ExecutionFileLocatorSchema>;
+
+export const ExecutionStepResultSchema = Type.Object(
+  {
+    stepId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    activityType: Type.String(),
+    files: Type.Array(ExecutionFileLocatorSchema),
+    notices: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ExecutionStepResult = Static<typeof ExecutionStepResultSchema>;
+
+export const ExecutionLogWriteSchema = Type.Object(
+  {
+    sheetName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    sheetId: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    rowNumber: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    action: Type.Optional(
+      Type.Union([Type.Literal('inserted'), Type.Literal('updated'), Type.Undefined()])
+    ),
+    uri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type ExecutionLogWrite = Static<typeof ExecutionLogWriteSchema>;
+
+export const DocumentExecutionOutcomeSchema = Type.Object(
+  {
+    success: Type.Boolean(),
+    workflowName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    completedStepCount: Type.Integer({ minimum: 0 }),
+    failedStepId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    spaceName: Type.String(),
+    documentData: Type.Record(Type.String(), Type.Unknown()),
+    stepResults: Type.Array(ExecutionStepResultSchema),
+    notices: Type.Array(Type.String()),
+    logWrite: Type.Optional(Type.Union([ExecutionLogWriteSchema, Type.Undefined()])),
+    errors: Type.Array(Type.String()),
+  },
+  { additionalProperties: false }
+);
+export type DocumentExecutionOutcome = Static<typeof DocumentExecutionOutcomeSchema>;
+
 export const GenerateViewRequestSchema = Type.Object({
   viewId: Type.String({ minLength: 1 }),
   documentTypeKey: Type.Optional(Type.String({ minLength: 1 })),
@@ -32,6 +88,9 @@ export const GenerateViewRequestSchema = Type.Object({
   formData: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   hiddenFields: Type.Optional(Type.Array(Type.String())),
   lockedFields: Type.Optional(Type.Union([Type.Record(Type.String(), Type.String()), Type.Undefined()])),
+  executionOutcome: Type.Optional(
+    Type.Union([DocumentExecutionOutcomeSchema, Type.Undefined()])
+  ),
 });
 
 export type GenerateViewRequest = Static<typeof GenerateViewRequestSchema>;
@@ -250,6 +309,20 @@ export interface DocumentTypeDisplayNameResolverPort {
   getDisplayName(documentTypeKey: string): Promise<string | undefined>;
 }
 
+export interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
+}
+
+export interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
+  literals: string[];
+}
+
+export interface TemplateParserPort {
+  parseMustacheTemplate(template: string): ParsedMustacheTemplate;
+}
+
 export interface UiViewAdapterContext extends GenerateViewRequest {
   uiSchema?: UiSchema | undefined;
   documentSchema?: AbstractDataSchema | undefined;
@@ -260,5 +333,7 @@ export interface UiViewAdapterContext extends GenerateViewRequest {
 export interface UiViewSchemaAdapterPort {
   readonly viewId: string;
   readonly contextKeys?: readonly string[] | undefined;
+  readonly requiresDocumentSchema?: boolean | undefined;
+  readonly requiresUiSchema?: 'required' | 'optional' | 'none' | undefined;
   composeView(context: UiViewAdapterContext): Promise<UiView> | UiView;
 }

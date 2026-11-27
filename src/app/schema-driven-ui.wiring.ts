@@ -2,17 +2,23 @@ import { SchemaDrivenUiService, type UiSchema } from '../features/schema-driven-
 import {
   WorkspaceAddonAdapter,
   GmailWorkspaceAddonAdapter,
+  DocumentSuccessCardAdapter,
   ManifestUiAdapter,
   type RawManifestProviderPort,
   type EvaluationOrderEnsurer,
 } from '../features/schema-driven-ui/adapters';
-import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
+import type {
+  OptionsFetcherPort,
+  TemplateParserPort,
+  UiContextQueryPort,
+} from '../features/schema-driven-ui/ports';
 import {
   createLookupOptionsService,
   createOptionsFetcherAdapter,
 } from './lookup-options.wiring';
 import type { DriveFolderListClient } from '../features/lookup-options';
 import { ensureEvaluationOrder } from '../infrastructure/validation/json-logic-graph';
+import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 
 export type { RawManifestProviderPort };
 
@@ -22,6 +28,7 @@ export interface SchemaDrivenUiWiringOptions {
   optionsFetcher?: OptionsFetcherPort | undefined;
   uiContextQuery?: UiContextQueryPort | undefined;
   driveClient?: DriveFolderListClient | undefined;
+  templateParser?: TemplateParserPort | undefined;
 }
 
 export interface SchemaDrivenUiWiring {
@@ -41,6 +48,11 @@ export function createSchemaDrivenUiWiring(
   const manifestAdapter = new ManifestUiAdapter(options.manifestProvider, ensurer);
   const workspaceAddonAdapter = new WorkspaceAddonAdapter(manifestAdapter);
   const gmailWorkspaceAddonAdapter = new GmailWorkspaceAddonAdapter(manifestAdapter);
+  const templateParser = options.templateParser ?? new HandlebarsAdapter();
+  const documentSuccessCardAdapter = new DocumentSuccessCardAdapter(
+    manifestAdapter,
+    templateParser
+  );
   const optionsFetcher =
     options.optionsFetcher ??
     (options.driveClient
@@ -53,7 +65,7 @@ export function createSchemaDrivenUiWiring(
       : undefined);
   const service = new SchemaDrivenUiService(
     manifestAdapter,
-    [workspaceAddonAdapter, gmailWorkspaceAddonAdapter],
+    [workspaceAddonAdapter, gmailWorkspaceAddonAdapter, documentSuccessCardAdapter],
     optionsFetcher,
     options.uiContextQuery
   );

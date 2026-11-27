@@ -1,24 +1,96 @@
 import {
   PDFDocument,
-  EncryptedPDFError,
   PDFTextField,
   PDFCheckBox,
   PDFRadioGroup,
   PDFDropdown,
   PDFOptionList,
-  StandardFonts,
+  EncryptedPDFError,
+  ParseSpeeds,
 } from 'pdf-lib';
 import { extractText } from 'unpdf';
 import {
   PdfCorruptedError,
   PdfEncryptionError,
+  PdfFileTooLargeError,
   PdfOutOfBoundsError,
   PdfProcessorError,
+  PdfUnsupportedFormError,
+  type PdfSourceRole,
 } from './errors';
 import { EmailPdfRenderer } from './email-pdf-renderer';
-import type { EmailPdfRenderInput } from './types';
+import type {
+  EmailPdfRenderInput,
+  PdfCreateDocumentFromPagesOptions,
+  PdfFormData,
+  PdfInsertPagesOptions,
+  PdfMergeDocumentsOptions,
+} from './types';
+import { createMaxInMemoryFileBytesProvider } from '../manifest/app-manifest-provider';
+import {
+  FAST_SAVE_OBJECTS_PER_TICK,
+  graftPagesIntoTarget,
+  hasActiveCryptographicSignature,
+  populateFormFields,
+  precheckAndHandleXfa,
+} from './acroform-grafting';
+
+export interface PdfProcessorOptions {
+  getMaxInMemoryFileBytes?:
+    | (() => Promise<number | undefined> | number | undefined)
+    | undefined;
+}
 
 export class PdfProcessor {
+  private readonly maxInMemoryFileBytesProvider: () => Promise<number>;
+
+  constructor(options?: PdfProcessorOptions) {
+    this.maxInMemoryFileBytesProvider = createMaxInMemoryFileBytesProvider(options);
+  }
+
+  private resolveMaxInMemoryFileBytes(): Promise<number> {
+    if (typeof this.maxInMemoryFileBytesProvider === 'function') {
+      return this.maxInMemoryFileBytesProvider();
+    }
+    return createMaxInMemoryFileBytesProvider()();
+  }
+
+  private async assertWithinByteLimit(buffers: readonly Uint8Array[]): Promise<void> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
+    let totalBytes = 0;
+    for (const buffer of buffers) {
+      totalBytes += buffer.byteLength;
+    }
+    if (totalBytes > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `PDF cumulative payload size (${totalBytes} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes, maxBytes }
+      );
+    }
+  }
+
+  private computeEmailPayloadBytes(email: EmailPdfRenderInput): number {
+    let total = 0;
+    const stringFields = [
+      email.subject,
+      email.from,
+      email.to,
+      email.cc,
+      email.date,
+      email.plainTextBody,
+      email.htmlBody,
+      ...(email.attachmentNames ?? []),
+    ];
+    for (const value of stringFields) {
+      if (typeof value === 'string') {
+        total += Buffer.byteLength(value, 'utf8');
+      }
+    }
+    for (const img of email.inlineImages ?? []) {
+      total += img.data.byteLength;
+    }
+    return total;
+  }
   /**
    * Safely loads a PDF document from an in-memory Uint8Array buffer,
    * translating any third-party parsing errors into standardized domain errors.
@@ -26,9 +98,12 @@ export class PdfProcessor {
    * @throws {@link PdfEncryptionError} if the PDF is password-protected or encrypted.
    * @throws {@link PdfCorruptedError} if the PDF buffer is malformed or corrupted.
    */
-  private async loadPdfDocument(buffer: Uint8Array): Promise<PDFDocument> {
+  private async loadPdfDocument(
+    buffer: Uint8Array,
+    sourceRole?: PdfSourceRole
+  ): Promise<PDFDocument> {
     try {
-      return await PDFDocument.load(buffer);
+      return await PDFDocument.load(buffer, { parseSpeed: ParseSpeeds.Fast });
     } catch (error: unknown) {
       if (
         error instanceof EncryptedPDFError ||
@@ -36,7 +111,7 @@ export class PdfProcessor {
       ) {
         throw new PdfEncryptionError(
           'PDF document is encrypted and password-protected',
-          { cause: error }
+          { sourceRole, cause: error }
         );
       }
       throw new PdfCorruptedError(
@@ -46,6 +121,73 @@ export class PdfProcessor {
         { cause: error }
       );
     }
+  }
+
+  private async savePdfDocument(doc: PDFDocument): Promise<Uint8Array> {
+    return await doc.save({
+      updateFieldAppearances: false,
+      objectsPerTick: FAST_SAVE_OBJECTS_PER_TICK,
+    });
+  }
+
+  private resolveValidatedSourcePageIndices(
+    totalPages: number,
+    sourcePages: number[] | undefined
+  ): number[] {
+    if (sourcePages === undefined) {
+      if (totalPages === 0) {
+        throw new PdfOutOfBoundsError(
+          'Inserted PDF document contains zero pages'
+        );
+      }
+      return Array.from({ length: totalPages }, (_, idx) => idx);
+    }
+
+    if (sourcePages.length === 0) {
+      throw new PdfOutOfBoundsError(
+        'At least one source page must be specified for insertion'
+      );
+    }
+
+    const seen = new Set<number>();
+    const indices: number[] = [];
+    for (const page of sourcePages) {
+      if (!Number.isInteger(page) || page < 1 || page > totalPages) {
+        throw new PdfOutOfBoundsError(
+          `Page ${page} is out of bounds for document with ${totalPages} total page(s). Pages must be 1-indexed integers between 1 and ${totalPages}.`
+        );
+      }
+      if (seen.has(page)) {
+        throw new PdfProcessorError(
+          `Duplicate source page ${page} in sourcePages`
+        );
+      }
+      seen.add(page);
+      indices.push(page - 1);
+    }
+    return indices;
+  }
+
+  private resolveInsertIndex(
+    targetPageCount: number,
+    position: PdfInsertPagesOptions['position']
+  ): number {
+    if (position === undefined || position === 'start') {
+      return 0;
+    }
+    if (position === 'end') {
+      return targetPageCount;
+    }
+    if (
+      !Number.isInteger(position) ||
+      position < 0 ||
+      position > targetPageCount
+    ) {
+      throw new PdfOutOfBoundsError(
+        `Insert position ${position} is out of bounds for target document with ${targetPageCount} page(s). Expected 'start', 'end', or integer between 0 and ${targetPageCount}.`
+      );
+    }
+    return position;
   }
 
   /**
@@ -69,6 +211,8 @@ export class PdfProcessor {
    * @returns A promise that resolves to a `Uint8Array` containing the newly formed PDF.
    */
   async extractPages(buffer: Uint8Array, pages: number[]): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([buffer]);
+
     if (pages.length === 0) {
       throw new PdfOutOfBoundsError(
         'At least one page must be specified for extraction'
@@ -95,7 +239,7 @@ export class PdfProcessor {
         targetDoc.addPage(copiedPage);
       }
 
-      return await targetDoc.save();
+      return await this.savePdfDocument(targetDoc);
     } catch (error: unknown) {
       if (
         error instanceof PdfProcessorError ||
@@ -114,7 +258,155 @@ export class PdfProcessor {
   }
 
   /**
-   * Merges multiple PDF documents into a single PDF document in the sequence provided.
+   * Inserts selected pages from `insertBuffer` into `targetBuffer` (opened as the base
+   * `PDFDocument` to preserve target outlines, links, metadata, and existing content)
+   * without ever flattening any AcroForm fields.
+   *
+   * @throws {@link PdfFileTooLargeError} if cumulative bytes exceed `maxInMemoryFileBytes`.
+   * @throws {@link PdfEncryptionError} if either document is encrypted.
+   * @throws {@link PdfUnsupportedFormError} if `insertBuffer` uses XFA, `targetBuffer` uses pure XFA (or hybrid under `'error'`), or `targetBuffer` is cryptographically signed.
+   * @throws {@link PdfOutOfBoundsError} if `sourcePages` or numeric `position` is out of bounds.
+   * @throws {@link PdfFormFieldError} if `formData` contains an invalid choice option or exceeds `maxLength`.
+   * @throws {@link PdfCorruptedError} if either buffer is malformed.
+   */
+  async insertPages(
+    targetBuffer: Uint8Array,
+    insertBuffer: Uint8Array,
+    options?: PdfInsertPagesOptions
+  ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([targetBuffer, insertBuffer]);
+
+    const xfaPolicy = options?.xfaPolicy ?? 'fallbackHybrid';
+    const targetAcroFormPolicy = options?.targetAcroFormPolicy ?? 'namespace';
+    const targetFieldNamespace = options?.targetFieldNamespace ?? '__target';
+
+    try {
+      const insertDoc = await this.loadPdfDocument(insertBuffer, 'insert');
+
+      precheckAndHandleXfa(insertDoc, {
+        rejectAnyXfa: true,
+        xfaPolicy: 'error',
+        roleLabel: 'Inserted PDF',
+        sourceRole: 'insert',
+      });
+
+      const srcPageIndices = this.resolveValidatedSourcePageIndices(
+        insertDoc.getPageCount(),
+        options?.sourcePages
+      );
+
+      const targetDoc = await this.loadPdfDocument(targetBuffer, 'target');
+
+      if (hasActiveCryptographicSignature(targetDoc)) {
+        throw new PdfUnsupportedFormError(
+          'Target PDF is cryptographically signed and cannot be modified',
+          { reason: 'signed', sourceRole: 'target' }
+        );
+      }
+
+      precheckAndHandleXfa(targetDoc, {
+        rejectAnyXfa: false,
+        xfaPolicy,
+        roleLabel: 'Target PDF',
+        sourceRole: 'target',
+      });
+
+      const insertIndex = this.resolveInsertIndex(
+        targetDoc.getPageCount(),
+        options?.position
+      );
+
+      if (options?.formData && insertDoc.catalog.getAcroForm()) {
+        await populateFormFields(insertDoc, options.formData);
+      }
+
+      await graftPagesIntoTarget(targetDoc, insertDoc, {
+        insertIndex,
+        srcPageIndices,
+        targetAcroFormPolicy,
+        targetFieldNamespace,
+        clearNeedAppearances: options?.formData !== undefined,
+      });
+
+      return await this.savePdfDocument(targetDoc);
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to insert pages: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  /**
+   * Creates a standalone editable AcroForm-preserving PDF from `sourceBuffer`
+   * (optionally filtered to 1-indexed `sourcePages` and populated with `formData`)
+   * without flattening any fields.
+   */
+  async createDocumentFromPages(
+    sourceBuffer: Uint8Array,
+    options?: PdfCreateDocumentFromPagesOptions
+  ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([sourceBuffer]);
+
+    try {
+      const sourceDoc = await this.loadPdfDocument(sourceBuffer, 'insert');
+
+      precheckAndHandleXfa(sourceDoc, {
+        rejectAnyXfa: true,
+        xfaPolicy: 'error',
+        roleLabel: 'Inserted PDF',
+        sourceRole: 'insert',
+      });
+
+      const srcPageIndices = this.resolveValidatedSourcePageIndices(
+        sourceDoc.getPageCount(),
+        options?.sourcePages
+      );
+
+      if (options?.formData && sourceDoc.catalog.getAcroForm()) {
+        await populateFormFields(sourceDoc, options.formData);
+      }
+
+      const outDoc = await PDFDocument.create();
+      await graftPagesIntoTarget(outDoc, sourceDoc, {
+        insertIndex: 0,
+        srcPageIndices,
+        targetAcroFormPolicy: 'namespace',
+        targetFieldNamespace: '__target',
+        clearNeedAppearances: options?.formData !== undefined,
+      });
+
+      return await this.savePdfDocument(outDoc);
+    } catch (error: unknown) {
+      if (
+        error instanceof PdfProcessorError ||
+        error instanceof TypeError ||
+        error instanceof RangeError
+      ) {
+        throw error;
+      }
+      throw new PdfCorruptedError(
+        `Failed to create PDF from pages: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error }
+      );
+    }
+  }
+
+  /**
+   * Merges multiple PDF documents into a single PDF document in the sequence provided,
+   * preserving AcroForm fields without flattening via shared `PDFObjectCopier` and
+   * `"namespace"` (or `"strip"`) collision isolation.
    *
    * @remarks
    * **Error Handling:**
@@ -122,28 +414,51 @@ export class PdfProcessor {
    * - Throws {@link PdfEncryptionError} if any PDF document is encrypted or password-protected.
    *
    * @param buffers - An array of raw binary `Uint8Array` PDF buffers to concatenate.
+   * @param options - Optional AcroForm preservation and XFA policies.
    * @returns A promise that resolves to a `Uint8Array` containing the combined PDF.
    */
-  async mergeDocuments(buffers: Uint8Array[]): Promise<Uint8Array> {
+  async mergeDocuments(
+    buffers: Uint8Array[],
+    options?: PdfMergeDocumentsOptions
+  ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit(buffers);
+
     if (buffers.length === 0) {
       throw new PdfCorruptedError(
         'Cannot merge an empty array of PDF buffers: at least one PDF buffer is required'
       );
     }
 
+    const acroFormPolicy = options?.acroFormPolicy ?? 'namespace';
+    const xfaPolicy = options?.xfaPolicy ?? 'fallbackHybrid';
+    const targetFieldNamespace = options?.targetFieldNamespace ?? '__target';
+
     try {
       const targetDoc = await PDFDocument.create();
 
       for (const buffer of buffers) {
         const srcDoc = await this.loadPdfDocument(buffer);
-        const pageIndices = srcDoc.getPageIndices();
-        const copiedPages = await targetDoc.copyPages(srcDoc, pageIndices);
-        for (const copiedPage of copiedPages) {
-          targetDoc.addPage(copiedPage);
+        precheckAndHandleXfa(srcDoc, {
+          rejectAnyXfa: false,
+          xfaPolicy,
+          roleLabel: 'Merged PDF',
+        });
+
+        const srcPageIndices = srcDoc.getPageIndices();
+        if (srcPageIndices.length === 0) {
+          continue;
         }
+
+        await graftPagesIntoTarget(targetDoc, srcDoc, {
+          insertIndex: targetDoc.getPageCount(),
+          srcPageIndices,
+          targetAcroFormPolicy: acroFormPolicy,
+          targetFieldNamespace,
+          clearNeedAppearances: false,
+        });
       }
 
-      return await targetDoc.save();
+      return await this.savePdfDocument(targetDoc);
     } catch (error: unknown) {
       if (
         error instanceof PdfProcessorError ||
@@ -188,6 +503,8 @@ export class PdfProcessor {
   async extractFormData(
     buffer: Uint8Array
   ): Promise<Record<string, string | boolean | string[] | undefined>> {
+    await this.assertWithinByteLimit([buffer]);
+
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
       const form = srcDoc.getForm();
@@ -268,57 +585,21 @@ export class PdfProcessor {
    */
   async processFormSubmission(
     buffer: Uint8Array,
-    formData: Record<string, string | number | boolean | string[] | undefined | null>
+    formData: PdfFormData
   ): Promise<Uint8Array> {
+    await this.assertWithinByteLimit([buffer]);
+
     try {
       const srcDoc = await this.loadPdfDocument(buffer);
-      const form = srcDoc.getForm();
+      precheckAndHandleXfa(srcDoc, {
+        rejectAnyXfa: false,
+        xfaPolicy: 'fallbackHybrid',
+        roleLabel: 'Form PDF',
+      });
 
-      for (const [name, value] of Object.entries(formData)) {
-        if (value === undefined || value === null) {
-          continue;
-        }
+      await populateFormFields(srcDoc, formData);
 
-        const field = form.getFieldMaybe(name);
-        if (!field) {
-          continue;
-        }
-
-        if (field instanceof PDFTextField) {
-          field.setText(typeof value === 'string' ? value : String(value));
-        } else if (field instanceof PDFCheckBox) {
-          let shouldCheck = false;
-          if (typeof value === 'boolean') {
-            shouldCheck = value;
-          } else if (typeof value === 'string') {
-            shouldCheck = ['true', 'yes', '1'].includes(value.toLowerCase());
-          } else if (typeof value === 'number') {
-            shouldCheck = value !== 0;
-          }
-
-          if (shouldCheck) {
-            field.check();
-          } else {
-            field.uncheck();
-          }
-        } else if (field instanceof PDFRadioGroup) {
-          if (typeof value === 'string') {
-            field.select(value);
-          }
-        } else if (
-          field instanceof PDFDropdown ||
-          field instanceof PDFOptionList
-        ) {
-          if (typeof value === 'string' || Array.isArray(value)) {
-            field.select(value);
-          }
-        }
-      }
-
-      const fallbackFont = await srcDoc.embedFont(StandardFonts.Helvetica);
-      form.updateFieldAppearances(fallbackFont);
-
-      return await srcDoc.save();
+      return await this.savePdfDocument(srcDoc);
     } catch (error: unknown) {
       if (
         error instanceof PdfProcessorError ||
@@ -394,8 +675,23 @@ export class PdfProcessor {
    * @returns A promise resolving to the binary Uint8Array of the generated PDF document.
    */
   async generateEmailPdf(email: EmailPdfRenderInput): Promise<Uint8Array> {
+    const maxBytes = await this.resolveMaxInMemoryFileBytes();
+    const totalBytes = this.computeEmailPayloadBytes(email);
+    if (totalBytes > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `Email PDF payload size (${totalBytes} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes, maxBytes }
+      );
+    }
     const renderer = new EmailPdfRenderer();
-    return await renderer.render(email);
+    const rendered = await renderer.render(email);
+    if (rendered.byteLength > maxBytes) {
+      throw new PdfFileTooLargeError(
+        `Rendered email PDF size (${rendered.byteLength} bytes) exceeds maximum in-memory size limit of ${maxBytes} bytes`,
+        { totalBytes: rendered.byteLength, maxBytes }
+      );
+    }
+    return rendered;
   }
 }
 

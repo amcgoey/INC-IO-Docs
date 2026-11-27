@@ -17,6 +17,8 @@ import {
 import type { DocumentSpaceService } from '../features/document-space/domain';
 import type {
   DocumentDynamicValidationPort,
+  DocumentOptionTablePort,
+  DocumentOptionTableResolution,
   DocumentSchemaRegistryPort,
   DynamicValidationResult,
 } from '../features/document/ports';
@@ -54,6 +56,7 @@ export interface LookupOptionsWiring {
   getPerRequestLookupOptions(context: WorkspaceExecutionContext): LookupOptionsPort;
   createOptionsFetcher(context: WorkspaceExecutionContext): OptionsFetcherPort;
   createDynamicValidator(context: WorkspaceExecutionContext): DocumentDynamicValidationPort;
+  createOptionTableResolver(context: WorkspaceExecutionContext): DocumentOptionTablePort;
   createCanonicalOptionsProvider(context: WorkspaceExecutionContext): CanonicalOptionsProviderPort;
   createLockedFieldsResolver(context: WorkspaceExecutionContext): UiProcessLockedFieldsPort;
 }
@@ -350,6 +353,47 @@ export function createDocumentDynamicValidationAdapter(
   };
 }
 
+export function createDocumentOptionTableAdapter(
+  lookupOptions: LookupOptionsPort,
+  resolveSpace?: SpaceLookupResolver
+): DocumentOptionTablePort {
+  return {
+    resolveOptionTables: async (sourceKeys, context) => {
+      const space = await resolveLookupSpace(
+        context.spaceId,
+        context.space,
+        undefined,
+        resolveSpace
+      );
+      const trimmedLogId = context.selectedLogId?.trim();
+      const resolved = await lookupOptions.resolveOptions(
+        {
+          ...(space !== undefined ? { space } : {}),
+          documentTypeKey: context.documentTypeKey,
+          ...(trimmedLogId ? { selectedLogId: trimmedLogId } : {}),
+        },
+        sourceKeys
+      );
+
+      const results: Record<string, DocumentOptionTableResolution> = {};
+      for (const sourceKey of sourceKeys) {
+        const res = resolved[sourceKey];
+        if (!res) {
+          results[sourceKey] = { status: 'empty', tuples: [] };
+          continue;
+        }
+        results[sourceKey] = {
+          status: res.status,
+          tuples: res.tuples,
+          ...(res.targetPath !== undefined ? { targetPath: res.targetPath } : {}),
+          ...(res.errorMessage !== undefined ? { errorMessage: res.errorMessage } : {}),
+        };
+      }
+      return results;
+    },
+  };
+}
+
 export function createCanonicalOptionsProviderAdapter(
   lookupOptions: LookupOptionsPort,
   resolveSpace?: SpaceLookupResolver
@@ -494,6 +538,8 @@ export function createLookupOptionsWiring(
       createOptionsFetcherAdapter(getPerRequestLookupOptions(context)),
     createDynamicValidator: (context) =>
       createDocumentDynamicValidationAdapter(getPerRequestLookupOptions(context)),
+    createOptionTableResolver: (context) =>
+      createDocumentOptionTableAdapter(getPerRequestLookupOptions(context)),
     createCanonicalOptionsProvider: (context) =>
       createCanonicalOptionsProviderAdapter(getPerRequestLookupOptions(context)),
     createLockedFieldsResolver: (context) =>

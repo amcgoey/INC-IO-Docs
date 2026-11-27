@@ -26,10 +26,96 @@ export type WorkspaceConfiguration = Static<typeof WorkspaceConfigurationSchema>
 export type DriveConfiguration = Static<typeof DriveConfigurationSchema>;
 export type SheetsConfiguration = Static<typeof SheetsConfigurationSchema>;
 
+export const DEFAULT_MAX_IN_MEMORY_FILE_BYTES = 200 * 1024 * 1024;
+export const MAX_IN_MEMORY_FILE_BYTES_ENV_VAR = 'MAX_IN_MEMORY_FILE_BYTES';
+
+/**
+ * Parses the optional MAX_IN_MEMORY_FILE_BYTES environment override, throwing if non-empty and invalid.
+ */
+export function resolveMaxInMemoryFileBytesFromEnv(): number | undefined {
+  const raw = process.env[MAX_IN_MEMORY_FILE_BYTES_ENV_VAR];
+  if (raw === undefined || raw.trim().length === 0) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `Invalid ${MAX_IN_MEMORY_FILE_BYTES_ENV_VAR} environment variable "${raw}": must be a positive integer`
+    );
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `Invalid ${MAX_IN_MEMORY_FILE_BYTES_ENV_VAR} environment variable "${raw}": must be a positive integer`
+    );
+  }
+  return parsed;
+}
+
+export type MaxInMemoryFileBytesFn = () =>
+  | Promise<number | undefined>
+  | number
+  | undefined;
+
+export interface MaxInMemoryFileBytesConfigProvider {
+  getMaxInMemoryFileBytes?: MaxInMemoryFileBytesFn | undefined;
+}
+
+export interface MaxInMemoryFileBytesProviderOptions {
+  configProvider?: MaxInMemoryFileBytesConfigProvider | undefined;
+  getMaxInMemoryFileBytes?: MaxInMemoryFileBytesFn | undefined;
+}
+
+/**
+ * Builds an async provider resolving the in-memory file byte limit from an optional direct
+ * override (`getMaxInMemoryFileBytes`), `configProvider`, environment override, or the
+ * 200 MB default, and validates that the resolved value is a positive finite number.
+ */
+export function createMaxInMemoryFileBytesProvider(
+  source?: MaxInMemoryFileBytesConfigProvider | MaxInMemoryFileBytesProviderOptions
+): () => Promise<number> {
+  const nestedConfigProvider =
+    source !== undefined && 'configProvider' in source
+      ? source.configProvider
+      : undefined;
+
+  return async (): Promise<number> => {
+    let resolved: number | undefined;
+    if (source && typeof source.getMaxInMemoryFileBytes === 'function') {
+      resolved = await source.getMaxInMemoryFileBytes();
+    }
+    if (
+      resolved === undefined &&
+      nestedConfigProvider &&
+      typeof nestedConfigProvider.getMaxInMemoryFileBytes === 'function'
+    ) {
+      resolved = await nestedConfigProvider.getMaxInMemoryFileBytes();
+    }
+    if (resolved === undefined) {
+      resolved = resolveMaxInMemoryFileBytesFromEnv() ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+    }
+    if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved <= 0) {
+      throw new Error(
+        `Invalid maxInMemoryFileBytes configuration "${String(resolved)}": must be a positive finite number`
+      );
+    }
+    return resolved;
+  };
+}
+
 export const AppConfigurationSchema = Type.Object({
   workspace: Type.Optional(WorkspaceConfigurationSchema),
   drive: Type.Optional(DriveConfigurationSchema),
   sheets: Type.Optional(SheetsConfigurationSchema),
+  maxInMemoryFileBytes: Type.Optional(
+    Type.Union([Type.Integer({ minimum: 1 }), Type.Undefined()])
+  ),
+  templates: Type.Optional(
+    Type.Union([
+      Type.Record(Type.String({ minLength: 1 }), Type.String({ minLength: 1 })),
+      Type.Undefined(),
+    ])
+  ),
 });
 
 export type AppConfiguration = Static<typeof AppConfigurationSchema>;
@@ -114,6 +200,18 @@ export class AppManifestProvider {
       }
 
       this.cachedConfiguration = validatedManifest.configuration;
+
+      const templates = validatedManifest.configuration?.templates;
+      if (templates !== undefined) {
+        for (const [templateKey, envVarName] of Object.entries(templates)) {
+          if (templateKey.trim().length === 0 || envVarName.trim().length === 0) {
+            throw new Error(
+              `Invalid templates configuration at "${this.manifestPath}": templateKey "${templateKey}" and env var name must be non-empty strings`
+            );
+          }
+        }
+      }
+
       this.cachedRawManifest = rawData;
       this.cachedValidatedManifest = validatedManifest;
       this.isManifestLoaded = true;
@@ -172,6 +270,47 @@ export class AppManifestProvider {
     }
     return this.cachedConfiguration?.sheets !== undefined
       ? structuredClone(this.cachedConfiguration.sheets)
+      : undefined;
+  }
+
+  /**
+   * Resolves the maximum in-memory file byte limit from the environment override,
+   * manifest configuration, or the 200 MB default.
+   */
+  async getMaxInMemoryFileBytes(): Promise<number> {
+    const envOverride = resolveMaxInMemoryFileBytesFromEnv();
+    if (envOverride !== undefined) {
+      return envOverride;
+    }
+    if (!this.isManifestLoaded) {
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load maxInMemoryFileBytes from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
+    }
+    return this.cachedConfiguration?.maxInMemoryFileBytes ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES;
+  }
+
+  /**
+   * Returns logical DocumentTemplate keys mapped to runtime environment variable names.
+   */
+  async getTemplatesConfig(): Promise<Record<string, string> | undefined> {
+    if (!this.isManifestLoaded) {
+      try {
+        await this.loadManifest();
+      } catch (err) {
+        throw new Error(
+          `Failed to load templates config from manifest: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err }
+        );
+      }
+    }
+    return this.cachedConfiguration?.templates !== undefined
+      ? structuredClone(this.cachedConfiguration.templates)
       : undefined;
   }
 

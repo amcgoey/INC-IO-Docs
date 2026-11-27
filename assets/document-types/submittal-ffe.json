@@ -1,6 +1,7 @@
 {
   "key": "submittal-ffe",
   "name": "Submittal FF&E",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {
@@ -159,6 +160,16 @@
         "name": "Contact Chain",
         "key": "contactChain",
         "template": "{{contact.key}}"
+      },
+      {
+        "name": "Spec Tag Group",
+        "key": "specTagGroup",
+        "template": "{{specTag.key}}",
+        "transforms": [
+          { "type": "prefix", "length": 2 },
+          { "type": "uppercase" }
+        ],
+        "required": true
       }
     ],
     "identity": {
@@ -228,24 +239,110 @@
     },
     "events": {
       "onSubmit": {
-        "catchAllWorkflow": "FileSubmittalFFE"
+        "rules": [
+          {
+            "matchFields": {
+              "action": "REC"
+            },
+            "workflow": "SubmittalReceived"
+          }
+        ],
+        "catchAllWorkflow": "SubmittalSent"
       }
+    },
+    "successView": {
+      "summary": {
+        "topLabel": "{{specTag.key}}-{{revision}} • {{status.key}}",
+        "text": "<b>{{action.name}}</b> • {{date}} ({{contact.key}})",
+        "bottomLabel": "{{vendor.name}} — {{specTitle}}"
+      },
+      "artifacts": [
+        {
+          "stepId": "insertCoverSheet",
+          "label": "Review Copy (with Cover Sheet)",
+          "fallbackLabel": "Transmittal Cover Sheet"
+        },
+        {
+          "stepId": "duplicateForReview",
+          "label": "Review Copy"
+        },
+        {
+          "stepId": "moveOriginal",
+          "label": "Filed Original",
+          "whenWorkflow": {
+            "SubmittalReceived": "Archived Original",
+            "SubmittalSent": "Filed Submittal"
+          }
+        }
+      ]
     }
   },
   "documentWorkflowConfig": {
     "workflows": [
       {
-        "name": "FileSubmittalFFE",
+        "name": "SubmittalReceived",
         "activitySequence": [
           {
+            "id": "moveOriginal",
             "type": "MOVE_FILE",
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",
               "parentPath": "{{StorageContext.basePath}}",
-              "folderName": "05 Submittals"
+              "folderName": "05 Submittals/Closed/{{Document.calculated.specTagGroup}}/{{Document.data.specTag.key}}",
+              "fileName": "{{Document.calculated.fileName}}"
             }
           },
           {
+            "id": "duplicateForReview",
+            "type": "DUPLICATE_FILE",
+            "payload": {
+              "fileSourceStepId": "moveOriginal",
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "05 Submittals",
+              "fileName": "{{Document.calculated.fileName}}",
+              "fileNamePrefix": "_"
+            }
+          },
+          {
+            "id": "insertCoverSheet",
+            "type": "INSERT_PAGES",
+            "payload": {
+              "fileSourceStepId": "duplicateForReview",
+              "templateKey": "submittalCoverSheet",
+              "position": "start",
+              "sourcePages": [1],
+              "fillForm": true,
+              "onUnmodifiableTarget": {
+                "strategy": "createSiblingPdf",
+                "fileName": "_{{Document.calculated.fileName}} Transmittal.pdf"
+              }
+            }
+          },
+          {
+            "id": "writeLog",
+            "type": "WRITE_LOG",
+            "payload": {
+              "fileSourceStepId": "moveOriginal"
+            }
+          }
+        ]
+      },
+      {
+        "name": "SubmittalSent",
+        "activitySequence": [
+          {
+            "id": "moveOriginal",
+            "type": "MOVE_FILE",
+            "payload": {
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "05 Submittals/Closed/{{Document.calculated.specTagGroup}}/{{Document.data.specTag.key}}",
+              "fileName": "{{Document.calculated.fileName}}"
+            }
+          },
+          {
+            "id": "writeLog",
             "type": "WRITE_LOG",
             "payload": {}
           }
@@ -345,7 +442,8 @@
   "documentFormSchema": {
     "fields": {
       "Submittal No": {
-        "template": "{{specTag.key}}-{{revision}}"
+        "template": "{{specTag.key}}-{{revision}}",
+        "writable": true
       },
       "Submittal Response": {
         "template": "{{action.name}}",

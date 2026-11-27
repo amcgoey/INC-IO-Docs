@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import nock from 'nock';
+import { Value } from '@sinclair/typebox/value';
 import { PDFDocument } from 'pdf-lib';
 import { createApp, type AppInstance } from '../src/app/server';
 import type { WorkspaceAuthVerifierPort } from '../src/infrastructure/workspace-addon/api';
@@ -11,9 +12,10 @@ import { GoogleDriveClient } from '../src/infrastructure/drive/drive-client';
 import type { GmailThreadDetails } from '../src/infrastructure/gmail/types';
 // nosemgrep: adapter-leakage-warning
 import { google, type gmail_v1 } from 'googleapis';
-import type {
-  GoogleWorkspaceActionResponse,
-  GoogleWorkspaceSection,
+import {
+  GoogleWorkspaceActionResponseSchema,
+  type GoogleWorkspaceActionResponse,
+  type GoogleWorkspaceSection,
 } from '../src/infrastructure/workspace-addon/ui-blocks';
 import {
   getDocumentTypeWidgetName,
@@ -21,6 +23,9 @@ import {
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
 import { PdfProcessor } from '../src/infrastructure/pdf/pdf-processor';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () => {
   let app: AppInstance;
@@ -252,6 +257,16 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     ['---', '', ''],
   ];
 
+  const CONFIG_ARCH_CSI_DIVISIONS = [
+    ['Division Number', 'Division Folder'],
+    ['01', '01 General Requirements'],
+    ['03', '03 Concrete'],
+    ['07', '07 Thermal and Moisture Protection'],
+    ['08', '08 Openings'],
+    ['09', '09 Finishes'],
+    ['---', ''],
+  ];
+
   const CONFIG_FFE_CONTACTS = [
     ['Contact', 'Name', 'Contact Type'],
     ['INC', 'INC Architecture & Design', 'INC'],
@@ -308,6 +323,11 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       namedRangeId: 'nr-arch-contacts-val',
       name: 'Validation_Submittal_Arch_Contacts',
       range: { sheetId: 103, startRowIndex: 1, endRowIndex: CONFIG_ARCH_CONTACTS.length - 1, startColumnIndex: 7, endColumnIndex: 8 },
+    },
+    {
+      namedRangeId: 'nr-arch-csi-divisions',
+      name: 'Options_Submittal_Arch_CSI_Divisions',
+      range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISIONS.length, startColumnIndex: 11, endColumnIndex: 13 },
     },
   ];
 
@@ -367,6 +387,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
           if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
           if (range.includes('C1:F')) return { range, values: CONFIG_ACTIONS };
           if (range.includes('H1:J')) return { range, values: CONFIG_ARCH_CONTACTS };
+          if (range.includes('L1:M')) return { range, values: CONFIG_ARCH_CSI_DIVISIONS };
         }
         if (range.includes('_Config Submittal FF&E')) {
           if (range.includes('A1:A')) return { range, values: CONFIG_STATUSES };
@@ -1354,14 +1375,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     });
 
     expect(response.statusCode).toBe(200);
-    const body = JSON.parse(response.payload);
-    expect(body).toEqual({
-      action: {
-        notification: {
-          text: 'Document processed successfully',
-        },
-      },
-    });
+    const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+    expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+    expect(body.action?.notification).toBeUndefined();
+    expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
     expect(nock.isDone()).toBe(true);
   });
 
@@ -1536,14 +1553,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -1610,14 +1623,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -1684,14 +1693,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
       });
 
       expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body).toEqual({
-        action: {
-          notification: {
-            text: 'Document processed successfully',
-          },
-        },
-      });
+      const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2013,7 +2018,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify attachment was downloaded from Gmail preserving metadata
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2210,7 +2217,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify inline CID image was downloaded
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2286,7 +2295,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2376,7 +2387,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Verify attachment was downloaded
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2477,7 +2490,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
       expect(nock.isDone()).toBe(true);
     });
 
@@ -2750,7 +2765,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(resAction.statusCode).toBe(200);
       const bodyAction = JSON.parse(resAction.payload) as GoogleWorkspaceActionResponse;
-      expect(bodyAction.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, bodyAction)).toBe(true);
+      expect(bodyAction.action?.notification).toBeUndefined();
+      expect(bodyAction.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment must have been called with the freshest token from the hydration fetch!
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -2852,7 +2869,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(messageId, 'fresh-token-inv-1', expect.anything());
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(messageId, 'fresh-token-inv-2', expect.anything());
@@ -2953,7 +2972,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment should NOT have been called for the email attachment!
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
@@ -3287,7 +3308,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial assertion: getAttachment must NOT have been called!
       expect(mockGmailClient.getAttachment).not.toHaveBeenCalled();
@@ -3481,7 +3504,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // The critical assertion: users.messages.get was called ONLY ONCE across the entire request!
       expect(mockMessagesGet).toHaveBeenCalledTimes(1);
@@ -3650,7 +3675,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(actionResponse.statusCode).toBe(200);
       const actionBody = JSON.parse(actionResponse.payload) as GoogleWorkspaceActionResponse;
-      expect(actionBody.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, actionBody)).toBe(true);
+      expect(actionBody.action?.notification).toBeUndefined();
+      expect(actionBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Across both the on-form-change and processDocument with hydrator + UI manager, users.messages.get was called ONLY ONCE!
       expect(mockMessagesGet).toHaveBeenCalledTimes(1);
@@ -3905,7 +3932,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: getAttachment was called with the selected email ID (msg-email-2) rather than initial trigger (msg-email-1)
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -3972,7 +4001,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Crucial: generateEmailPdf received headers, subject, and body from msg-email-2
       expect(generateEmailPdfSpy).toHaveBeenCalledWith(
@@ -4058,7 +4089,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload) as GoogleWorkspaceActionResponse;
-      expect(body.action?.notification?.text).toBe('Document processed successfully');
+      expect(Value.Check(GoogleWorkspaceActionResponseSchema, body)).toBe(true);
+      expect(body.action?.notification).toBeUndefined();
+      expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
       // Attachment downloaded from msg-email-2
       expect(mockGmailClient.getAttachment).toHaveBeenCalledWith(
@@ -4360,7 +4393,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(processRes.statusCode).toBe(200);
         const processBody = JSON.parse(processRes.payload) as GoogleWorkspaceActionResponse;
-        expect(processBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, processBody)).toBe(true);
+        expect(processBody.action?.notification).toBeUndefined();
+        expect(processBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Communication Project Filed');
 
         // The critical assertion: users.messages.get was called 0 times because getThread pre-warmed msg-cached-2 in cache!
         expect(mockMessagesGet).toHaveBeenCalledTimes(0);
@@ -5748,7 +5783,62 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
     });
 
     describe('Ticket #305: End-to-end Gmail Workspace Add-on pre-population and Document submission for Submittal Arch & FF&E', () => {
-      beforeEach(() => {
+      function mockInsertCoverSheetNock(options: {
+        copyFileId: string;
+        copyFileName: string;
+        copyParentId: string;
+        pdfBytes: Uint8Array;
+      }): void {
+        const { copyFileId, copyFileName, copyParentId, pdfBytes } = options;
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/test-cover-sheet-tpl')
+          .query((q) => q.alt !== 'media')
+          .times(2)
+          .reply(200, {
+            id: 'test-cover-sheet-tpl',
+            name: 'Cover Sheet.pdf',
+            mimeType: 'application/pdf',
+            size: pdfBytes.byteLength,
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files/test-cover-sheet-tpl')
+          .query((q) => q.alt === 'media')
+          .reply(200, Buffer.from(pdfBytes));
+
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${copyFileId}`)
+          .query((q) => q.alt !== 'media')
+          .times(2)
+          .reply(200, {
+            id: copyFileId,
+            name: copyFileName,
+            mimeType: 'application/pdf',
+            size: pdfBytes.byteLength,
+            parents: [copyParentId],
+          });
+
+        nock('https://www.googleapis.com')
+          .get(`/drive/v3/files/${copyFileId}`)
+          .query((q) => q.alt === 'media')
+          .reply(200, Buffer.from(pdfBytes));
+
+        nock('https://www.googleapis.com')
+          .patch(`/upload/drive/v3/files/${copyFileId}`)
+          .query(true)
+          .reply(200, {
+            id: copyFileId,
+            name: copyFileName,
+            mimeType: 'application/pdf',
+            parents: [copyParentId],
+            webViewLink: `https://drive.google.com/file/d/${copyFileId}/view`,
+          });
+      }
+
+      beforeEach(async () => {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+        cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
         vi.spyOn(mockGmailClient, 'getThread').mockImplementation(async (threadId: string): Promise<GmailThreadDetails> => {
           if (threadId === 'th-pass2-ticket-305-arch') {
             return {
@@ -5844,6 +5934,10 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         });
       });
 
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
       it('renders Submittal Arch card with pre-populated compound attachment fields, contact alias, action: REC, and submits document successfully', async () => {
         mockDocumentLogSearch({ sharedDriveId: 'shared-drive-proj-root', name: 'Active Projects Document Log' });
         const res = await app.server.inject({
@@ -5908,6 +6002,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '6 Construction'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'const-folder-id', name: '6 Construction', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -5915,8 +6010,23 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('const-folder-id') && q.q.includes("name = 'Submittals'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'submittals-folder-id', name: 'Submittals', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('submittals-folder-id') && q.q.includes("name = 'Closed'"))
+          .reply(200, {
+            files: [{ id: 'submittals-closed-id', name: 'Closed', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('submittals-closed-id') && q.q.includes("name = '07 Thermal and Moisture Protection'"))
+          .reply(200, {
+            files: [{ id: 'submittals-csi-07-id', name: '07 Thermal and Moisture Protection', mimeType: 'application/vnd.google-apps.folder' }],
           });
 
         nock('https://www.googleapis.com')
@@ -5926,9 +6036,29 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             id: 'drive-saved-submittal-arch',
             name: '071200-001-A Waterproofing Specs - 261020 PMG.pdf',
             mimeType: 'application/pdf',
-            parents: ['submittals-folder-id'],
+            parents: ['submittals-csi-07-id'],
             webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch/view',
           });
+
+        nock('https://www.googleapis.com')
+          .post('/drive/v3/files/drive-saved-submittal-arch/copy')
+          .query(true)
+          .reply(200, (_uri, body) => {
+            const reqBody = body as { name?: string; parents?: string[] };
+            return {
+              id: 'drive-saved-submittal-arch-copy',
+              name: reqBody.name ?? '_071200-001-A Waterproofing Specs - 261020 PMG.pdf',
+              mimeType: 'application/pdf',
+              parents: reqBody.parents ?? ['submittals-folder-id'],
+              webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-arch-copy/view',
+            };
+          });
+        mockInsertCoverSheetNock({
+          copyFileId: 'drive-saved-submittal-arch-copy',
+          copyFileName: '_071200-001-A Waterproofing Specs - 261020 PMG.pdf',
+          copyParentId: 'submittals-folder-id',
+          pdfBytes: cachedCoverSheetPdfBytes!,
+        });
 
         // WRITE_LOG: Drive discovery + Sheets read/batchUpdate
         nock('https://www.googleapis.com')
@@ -6057,7 +6187,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(submitRes.statusCode).toBe(200);
         const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, submitBody)).toBe(true);
+        expect(submitBody.action?.notification).toBeUndefined();
+        expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal Arch Filed');
         expect(capturedBatchUpdate).toBeDefined();
         expect(JSON.stringify(capturedBatchUpdate)).toContain(
           '=HYPERLINK(\\"https://drive.google.com/file/d/drive-saved-submittal-arch/view\\", \\"Link\\")'
@@ -6133,6 +6265,7 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('shared-drive-proj-root') && q.q.includes("name = '3 FFE'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'ffe-folder-id', name: '3 FFE', mimeType: 'application/vnd.google-apps.folder' }],
           });
@@ -6140,8 +6273,30 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
         nock('https://www.googleapis.com')
           .get('/drive/v3/files')
           .query((q) => typeof q.q === 'string' && q.q.includes('ffe-folder-id') && q.q.includes("name = '05 Submittals'"))
+          .times(2)
           .reply(200, {
             files: [{ id: 'ffe-submittals-id', name: '05 Submittals', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-submittals-id') && q.q.includes("name = 'Closed'"))
+          .reply(200, {
+            files: [{ id: 'ffe-closed-id', name: 'Closed', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-closed-id') && q.q.includes("name = 'CG'"))
+          .reply(200, {
+            files: [{ id: 'ffe-cg-id', name: 'CG', mimeType: 'application/vnd.google-apps.folder' }],
+          });
+
+        nock('https://www.googleapis.com')
+          .get('/drive/v3/files')
+          .query((q) => typeof q.q === 'string' && q.q.includes('ffe-cg-id') && q.q.includes("name = 'CG104'"))
+          .reply(200, {
+            files: [{ id: 'ffe-cg104-id', name: 'CG104', mimeType: 'application/vnd.google-apps.folder' }],
           });
 
         nock('https://www.googleapis.com')
@@ -6151,9 +6306,29 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
             id: 'drive-saved-submittal-ffe',
             name: 'CG104-A Berman Falk - 261021 INC.pdf',
             mimeType: 'application/pdf',
-            parents: ['ffe-submittals-id'],
+            parents: ['ffe-cg104-id'],
             webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe/view',
           });
+
+        nock('https://www.googleapis.com')
+          .post('/drive/v3/files/drive-saved-submittal-ffe/copy')
+          .query(true)
+          .reply(200, (_uri, body) => {
+            const reqBody = body as { name?: string; parents?: string[] };
+            return {
+              id: 'drive-saved-submittal-ffe-copy',
+              name: reqBody.name ?? '_CG104-A Berman Falk - 261021 INC.pdf',
+              mimeType: 'application/pdf',
+              parents: reqBody.parents ?? ['ffe-submittals-id'],
+              webViewLink: 'https://drive.google.com/file/d/drive-saved-submittal-ffe-copy/view',
+            };
+          });
+        mockInsertCoverSheetNock({
+          copyFileId: 'drive-saved-submittal-ffe-copy',
+          copyFileName: '_CG104-A Berman Falk - 261021 INC.pdf',
+          copyParentId: 'ffe-submittals-id',
+          pdfBytes: cachedCoverSheetPdfBytes!,
+        });
 
         // WRITE_LOG: Drive discovery + Sheets read/FORMULA check + batchUpdate (protecting Spec Title)
         nock('https://www.googleapis.com')
@@ -6295,7 +6470,9 @@ describe('Workspace-to-Gmail E2E Integration (Ticket #194 Tracer Bullet)', () =>
 
         expect(submitRes.statusCode).toBe(200);
         const submitBody = JSON.parse(submitRes.payload) as GoogleWorkspaceActionResponse;
-        expect(submitBody.action?.notification?.text).toBe('Document processed successfully');
+        expect(Value.Check(GoogleWorkspaceActionResponseSchema, submitBody)).toBe(true);
+        expect(submitBody.action?.notification).toBeUndefined();
+        expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal FF&E Filed');
         expect(capturedBatchUpdate).toBeDefined();
         const batchRequests = (capturedBatchUpdate as { requests: Array<{ updateCells?: { range?: { startColumnIndex?: number; endColumnIndex?: number } } }> }).requests;
         expect(batchRequests.map((r) => [r.updateCells?.range?.startColumnIndex, r.updateCells?.range?.endColumnIndex])).toEqual([

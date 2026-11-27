@@ -1,16 +1,48 @@
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import {
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  evaluateWritableDocumentFormFields,
+  hasNonEmptyWritableFormData,
+  validateDocumentFormSchema,
+  validateInsertDataActivityPayload,
+  validateInsertPagesActivityPayload,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
+  type EvaluateWritableDocumentFormFieldsParams,
+} from './document-form-schema';
+import {
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
+  validateDocumentUiSuccessView,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
+} from './document-success-view';
 import type {
   ActivityDispatcherPort,
   DocumentSchemaRegistryPort,
   DocumentServicePort,
+  DriveFileResult,
+  DriveServicePort,
   TemplateEvaluationContext,
   TemplateEvaluatorPort,
   CompiledSchemaRegistryPort,
   DocumentDynamicValidationPort,
   DynamicValidationQuery,
   DynamicValidationMessageFormatter,
+  DocumentOptionTablePort,
+  DocumentOptionTableResolution,
+  TemplateRegistryPort,
 } from './ports';
+
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+const GOOGLE_SHORTCUT_MIME_TYPE = 'application/vnd.google-apps.shortcut';
+const MAX_SHORTCUT_HOPS = 5;
 
 export const OPTION_NOT_FOUND_MSG = 'Option not found.';
 export const VALIDATION_TIMEOUT_MSG = 'Validation timed out.';
@@ -29,6 +61,17 @@ export const DocumentSpaceModel = Type.Object({
 export const DocumentSpaceSchema = DocumentSpaceModel;
 export type DocumentSpace = Static<typeof DocumentSpaceModel>;
 
+export const SourceFileSchema = Type.Object({
+  id: Type.String(),
+  name: Type.Optional(Type.String()),
+  mimeType: Type.Optional(Type.String()),
+  content: Type.Optional(Type.Uint8Array()),
+});
+
+export const SourceFileType = SourceFileSchema;
+
+export type SourceFile = Static<typeof SourceFileSchema>;
+
 export const DocumentModel = Type.Object({
   // STUB: Pending Chunk 3
   id: Type.Optional(Type.String()),
@@ -40,6 +83,7 @@ export const DocumentModel = Type.Object({
   data: Type.Record(Type.String(), Type.Unknown()),
   calculated: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   space: Type.Optional(DocumentSpaceModel),
+  sourceFiles: Type.Optional(Type.Array(SourceFileSchema)),
 });
 
 export type Document = Static<typeof DocumentModel>;
@@ -59,23 +103,14 @@ export type Activity = Static<typeof ActivityType>;
 export const FileLocatorType = Type.Object({
   id: Type.String(),
   name: Type.String(),
+  parentId: Type.Optional(Type.String()),
   parentName: Type.Optional(Type.String()),
+  parentUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
   mimeType: Type.Optional(Type.String()),
   uri: Type.Optional(Type.String()),
 });
 
 export type FileLocator = Static<typeof FileLocatorType>;
-
-export const SourceFileSchema = Type.Object({
-  id: Type.String(),
-  name: Type.Optional(Type.String()),
-  mimeType: Type.Optional(Type.String()),
-  content: Type.Optional(Type.Uint8Array()),
-});
-
-export const SourceFileType = SourceFileSchema;
-
-export type SourceFile = Static<typeof SourceFileSchema>;
 
 export const ActivityOutputType = Type.Object({
   success: Type.Optional(Type.Boolean()),
@@ -176,11 +211,55 @@ export const DocumentIdentitySchemaType = Type.Object(
 
 export type DocumentIdentitySchema = Static<typeof DocumentIdentitySchemaType>;
 
+export const CalculatedFieldPrefixTransformSchema = Type.Object(
+  {
+    type: Type.Literal('prefix'),
+    length: Type.Integer({ minimum: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldPrefixTransform = Static<typeof CalculatedFieldPrefixTransformSchema>;
+
+export const CalculatedFieldUppercaseTransformSchema = Type.Object(
+  {
+    type: Type.Literal('uppercase'),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldUppercaseTransform = Static<typeof CalculatedFieldUppercaseTransformSchema>;
+
+export const CalculatedFieldTransformSchema = Type.Union([
+  CalculatedFieldPrefixTransformSchema,
+  CalculatedFieldUppercaseTransformSchema,
+]);
+
+export type CalculatedFieldTransform = Static<typeof CalculatedFieldTransformSchema>;
+
+export const CalculatedFieldLookupSchema = Type.Object(
+  {
+    source: Type.String({ minLength: 1 }),
+    matchProperty: Type.String({ minLength: 1 }),
+    resultProperty: Type.String({ minLength: 1 }),
+  },
+  { additionalProperties: false }
+);
+
+export type CalculatedFieldLookup = Static<typeof CalculatedFieldLookupSchema>;
+
 export const CalculatedFieldType = Type.Object({
   key: Type.String(),
   name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
+  transforms: Type.Optional(
+    Type.Union([Type.Array(CalculatedFieldTransformSchema, { minItems: 1 }), Type.Undefined()])
+  ),
+  lookup: Type.Optional(
+    Type.Union([CalculatedFieldLookupSchema, Type.Undefined()])
+  ),
+  required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 });
 
 export type CalculatedField = Static<typeof CalculatedFieldType>;
@@ -237,11 +316,33 @@ export type StorageContextConfig = Static<typeof StorageContextConfigType>;
 export const DocumentUiEventsSchema = Type.Object(
   {
     events: Type.Optional(Type.Record(Type.String(), UiEventType)),
+    successView: Type.Optional(DocumentUiSuccessViewSchema),
   },
   { additionalProperties: true }
 );
 
 export type DocumentUiEvents = Static<typeof DocumentUiEventsSchema>;
+
+export {
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
+};
+
+export {
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  evaluateWritableDocumentFormFields,
+  hasNonEmptyWritableFormData,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
+  type EvaluateWritableDocumentFormFieldsParams,
+};
 
 export const DocumentTypeSchema = Type.Object({
   key: Type.String(),
@@ -250,10 +351,18 @@ export const DocumentTypeSchema = Type.Object({
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   documentWorkflowConfig: Type.Optional(DocumentWorkflowConfigType),
   storageContextConfig: Type.Optional(StorageContextConfigType),
+  documentFormSchema: Type.Optional(Type.Union([DocumentFormSchemaSchema, Type.Undefined()])),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type DocumentType = Static<typeof DocumentTypeSchema>;
+
+export interface ProcessStepResult {
+  stepId?: string | undefined;
+  activityType: string;
+  output: ActivityOutput;
+}
 
 export type ProcessDocumentResult =
   | {
@@ -261,9 +370,26 @@ export type ProcessDocumentResult =
       data: Document;
       activities: Activity[];
       outputs: ActivityOutput[];
+      workflowName?: string | undefined;
+      completedStepCount?: number | undefined;
+      stepResults?: ProcessStepResult[] | undefined;
+      stepOutputs?: Record<string, ActivityOutput> | undefined;
+      files?: FileLocator[] | undefined;
       contextVariables?: { [key: string]: unknown } | undefined;
     }
-  | { success: false; errors: string[] };
+  | {
+      success: false;
+      errors: string[];
+      failedStepId?: string | undefined;
+      workflowName?: string | undefined;
+      completedStepCount?: number | undefined;
+      stepResults?: ProcessStepResult[] | undefined;
+      data?: Document | undefined;
+      outputs?: ActivityOutput[] | undefined;
+      stepOutputs?: Record<string, ActivityOutput> | undefined;
+      files?: FileLocator[] | undefined;
+      contextVariables?: { [key: string]: unknown } | undefined;
+    };
 
 /**
  * Maps property names in DocumentIdentitySchema to property names in the Document entity model.
@@ -329,6 +455,115 @@ function sanitizeStringsDeepForPath(value: unknown): unknown {
   return value;
 }
 
+function resolveCalculatedFieldLookup(params: {
+  calcFieldKey: string;
+  lookupKey: string;
+  lookup: CalculatedFieldLookup;
+  documentSchema: DocumentSchema;
+  dynamicTables: Readonly<Record<string, DocumentOptionTableResolution>>;
+}): { ok: true; value: string } | { ok: false; error: string } {
+  const { calcFieldKey, lookupKey, lookup, documentSchema, dynamicTables } = params;
+  const trimmedKey = lookupKey.trim();
+  if (trimmedKey.length === 0) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" could not resolve lookup in "${lookup.source}": lookup key is blank.`,
+    };
+  }
+
+  let tuples: readonly Record<string, unknown>[];
+  const staticOptions = documentSchema.options?.[lookup.source];
+  if (staticOptions !== undefined) {
+    tuples = staticOptions;
+  } else {
+    const resolution = dynamicTables[lookup.source];
+    if (!resolution) {
+      return {
+        ok: false,
+        error: `CalculatedField "${calcFieldKey}" could not resolve option table "${lookup.source}".`,
+      };
+    }
+    if (resolution.status !== 'ready') {
+      return {
+        ok: false,
+        error:
+          resolution.errorMessage ??
+          `CalculatedField "${calcFieldKey}" failed to load option table "${lookup.source}" (${resolution.status}).`,
+      };
+    }
+    const { tuples: resolvedTuples } = resolution;
+    tuples = resolvedTuples;
+  }
+
+  const normalizedKey = trimmedKey.toLowerCase();
+  const matches = tuples.filter((tuple) => {
+    const rawMatch = tuple[lookup.matchProperty];
+    if (rawMatch === undefined || rawMatch === null) {
+      return false;
+    }
+    return String(rawMatch).trim().toLowerCase() === normalizedKey;
+  });
+
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" could not find matching "${lookup.matchProperty}" = "${trimmedKey}" in option source "${lookup.source}".`,
+    };
+  }
+
+  const distinctResults = new Set<string>();
+  let firstRawResult: unknown;
+  for (const match of matches) {
+    const val = match[lookup.resultProperty];
+    if (firstRawResult === undefined && val !== undefined && val !== null) {
+      firstRawResult = val;
+    }
+    if (val !== undefined && val !== null) {
+      const s = String(val).trim();
+      if (s.length > 0) {
+        distinctResults.add(s);
+      }
+    }
+  }
+
+  if (distinctResults.size > 1) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" found ambiguous "${lookup.matchProperty}" = "${trimmedKey}" in option source "${lookup.source}".`,
+    };
+  }
+
+  if (distinctResults.size === 0 || firstRawResult === undefined || firstRawResult === null) {
+    return {
+      ok: false,
+      error: `CalculatedField "${calcFieldKey}" matched "${trimmedKey}" in "${lookup.source}", but "${lookup.resultProperty}" is blank.`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: String(firstRawResult),
+  };
+}
+
+function applyCalculatedFieldTransforms(
+  initialValue: string,
+  transforms: readonly CalculatedFieldTransform[] | undefined
+): string {
+  let result = initialValue;
+  if (!transforms) {
+    return result;
+  }
+  for (const transform of transforms) {
+    if (transform.type === 'prefix') {
+      result = result.slice(0, transform.length);
+    } else if (transform.type === 'uppercase') {
+      result = result.toUpperCase();
+    }
+  }
+  return result;
+}
+
 function createPathSafeDocument(
   document: Document,
   documentType: DocumentType,
@@ -340,22 +575,27 @@ function createPathSafeDocument(
   if (documentType.documentSchema.calculatedFields) {
     const pathBasePayload: Record<string, unknown> = {
       ...sanitizedData,
-      ...(document.space !== undefined
-        ? {
-            space: document.space,
-            Document: {
-              ...document,
-              data: sanitizedData,
-              space: document.space,
-            },
-          }
-        : {}),
+      ...(document.space !== undefined ? { space: document.space } : {}),
+      Document: {
+        ...document,
+        data: sanitizedData,
+        ...(document.space !== undefined ? { space: document.space } : {}),
+      },
     };
     sanitizedCalculated = {};
     for (const calcField of documentType.documentSchema.calculatedFields) {
-      sanitizedCalculated[calcField.key] = sanitizeFilePath(
-        evaluator.evaluate(calcField.template, pathBasePayload)
-      );
+      const hasPostProcessing =
+        (calcField.transforms !== undefined && calcField.transforms.length > 0) ||
+        calcField.lookup !== undefined;
+      if (hasPostProcessing && document.calculated?.[calcField.key] !== undefined) {
+        sanitizedCalculated[calcField.key] = sanitizeStringsDeepForPath(
+          document.calculated[calcField.key]
+        );
+      } else {
+        const rawEvaluated = evaluator.evaluate(calcField.template, pathBasePayload);
+        const transformed = applyCalculatedFieldTransforms(rawEvaluated, calcField.transforms);
+        sanitizedCalculated[calcField.key] = sanitizeFilePath(transformed);
+      }
     }
   } else if (document.calculated !== undefined) {
     sanitizedCalculated = sanitizeStringsDeepForPath(document.calculated) as Record<string, unknown>;
@@ -546,6 +786,30 @@ function cloneAndFreezePlainValue<T>(value: T): T {
   return Object.freeze(cloned) as T;
 }
 
+function mergeContextVariables(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>
+): void {
+  const existingNotices = Array.isArray(target.notices) ? target.notices : undefined;
+  const hasPatchNotices = Object.prototype.hasOwnProperty.call(patch, 'notices');
+  const { notices: patchNoticesRaw } = patch;
+
+  Object.assign(target, patch);
+
+  if (hasPatchNotices) {
+    if (patchNoticesRaw === undefined) {
+      if (existingNotices !== undefined) {
+        target.notices = [...existingNotices];
+      } else {
+        delete target.notices;
+      }
+    } else {
+      const appended = Array.isArray(patchNoticesRaw) ? patchNoticesRaw : [patchNoticesRaw];
+      target.notices = [...(existingNotices ?? []), ...appended];
+    }
+  }
+}
+
 function createActivityExecutionContext(
   document: Document,
   files: readonly FileLocator[],
@@ -570,7 +834,11 @@ export class DocumentService implements DocumentServicePort {
     private readonly compiledSchemaRegistry: CompiledSchemaRegistryPort,
     private readonly dynamicValidator?: DocumentDynamicValidationPort,
     private readonly validationMessageFormatter?: DynamicValidationMessageFormatter,
-    private readonly selectedLogId?: string
+    private readonly selectedLogId?: string,
+    private readonly driveService?: DriveServicePort,
+    private readonly isEmailAttachmentSource?: boolean,
+    private readonly optionTablePort?: DocumentOptionTablePort,
+    private readonly templateRegistry?: TemplateRegistryPort
   ) {}
 
   async initialize(): Promise<void> {
@@ -833,6 +1101,144 @@ export class DocumentService implements DocumentServicePort {
     return { success: true };
   }
 
+  private async resolveDriveSourceFile(
+    documentType: DocumentType,
+    file: SourceFile
+  ): Promise<{ ok: true; file: SourceFile } | { ok: false; error: string }> {
+    const isDriveItem =
+      !(file.content instanceof Uint8Array) &&
+      !file.id.startsWith('email-pdf-') &&
+      !this.isEmailAttachmentSource;
+
+    if (!isDriveItem || !this.driveService) {
+      return { ok: true, file: { ...file } };
+    }
+
+    const visited = new Set<string>();
+    const { id: initialFileId } = file;
+    let currentId = initialFileId;
+    let resolvedMeta: DriveFileResult;
+
+    for (let hop = 0; hop <= MAX_SHORTCUT_HOPS; hop++) {
+      if (visited.has(currentId)) {
+        return { ok: false, error: `Drive shortcut cycle detected for "${initialFileId}".` };
+      }
+      visited.add(currentId);
+
+      try {
+        resolvedMeta = await this.driveService.getFile(currentId);
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      if (resolvedMeta.mimeType !== GOOGLE_SHORTCUT_MIME_TYPE) {
+        if (resolvedMeta.mimeType === GOOGLE_FOLDER_MIME_TYPE) {
+          return {
+            ok: false,
+            error: `DocumentType "${documentType.key}" does not accept folders ("${resolvedMeta.name || currentId}"). Please select a single file instead.`,
+          };
+        }
+        return {
+          ok: true,
+          file: {
+            id: resolvedMeta.id,
+            ...(resolvedMeta.name
+              ? { name: resolvedMeta.name }
+              : file.name !== undefined
+                ? { name: file.name }
+                : {}),
+            ...(resolvedMeta.mimeType !== undefined
+              ? { mimeType: resolvedMeta.mimeType }
+              : file.mimeType !== undefined
+                ? { mimeType: file.mimeType }
+                : {}),
+          },
+        };
+      }
+
+      const { targetId, targetMimeType } = resolvedMeta.shortcutDetails ?? {};
+      if (!targetId) {
+        return {
+          ok: false,
+          error: `Drive shortcut "${resolvedMeta.name || currentId}" has no targetId and cannot be resolved.`,
+        };
+      }
+      if (targetMimeType === GOOGLE_FOLDER_MIME_TYPE) {
+        return {
+          ok: false,
+          error: `DocumentType "${documentType.key}" does not accept folders ("${resolvedMeta.name || currentId}"). Please select a single file instead.`,
+        };
+      }
+      currentId = targetId;
+    }
+
+    return {
+      ok: false,
+      error: `Drive shortcut resolution exceeded ${MAX_SHORTCUT_HOPS} hops for "${initialFileId}".`,
+    };
+  }
+
+  private async validateAndResolveSourceFiles(
+    documentType: DocumentType,
+    sourceFiles: readonly SourceFile[] | undefined
+  ): Promise<{ ok: true; sourceFiles?: SourceFile[] } | { ok: false; errors: string[] }> {
+    if (sourceFiles === undefined) {
+      if (documentType.allowEmptySourceFiles === false) {
+        return {
+          ok: false,
+          errors: [
+            `DocumentType "${documentType.key}" requires at least one source file (allowEmptySourceFiles is disabled).`,
+          ],
+        };
+      }
+      return { ok: true };
+    }
+
+    if (sourceFiles.length === 0 && documentType.allowEmptySourceFiles !== true) {
+      return {
+        ok: false,
+        errors: [
+          `DocumentType "${documentType.key}" requires at least one source file (allowEmptySourceFiles is not enabled).`,
+        ],
+      };
+    }
+
+    if (documentType.maxSourceFiles === undefined) {
+      return { ok: true, sourceFiles: [...sourceFiles] };
+    }
+
+    if (sourceFiles.length > documentType.maxSourceFiles) {
+      return {
+        ok: false,
+        errors: [
+          `DocumentType "${documentType.key}" allows at most ${documentType.maxSourceFiles} source file(s), but ${sourceFiles.length} were provided.`,
+        ],
+      };
+    }
+
+    const resolvedFiles: SourceFile[] = [];
+    for (const file of sourceFiles) {
+      if (file.mimeType === GOOGLE_FOLDER_MIME_TYPE) {
+        return {
+          ok: false,
+          errors: [
+            `DocumentType "${documentType.key}" does not accept folders ("${file.name ?? file.id}"). Please select a single file instead.`,
+          ],
+        };
+      }
+      const resolved = await this.resolveDriveSourceFile(documentType, file);
+      if (!resolved.ok) {
+        return { ok: false, errors: [resolved.error] };
+      }
+      resolvedFiles.push(resolved.file);
+    }
+
+    return { ok: true, sourceFiles: resolvedFiles };
+  }
+
   async processDocument(
     payload?: unknown,
     eventName?: string
@@ -855,6 +1261,17 @@ export class DocumentService implements DocumentServicePort {
     }
 
     const documentType = this.documentTypes.find((rt) => rt.key === document.type)!;
+    const sourceFileValidation = await this.validateAndResolveSourceFiles(
+      documentType,
+      document.sourceFiles
+    );
+    if (!sourceFileValidation.ok) {
+      return {
+        success: false,
+        errors: sourceFileValidation.errors,
+      };
+    }
+    const { sourceFiles: resolvedSourceFiles } = sourceFileValidation;
     const rawData = document.data as { [key: string]: unknown };
 
     // Anti-Corruption Layer: Context Enrichment & Fallback Tuple Synthesis
@@ -937,25 +1354,83 @@ export class DocumentService implements DocumentServicePort {
     const basePayload: { [key: string]: unknown } = {
       ...systemContext,
       ...enrichedData,
-      ...(document.space !== undefined
-        ? {
-            space: document.space,
-            Document: {
-              ...document,
-              space: document.space,
-            },
-          }
-        : {}),
+      ...(document.space !== undefined ? { space: document.space } : {}),
+      Document: {
+        ...document,
+        data: enrichedData,
+        ...(document.space !== undefined ? { space: document.space } : {}),
+      },
     };
 
     const calculatedValues: { [key: string]: unknown } = {};
+    const calculatedErrors: string[] = [];
     if (documentType.documentSchema.calculatedFields) {
+      const dynamicLookupSources = Array.from(
+        new Set(
+          documentType.documentSchema.calculatedFields
+            .map((cf) => cf.lookup?.source)
+            .filter(
+              (src): src is string =>
+                typeof src === 'string' &&
+                src.length > 0 &&
+                documentType.documentSchema.options?.[src] === undefined
+            )
+        )
+      );
+
+      let dynamicTables: Record<string, DocumentOptionTableResolution> = {};
+      if (dynamicLookupSources.length > 0) {
+        if (!this.optionTablePort) {
+          return {
+            success: false,
+            errors: [
+              `CalculatedField lookup source "${dynamicLookupSources[0]}" requires DocumentOptionTablePort to be configured.`,
+            ],
+          };
+        }
+        const spaceId = getSpaceStorageId(document.space);
+        dynamicTables = await this.optionTablePort.resolveOptionTables(dynamicLookupSources, {
+          ...(spaceId !== undefined ? { spaceId } : {}),
+          ...(document.space !== undefined ? { space: document.space } : {}),
+          documentTypeKey: document.type,
+          ...(this.selectedLogId !== undefined ? { selectedLogId: this.selectedLogId } : {}),
+        });
+      }
+
       for (const calculatedField of documentType.documentSchema.calculatedFields) {
-        calculatedValues[calculatedField.key] = this.templateEvaluator.evaluate(
+        const templated = this.templateEvaluator.evaluate(
           calculatedField.template,
           basePayload
         );
+        let finalValue = applyCalculatedFieldTransforms(templated, calculatedField.transforms);
+        if (calculatedField.lookup) {
+          const lookupResult = resolveCalculatedFieldLookup({
+            calcFieldKey: calculatedField.key,
+            lookupKey: finalValue,
+            lookup: calculatedField.lookup,
+            documentSchema: documentType.documentSchema,
+            dynamicTables,
+          });
+          if (!lookupResult.ok) {
+            calculatedErrors.push(lookupResult.error);
+            continue;
+          }
+          finalValue = String(lookupResult.value);
+        }
+        if (calculatedField.required && finalValue.trim().length === 0) {
+          calculatedErrors.push(
+            `CalculatedField "${calculatedField.key}" evaluated to a blank value.`
+          );
+          continue;
+        }
+        calculatedValues[calculatedField.key] = finalValue;
       }
+    }
+    if (calculatedErrors.length > 0) {
+      return {
+        success: false,
+        errors: calculatedErrors,
+      };
     }
 
     const identityUpdates: Partial<Document> = {};
@@ -976,6 +1451,7 @@ export class DocumentService implements DocumentServicePort {
       ...identityUpdates,
       data: enrichedData,
       ...(Object.keys(calculatedValues).length > 0 ? { calculated: calculatedValues } : {}),
+      ...(resolvedSourceFiles !== undefined ? { sourceFiles: resolvedSourceFiles } : {}),
     };
 
     let selectedWorkflowName: string | undefined;
@@ -1004,6 +1480,8 @@ export class DocumentService implements DocumentServicePort {
         data: enrichedDocument,
         activities: [],
         outputs: [],
+        completedStepCount: 0,
+        stepResults: [],
       };
     }
 
@@ -1038,6 +1516,63 @@ export class DocumentService implements DocumentServicePort {
       Document: createPathSafeDocument(enrichedDocument, documentType, this.templateEvaluator),
     };
 
+    const redactTemplateErrors = (msg: string): string =>
+      this.templateRegistry?.redactSecrets
+        ? this.templateRegistry.redactSecrets(msg)
+        : msg;
+
+    const preflightTemplateKeys = new Set<string>();
+    for (const activity of activities) {
+      if (
+        activity.type === 'INSERT_PAGES' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
+        activity.payload['templateKey'] !== undefined
+      ) {
+        const resolvedKey = resolvePayloadTemplates(
+          activity.payload['templateKey'],
+          this.templateEvaluator,
+          evaluationContext,
+          pathEvaluationContext
+        );
+        if (typeof resolvedKey !== 'string' || resolvedKey.trim().length === 0) {
+          return {
+            success: false,
+            errors: [
+              `Invalid templateKey on INSERT_PAGES activity in workflow "${workflow.name}".`,
+            ],
+          };
+        }
+        preflightTemplateKeys.add(resolvedKey.trim());
+      }
+    }
+
+    if (preflightTemplateKeys.size > 0) {
+      if (!this.templateRegistry) {
+        return {
+          success: false,
+          errors: [
+            `DocumentTemplate "${Array.from(preflightTemplateKeys)[0]}" cannot be resolved because TemplateRegistryPort is not configured.`,
+          ],
+        };
+      }
+      for (const templateKey of preflightTemplateKeys) {
+        try {
+          await this.templateRegistry.resolveTemplate(templateKey);
+        } catch (error) {
+          const rawMessage =
+            error instanceof Error && error.message.length > 0
+              ? error.message
+              : `Failed to resolve DocumentTemplate "${templateKey}".`;
+          return {
+            success: false,
+            errors: [redactTemplateErrors(rawMessage)],
+          };
+        }
+      }
+    }
+
     let currentFiles: readonly FileLocator[] = Object.freeze([]);
     const stepOutputs: Record<string, ActivityOutput> = {};
     const accumulatedContextVariables: { [key: string]: unknown } = {};
@@ -1050,35 +1585,86 @@ export class DocumentService implements DocumentServicePort {
 
     const resolvedActivities: Activity[] = [];
     const collectedOutputs: ActivityOutput[] = [];
+    const stepResults: ProcessStepResult[] = [];
+    let completedStepCount = 0;
+
+    const buildWorkflowFailureResult = (
+      errors: string[],
+      failedStepId: string | undefined
+    ): ProcessDocumentResult => ({
+      success: false,
+      errors: errors.map(redactTemplateErrors),
+      workflowName: workflow.name,
+      completedStepCount,
+      stepResults: [...stepResults],
+      data: enrichedDocument,
+      outputs: [...collectedOutputs],
+      ...(failedStepId !== undefined ? { failedStepId } : {}),
+      stepOutputs: { ...stepOutputs },
+      files: [...currentFiles],
+      ...(Object.keys(accumulatedContextVariables).length > 0
+        ? { contextVariables: { ...accumulatedContextVariables } }
+        : {}),
+    });
+
     for (const activity of activities) {
-      const resolvedPayload = (resolvePayloadTemplates(
-        activity.payload,
-        this.templateEvaluator,
-        evaluationContext,
-        pathEvaluationContext
-      ) ?? {}) as { [key: string]: unknown };
+      let resolvedActivity: Activity;
+      let output: ActivityOutput | void;
+      try {
+        const resolvedPayload = (resolvePayloadTemplates(
+          activity.payload,
+          this.templateEvaluator,
+          evaluationContext,
+          pathEvaluationContext
+        ) ?? {}) as { [key: string]: unknown };
 
-      const resolvedActivity: Activity = {
-        ...(activity.id !== undefined ? { id: activity.id } : {}),
-        type: activity.type,
-        payload: resolvedPayload,
-      };
+        resolvedActivity = {
+          ...(activity.id !== undefined ? { id: activity.id } : {}),
+          type: activity.type,
+          payload: resolvedPayload,
+        };
 
-      const output = (await this.dispatcher.dispatch(
-        resolvedActivity,
-        currentContext
-      )) as ActivityOutput | void;
+        output = (await this.dispatcher.dispatch(
+          resolvedActivity,
+          currentContext
+        )) as ActivityOutput | void;
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message.length > 0
+            ? error.message
+            : typeof error === 'string' && error.length > 0
+              ? error
+              : `Activity execution failed for ${activity.type}`;
+        return buildWorkflowFailureResult([message], activity.id);
+      }
 
       resolvedActivities.push(resolvedActivity);
 
       if (output !== undefined) {
-        collectedOutputs.push(output);
         if (output.success === false) {
-          return {
-            success: false,
-            errors: [output.error ?? `Activity execution failed for ${activity.type}`],
-          };
+          if (output.contextVariables) {
+            mergeContextVariables(accumulatedContextVariables, output.contextVariables);
+          }
+          if (output.files && output.files.length > 0) {
+            currentFiles = Object.freeze([...currentFiles, ...output.files]);
+            stepResults.push({
+              ...(activity.id !== undefined ? { stepId: activity.id } : {}),
+              activityType: activity.type,
+              output: cloneAndFreezePlainValue(output),
+            });
+          }
+          return buildWorkflowFailureResult(
+            [output.error ?? `Activity execution failed for ${activity.type}`],
+            activity.id
+          );
         }
+        collectedOutputs.push(output);
+        completedStepCount += 1;
+        stepResults.push({
+          ...(activity.id !== undefined ? { stepId: activity.id } : {}),
+          activityType: activity.type,
+          output: cloneAndFreezePlainValue(output),
+        });
         if (output.documentDataPatch) {
           enrichedDocument = {
             ...enrichedDocument,
@@ -1095,8 +1681,8 @@ export class DocumentService implements DocumentServicePort {
           stepOutputs[activity.id] = cloneAndFreezePlainValue(output);
         }
         if (output.contextVariables) {
-          Object.assign(evaluationContext, output.contextVariables);
-          Object.assign(accumulatedContextVariables, output.contextVariables);
+          mergeContextVariables(evaluationContext, output.contextVariables);
+          mergeContextVariables(accumulatedContextVariables, output.contextVariables);
         }
         evaluationContext.Document = enrichedDocument;
         evaluationContext.Context = {
@@ -1124,10 +1710,15 @@ export class DocumentService implements DocumentServicePort {
       data: enrichedDocument,
       activities: resolvedActivities,
       outputs: collectedOutputs,
+      workflowName: workflow.name,
+      completedStepCount,
+      stepResults: [...stepResults],
+      ...(Object.keys(stepOutputs).length > 0 ? { stepOutputs: { ...stepOutputs } } : {}),
+      ...(currentFiles.length > 0 ? { files: [...currentFiles] } : {}),
+      ...(Object.keys(accumulatedContextVariables).length > 0
+        ? { contextVariables: accumulatedContextVariables }
+        : {}),
     };
-    if (Object.keys(accumulatedContextVariables).length > 0) {
-      finalResult.contextVariables = accumulatedContextVariables;
-    }
 
     return finalResult;
   }
@@ -1280,7 +1871,12 @@ function getExecutionVariables(manifest: DocumentType, baseVariables: string[]):
   return Array.from(new Set(vars));
 }
 
-function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
+function validateWorkflowSteps(
+  workflows: Workflow[],
+  errors: string[],
+  documentFormSchema?: DocumentFormSchema,
+  configuredTemplateKeys?: ReadonlySet<string>
+): void {
   workflows.forEach((workflow, workflowIndex) => {
     const seenStepIds = new Set<string>();
     const activitySequence = workflow.activitySequence ?? [];
@@ -1319,6 +1915,51 @@ function validateWorkflowSteps(workflows: Workflow[], errors: string[]): void {
             `Invalid fileSourceStepId "${fileSourceStepId}" at "${activityPath}.payload.fileSourceStepId": must match an earlier Activity.id in workflow "${workflow.name}".`
           );
         }
+      }
+
+      if (
+        activity.type === 'DUPLICATE_FILE' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload) &&
+        activity.payload['fileNamePrefix'] !== undefined
+      ) {
+        const prefix = activity.payload['fileNamePrefix'];
+        if (typeof prefix !== 'string' || prefix.trim().length === 0) {
+          errors.push(
+            `Invalid fileNamePrefix at "${activityPath}.payload.fileNamePrefix": must be a non-empty string.`
+          );
+        }
+      }
+
+      if (
+        activity.type === 'INSERT_DATA' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload)
+      ) {
+        validateInsertDataActivityPayload(
+          activity.payload,
+          activityPath,
+          documentFormSchema,
+          errors
+        );
+      }
+
+      if (
+        activity.type === 'INSERT_PAGES' &&
+        activity.payload &&
+        typeof activity.payload === 'object' &&
+        !Array.isArray(activity.payload)
+      ) {
+        validateInsertPagesActivityPayload(
+          activity.payload,
+          activityPath,
+          seenStepIds,
+          workflow.name,
+          errors,
+          configuredTemplateKeys
+        );
       }
 
       if (hasValidId && activity.id !== undefined) {
@@ -1451,13 +2092,159 @@ function validateOptionSourcesAndFields(
   }
 }
 
+function validateCalculatedFields(
+  documentSchema: DocumentSchema,
+  evaluator: TemplateEvaluatorPort,
+  baseVariables: string[],
+  errors: string[]
+): void {
+  const { calculatedFields: calcFields } = documentSchema;
+  if (!calcFields) {
+    return;
+  }
+
+  const seenKeys = new Set<string>();
+  calcFields.forEach((calcField, index) => {
+    const basePath = `documentSchema.calculatedFields[${index}]`;
+    const templatePath = `${basePath}.template`;
+
+    if (calcField.key.trim().length === 0) {
+      errors.push(`Invalid key at "${basePath}.key": must be a non-empty string.`);
+    } else if (seenKeys.has(calcField.key)) {
+      errors.push(`Duplicate CalculatedField key "${calcField.key}" at "${basePath}.key".`);
+    } else {
+      seenKeys.add(calcField.key);
+    }
+
+    if (!evaluator.validate(calcField.template, baseVariables)) {
+      errors.push(`Invalid template at "${templatePath}": references unknown fields or is malformed.`);
+    }
+
+    const requiresNonBlankTemplate =
+      calcField.required === true ||
+      calcField.lookup !== undefined ||
+      calcField.transforms !== undefined;
+    if (requiresNonBlankTemplate && calcField.template.trim().length === 0) {
+      errors.push(`Invalid template at "${templatePath}": must not be blank.`);
+    }
+
+    if (calcField.transforms !== undefined) {
+      if (!Array.isArray(calcField.transforms) || calcField.transforms.length === 0) {
+        errors.push(`Invalid transforms at "${basePath}.transforms": must be a non-empty array.`);
+      } else {
+        calcField.transforms.forEach((transform, tIndex) => {
+          const tPath = `${basePath}.transforms[${tIndex}]`;
+          if (transform.type === 'prefix') {
+            if (
+              typeof transform.length !== 'number' ||
+              !Number.isInteger(transform.length) ||
+              transform.length < 1
+            ) {
+              errors.push(
+                `Invalid prefix transform at "${tPath}": length must be an integer >= 1.`
+              );
+            }
+          } else if (transform.type !== 'uppercase') {
+            errors.push(`Unsupported transform type at "${tPath}".`);
+          }
+        });
+      }
+    }
+
+    if (calcField.lookup !== undefined) {
+      const { lookup } = calcField;
+      const { source, matchProperty, resultProperty } = lookup;
+      const optionSource = documentSchema.optionSources?.[source];
+      const staticOptions = documentSchema.options?.[source];
+      if (source.trim().length === 0 || (optionSource === undefined && staticOptions === undefined)) {
+        errors.push(
+          `Invalid lookup at "${basePath}.lookup.source": unknown option source "${source}".`
+        );
+      } else {
+        const checkProperty = (propName: string, propLabel: 'matchProperty' | 'resultProperty') => {
+          const propPath = `${basePath}.lookup.${propLabel}`;
+          if (propName.trim().length === 0) {
+            errors.push(`Invalid lookup at "${propPath}": must be a non-empty string.`);
+            return;
+          }
+          if (optionSource?.properties !== undefined) {
+            if (!optionSource.properties.includes(propName)) {
+              errors.push(
+                `Invalid lookup at "${propPath}": property "${propName}" is not declared in OptionSource "${source}".`
+              );
+            }
+          } else if (staticOptions && staticOptions.length > 0) {
+            const existsInTuples = staticOptions.some(
+              (tuple) => typeof tuple === 'object' && tuple !== null && propName in tuple
+            );
+            if (!existsInTuples) {
+              errors.push(
+                `Invalid lookup at "${propPath}": property "${propName}" does not exist in options "${source}".`
+              );
+            }
+          }
+        };
+        checkProperty(matchProperty, 'matchProperty');
+        checkProperty(resultProperty, 'resultProperty');
+      }
+    }
+  });
+}
+
+function validateWorkflowPathPayloads(
+  manifest: DocumentType,
+  errors: string[]
+): void {
+  const { workflows } = manifest.documentWorkflowConfig ?? {};
+  if (!workflows) {
+    return;
+  }
+
+  const blankTemplateCalcKeys = new Set(
+    (manifest.documentSchema.calculatedFields ?? [])
+      .filter((cf) => cf.template.trim().length === 0)
+      .map((cf) => cf.key)
+  );
+
+  workflows.forEach((workflow, workflowIndex) => {
+    const activitySequence = workflow.activitySequence ?? [];
+    activitySequence.forEach((activity, activityIndex) => {
+      if (!activity.payload || typeof activity.payload !== 'object' || Array.isArray(activity.payload)) {
+        return;
+      }
+      for (const [key, val] of Object.entries(activity.payload)) {
+        if (!FILE_PATH_PAYLOAD_KEYS.has(key) || typeof val !== 'string') {
+          continue;
+        }
+        const payloadPath = `documentWorkflowConfig.workflows[${workflowIndex}].activitySequence[${activityIndex}].payload.${key}`;
+        if (val.trim().length === 0) {
+          errors.push(`Blank folder-routing path at "${payloadPath}": must not be empty or whitespace-only.`);
+          continue;
+        }
+        for (const blankKey of blankTemplateCalcKeys) {
+          if (val.includes(`Document.calculated.${blankKey}`)) {
+            errors.push(
+              `Folder-routing path at "${payloadPath}" references CalculatedField "${blankKey}" with a blank template.`
+            );
+          }
+        }
+      }
+    });
+  });
+}
+
+export interface ValidateManifestTemplatesOptions {
+  configuredTemplateKeys?: ReadonlySet<string> | readonly string[] | undefined;
+}
+
 /**
  * Pure domain function to statically validate all Handlebars templates within a DocumentType manifest.
  * Returns an array of formatted error strings using exact dot-notation paths.
  */
 export function validateManifestTemplates(
   manifest: DocumentType,
-  evaluator: TemplateEvaluatorPort
+  evaluator: TemplateEvaluatorPort,
+  options?: ValidateManifestTemplatesOptions
 ): string[] {
   const errors: string[] = [];
 
@@ -1465,15 +2252,20 @@ export function validateManifestTemplates(
   const executionVariables = getExecutionVariables(manifest, baseVariables);
 
   validateOptionSourcesAndFields(manifest.documentSchema, errors);
-
-  if (manifest.documentSchema.calculatedFields) {
-    manifest.documentSchema.calculatedFields.forEach((calcField, index) => {
-      const path = `documentSchema.calculatedFields[${index}].template`;
-      if (!evaluator.validate(calcField.template, baseVariables)) {
-        errors.push(`Invalid template at "${path}": references unknown fields or is malformed.`);
-      }
-    });
-  }
+  validateCalculatedFields(manifest.documentSchema, evaluator, baseVariables, errors);
+  validateDocumentFormSchema(
+    manifest.documentFormSchema,
+    manifest.documentSchema,
+    evaluator,
+    errors
+  );
+  validateDocumentUiSuccessView({
+    successView: manifest.documentUiSchema?.successView,
+    documentSchema: manifest.documentSchema,
+    workflowConfig: manifest.documentWorkflowConfig,
+    evaluator,
+    errors,
+  });
 
   if (manifest.documentSchema.identity) {
     for (const [propKey, template] of Object.entries(manifest.documentSchema.identity)) {
@@ -1495,7 +2287,17 @@ export function validateManifestTemplates(
   }
 
   if (manifest.documentWorkflowConfig) {
-    validateWorkflowSteps(manifest.documentWorkflowConfig.workflows, errors);
+    const configuredTemplateKeys =
+      options?.configuredTemplateKeys !== undefined
+        ? new Set(options.configuredTemplateKeys)
+        : undefined;
+    validateWorkflowSteps(
+      manifest.documentWorkflowConfig.workflows,
+      errors,
+      manifest.documentFormSchema,
+      configuredTemplateKeys
+    );
+    validateWorkflowPathPayloads(manifest, errors);
 
     walkTemplates(manifest.documentWorkflowConfig, 'documentWorkflowConfig', (path, template) => {
       if (!evaluator.validate(template, executionVariables)) {
@@ -1521,6 +2323,31 @@ export function formatEmailPdfFileName(subject: string | undefined, messageId: s
 
   const cleanId = sanitizeFilePath(messageId.replace(/[<>]/g, '')).trim();
   return `Email - ${cleanId}.pdf`;
+}
+
+/**
+ * Returns true when a FileLocator represents a target folder placeholder emitted by an empty MOVE_FILE step.
+ */
+export function isFolderOnlyPlaceholderFileLocator(
+  file: Pick<FileLocator, 'id' | 'parentId' | 'mimeType'>
+): boolean {
+  const id = file.id.trim();
+  const parentId = file.parentId?.trim();
+  return (
+    id.length > 0 &&
+    parentId !== undefined &&
+    id === parentId &&
+    (file.mimeType === undefined || file.mimeType === GOOGLE_FOLDER_MIME_TYPE)
+  );
+}
+
+/**
+ * Returns the first filed document FileLocator that is not a folder-only placeholder.
+ */
+export function findPrimaryFiledFile(
+  files: readonly FileLocator[] | undefined
+): FileLocator | undefined {
+  return files?.find((file) => !isFolderOnlyPlaceholderFileLocator(file));
 }
 
 

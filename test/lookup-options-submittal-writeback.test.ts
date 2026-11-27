@@ -15,6 +15,9 @@ import {
   getDocumentTypeWidgetName,
 } from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+let cachedCoverSheetPdfBytes: Uint8Array | undefined;
 
 const MANIFEST_PATH = path.resolve(__dirname, '../assets/manifest.json');
 const DRIVE_ID = 'drive-361-e2e';
@@ -353,10 +356,13 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
         sheetId: 103,
         title: '_Config Submittal Arch',
         grid: [
-          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type'].map(c),
-          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture and Design', 'INC'].map(c),
-          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', ''].map(c),
-          ['---', '', '---', '', '', '', '', '', '', ''].map(c),
+          ['Status', '', 'Action', 'Name', 'Suffix', 'Order', '', 'Contact', 'Name', 'Contact Type', '', 'Division Number', 'Division Folder'].map(c),
+          ['Open', '', 'REC', 'Received', '', '1', '', 'INC', 'INC Architecture and Design', 'INC', '', '01', '01 General Requirements'].map(c),
+          ['Closed', '', 'NOC', 'No Objections As Corrected', '_NOC', '6', '', '---', '', '', '', '03', '03 Concrete'].map(c),
+          ['---', '', '---', '', '', '', '', '', '', '', '', '07', '07 Thermal and Moisture Protection'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '08', '08 Openings'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '09', '09 Finishes'].map(c),
+          ['', '', '', '', '', '', '', '', '', '', '', '---', ''].map(c),
         ],
       },
       {
@@ -406,6 +412,11 @@ function createFullMultiSim(spreadsheetId: string): MultiSpreadsheetSim {
         namedRangeId: 'nr-arch-val-contacts',
         name: 'Validation_Submittal_Arch_Contacts',
         range: { sheetId: 103, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 7, endColumnIndex: 8 },
+      },
+      {
+        namedRangeId: 'nr-arch-csi-divisions',
+        name: 'Options_Submittal_Arch_CSI_Divisions',
+        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 7, startColumnIndex: 11, endColumnIndex: 13 },
       },
       {
         namedRangeId: 'nr-ffe-statuses',
@@ -504,6 +515,32 @@ function mockDriveForSubmittalSubmit(logId: string, baseFolderName: string, subF
 
   nock('https://www.googleapis.com')
     .persist()
+    .get('/drive/v3/files')
+    .query(
+      (q) =>
+        typeof q.q === 'string' &&
+        q.q.includes("mimeType = 'application/vnd.google-apps.folder'") &&
+        !q.q.includes(`name = '${baseFolderName}'`) &&
+        !q.q.includes(`name = '${subFolderName}'`)
+    )
+    .reply(200, { files: [] });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post('/drive/v3/files')
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `folder-${reqBody.name ?? 'dyn'}`,
+        name: reqBody.name ?? 'dyn',
+        parents: reqBody.parents ?? ['sub-folder-id'],
+        mimeType: 'application/vnd.google-apps.folder',
+      };
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
     .patch(`/drive/v3/files/${fileId}`)
     .query(true)
     .reply(200, {
@@ -512,12 +549,81 @@ function mockDriveForSubmittalSubmit(logId: string, baseFolderName: string, subF
       parents: ['sub-folder-id'],
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .post(`/drive/v3/files/${fileId}/copy`)
+    .query(true)
+    .reply(200, (_uri, body) => {
+      const reqBody = body as { name?: string; parents?: string[] };
+      return {
+        id: `${fileId}-copy`,
+        name: reqBody.name ?? `_${newName}`,
+        parents: reqBody.parents ?? ['sub-folder-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+      };
+    });
+
+  const pdfBytes = cachedCoverSheetPdfBytes;
+  if (!pdfBytes) {
+    throw new Error('cachedCoverSheetPdfBytes must be initialized in beforeEach');
+  }
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: 'test-cover-sheet-tpl',
+      name: 'Cover Sheet.pdf',
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get('/drive/v3/files/test-cover-sheet-tpl')
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt !== 'media')
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: `_${newName}`,
+      mimeType: 'application/pdf',
+      size: pdfBytes.byteLength,
+      parents: ['sub-folder-id'],
+    });
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .get(`/drive/v3/files/${fileId}-copy`)
+    .query((q) => q.alt === 'media')
+    .reply(200, Buffer.from(pdfBytes));
+
+  nock('https://www.googleapis.com')
+    .persist()
+    .patch(`/upload/drive/v3/files/${fileId}-copy`)
+    .query(true)
+    .reply(200, {
+      id: `${fileId}-copy`,
+      name: `_${newName}`,
+      mimeType: 'application/pdf',
+      parents: ['sub-folder-id'],
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
+    });
 }
 
 describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submittal FF&E atomic _Config write-back', () => {
   let app: AppInstance;
 
   beforeEach(async () => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+    cachedCoverSheetPdfBytes ??= await createAnonymizedSubmittalCoverSheetPdf();
     app = createApp({
       manifestProvider: new AppManifestProvider({ manifestPath: MANIFEST_PATH }),
       authVerifier: createAuthVerifier(),
@@ -530,6 +636,7 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
   afterEach(() => {
     nock.cleanAll();
     nock.enableNetConnect();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -609,7 +716,11 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     });
 
     expect(submitRes.statusCode).toBe(200);
-    expect(submitRes.payload).toContain('processed successfully');
+    const submitBody = JSON.parse(submitRes.payload);
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal Arch Filed'
+    );
     expect(sim.batchUpdates).toHaveLength(1);
 
     const configGrid = sim.sheets[2].grid;
@@ -689,7 +800,11 @@ describe('Ticket #361 Workspace Addon & App E2E: Submittal Arch contacts & Submi
     });
 
     expect(submitRes.statusCode).toBe(200);
-    expect(submitRes.payload).toContain('processed successfully');
+    const submitBody = JSON.parse(submitRes.payload);
+    expect(submitBody.action?.notification).toBeUndefined();
+    expect(submitBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+      'Submittal FF&E Filed'
+    );
     expect(sim.batchUpdates).toHaveLength(1);
 
     const ffeConfig = sim.sheets[3].grid;

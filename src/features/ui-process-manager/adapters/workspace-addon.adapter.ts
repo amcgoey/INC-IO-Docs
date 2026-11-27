@@ -22,7 +22,10 @@ import type {
   UiProcessSpaceCollection,
   ProcessUiStateConfig,
   UiProcessSpaceType,
+  UiProcessDocumentExecutionOutcome,
+  UiProcessRenderResult,
 } from '../ports';
+import { DOCUMENT_SUCCESS_CARD_VIEW_ID } from '../ports';
 
 import {
   evaluateProcessUiState,
@@ -188,6 +191,158 @@ function buildSourceEmailDescriptor(
   };
 }
 
+const GOOGLE_FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
+
+function resolveActiveSourceFiles(params: {
+  isGmail: boolean;
+  isDriveUrlSource: boolean;
+  selectedMessageId?: string | undefined;
+  normalizedContext: UiProcessEventContext;
+  currentUiState: ReturnType<typeof evaluateProcessUiState>;
+  threadMessages?: UiProcessGmailMessageDescriptor[] | undefined;
+}): {
+  files: UiProcessSourceFileDto[];
+  invalidDriveUrl: boolean;
+} {
+  const {
+    isGmail,
+    isDriveUrlSource,
+    selectedMessageId,
+    normalizedContext,
+    currentUiState,
+    threadMessages,
+  } = params;
+  let activeSourceFiles: UiProcessSourceFileDto[] = [];
+
+  if (isDriveUrlSource) {
+    const rawDriveUrl =
+      (normalizedContext.formData?.[INPUT_DRIVE_URL_KEY] ??
+        currentUiState.formData[INPUT_DRIVE_URL_KEY]) as string | undefined;
+    const driveUrl = typeof rawDriveUrl === 'string' ? rawDriveUrl.trim() : '';
+    if (driveUrl.length > 0) {
+      const parsed = parseGoogleDriveUrl(driveUrl);
+      if (!parsed) {
+        return { files: [], invalidDriveUrl: true };
+      }
+      activeSourceFiles.push({ id: parsed.id, name: parsed.id });
+    }
+  } else if (isGmail) {
+    const formAttachmentIds = extractSelectFilesSet(normalizedContext.formData, SELECT_ATTACHMENTS_KEY);
+    const stateCheckedIds = new Set(
+      (currentUiState.selectionState.files ?? [])
+        .filter((f) => f.selected)
+        .map((f) => f.value.trim())
+    );
+
+    let checkedIds = stateCheckedIds;
+    if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
+      checkedIds = formAttachmentIds;
+    }
+
+    if (formAttachmentIds.size > 0) {
+      for (const id of formAttachmentIds) {
+        checkedIds.add(id);
+      }
+    }
+
+    const metaMap = new Map<string, { name?: string; mimeType?: string }>();
+    for (const item of normalizedContext.selectedItems ?? []) {
+      if (item?.id) {
+        metaMap.set(item.id.trim(), {
+          ...(item.title !== undefined ? { name: item.title } : {}),
+          ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+        });
+      }
+    }
+
+    const selectedMsg = threadMessages?.find((m) => m.id === selectedMessageId);
+    if (selectedMsg?.attachments) {
+      for (const att of selectedMsg.attachments) {
+        const attId = resolveAttachmentId(att);
+        const meta = {
+          ...(att.title !== undefined ? { name: att.title } : {}),
+          ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
+        };
+        if (attId) metaMap.set(attId, meta);
+        if (att.id && att.id.trim()) metaMap.set(att.id.trim(), meta);
+        if (att.partId && att.partId.trim()) metaMap.set(att.partId.trim(), meta);
+        if (att.attachmentId && att.attachmentId.trim()) metaMap.set(att.attachmentId.trim(), meta);
+      }
+    }
+
+    for (const f of currentUiState.selectionState.files ?? []) {
+      const val = f.value.trim();
+      const existing = metaMap.get(val);
+      if (!existing) {
+        metaMap.set(val, { name: f.text });
+      } else if (!existing.name && f.text) {
+        existing.name = f.text;
+      }
+    }
+
+    activeSourceFiles = Array.from(checkedIds).map((id) => {
+      const meta = metaMap.get(id);
+      return {
+        id,
+        ...(meta?.name !== undefined ? { name: meta.name } : {}),
+        ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
+      };
+    });
+  } else {
+    const checkedFileIds = new Set(
+      (currentUiState.selectionState.files ?? [])
+        .filter((f) => f.selected)
+        .map((f) => f.value.trim())
+    );
+
+    const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
+      (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
+        typeof item?.id === 'string' && item.id.trim().length > 0
+    );
+
+    activeSourceFiles = validSelectedItems
+      .filter((item) => checkedFileIds.has(item.id.trim()))
+      .map((item) => ({
+        id: item.id,
+        ...(item.title !== undefined ? { name: item.title } : {}),
+        ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
+      }));
+  }
+
+  if (isGmail) {
+    const isSaveEmail =
+      currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
+      currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
+      normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
+      normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
+
+    if (isSaveEmail && selectedMessageId) {
+      activeSourceFiles.push({
+        id: `email-pdf-${selectedMessageId}`,
+        mimeType: 'application/pdf',
+      });
+    }
+  }
+
+  return { files: activeSourceFiles, invalidDriveUrl: false };
+}
+
+function buildMaxSourceFilesMessage(
+  maxSourceFiles: number,
+  selectedCount: number,
+  isGmail: boolean,
+  isWarning: boolean
+): string {
+  const unit = maxSourceFiles === 1 ? 'file' : 'files';
+  const gmailHint = isGmail ? ' or disable Save Email to PDF' : '';
+  if (isWarning) {
+    return `Note: This document type allows at most ${maxSourceFiles} ${unit} (${selectedCount} currently selected). Please uncheck extra files${gmailHint} before submitting.`;
+  }
+  return maxSourceFiles === 1
+    ? `This document type allows only 1 ${unit} (${selectedCount} selected). Please select at most 1 file${gmailHint} and try again.`
+    : `This document type allows at most ${maxSourceFiles} ${unit} (${selectedCount} selected). Please deselect extra files${gmailHint} and try again.`;
+}
+
 function omitPreviousSelectedLogParam(
   parameters?: Record<string, string>
 ): Record<string, string> | undefined {
@@ -324,7 +479,14 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       this.options;
 
     const actionName = context.actionName ?? context.parameters?.action;
+    const isStartOver = actionName === 'startOver';
     let effectiveContext = context.actionName === actionName ? context : { ...context, actionName };
+    if (isStartOver) {
+      effectiveContext = {
+        ...effectiveContext,
+        formData: undefined,
+      };
+    }
 
     const isGmail = isGmailContext(context);
     let threadMessages: UiProcessGmailMessageDescriptor[] | undefined;
@@ -373,6 +535,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isSourceReset =
       isResetOrInitial ||
       actionName === 'refresh' ||
+      actionName === 'startOver' ||
       (isGmail && (
         actionName === 'onEmailMessageChange' ||
         (actionName === 'onFileSourceChange' && (
@@ -549,6 +712,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       } else if (
         actionName === 'onEmailMessageChange' ||
         actionName === 'refresh' ||
+        actionName === 'startOver' ||
         isGmailDriveUrlPass1Event ||
         (isGmailEmailPass1Event && actionName === 'onFileSourceChange')
       ) {
@@ -587,6 +751,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     const isDocTypeChange = actionName === 'onDocumentTypeChange';
     const isManualTypeSwitch = isSpaceTypeChange || isDocTypeChange;
 
+    let cachedDocTypeSchemas:
+      | Awaited<ReturnType<UiProcessManifestPort['getDocumentTypeSchemas']>>
+      | undefined;
+
     const allKnownDocTypes = new Set<string>();
     if (isManualTypeSwitch) {
       for (const st of spaceTypes) {
@@ -611,8 +779,8 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         let docSchemaFields: Set<string> | undefined;
         if (resolvedDocumentTypeKey && manifestPort) {
           try {
-            const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
-            docSchemaFields = extractFieldKeysFromDocSchema(schemas?.docSchema);
+            cachedDocTypeSchemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+            docSchemaFields = extractFieldKeysFromDocSchema(cachedDocTypeSchemas?.docSchema);
           } catch (e) {
             console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
           }
@@ -760,6 +928,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       validationErrors?: string[] | undefined;
       statusMessages?: string[] | undefined;
       isUpdateCard?: boolean | undefined;
+      popToRoot?: boolean | undefined;
       hiddenFields?: string[] | undefined;
       clearPreviousSelectedLogId?: boolean | undefined;
       notification?: string | undefined;
@@ -835,6 +1004,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         selectionState: state.selectionState,
         formData: state.formData,
         isUpdateCard: state.isUpdateCard,
+        ...(options.popToRoot ? { popToRoot: true } : {}),
         ...(options.hiddenFields !== undefined ? { hiddenFields: options.hiddenFields } : {}),
         ...(lockedFields !== undefined ? { lockedFields } : {}),
         ...(state.validationErrors ? { validationErrors: state.validationErrors } : {}),
@@ -843,8 +1013,17 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       };
     };
 
-    const createErrorRenderResult = (validationErrors: string[]): Promise<UiProcessResult> =>
-      createRenderResult({ validationErrors, isUpdateCard: true });
+    const createErrorRenderResult = (
+      validationErrors: string[],
+      statusMessages?: string[] | undefined
+    ): Promise<UiProcessResult> =>
+      createRenderResult({
+        validationErrors,
+        ...(statusMessages !== undefined && statusMessages.length > 0
+          ? { statusMessages }
+          : {}),
+        isUpdateCard: true,
+      });
 
     if (actionName === 'copyDocumentLog') {
       if (!this.options.documentLogPort) {
@@ -937,125 +1116,31 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
         (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
           currentUiState.formData[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL');
 
-      let activeSourceFiles: UiProcessSourceFileDto[] = [];
+      const resolvedSelection = resolveActiveSourceFiles({
+        isGmail,
+        isDriveUrlSource,
+        selectedMessageId,
+        normalizedContext,
+        currentUiState,
+        threadMessages,
+      });
 
-      if (isDriveUrlSource) {
-        const rawDriveUrl =
-          (normalizedContext.formData?.[INPUT_DRIVE_URL_KEY] ??
-            currentUiState.formData[INPUT_DRIVE_URL_KEY]) as string | undefined;
-        const driveUrl = typeof rawDriveUrl === 'string' ? rawDriveUrl.trim() : '';
-        if (driveUrl.length > 0) {
-          const parsed = parseGoogleDriveUrl(driveUrl);
-          if (!parsed) {
-            return createErrorRenderResult([
-              'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.',
-            ]);
-          }
-          activeSourceFiles.push({ id: parsed.id, name: parsed.id });
-        }
-      } else if (isGmail) {
-        const formAttachmentIds = extractSelectFilesSet(normalizedContext.formData, SELECT_ATTACHMENTS_KEY);
-        const stateCheckedIds = new Set(
-          (currentUiState.selectionState.files ?? [])
-            .filter((f) => f.selected)
-            .map((f) => f.value.trim())
-        );
-
-        let checkedIds = stateCheckedIds;
-        if (checkedIds.size === 0 && formAttachmentIds.size > 0) {
-          checkedIds = formAttachmentIds;
-        }
-
-        if (formAttachmentIds.size > 0) {
-          for (const id of formAttachmentIds) {
-            checkedIds.add(id);
-          }
-        }
-
-        const metaMap = new Map<string, { name?: string; mimeType?: string }>();
-        for (const item of normalizedContext.selectedItems ?? []) {
-          if (item?.id) {
-            metaMap.set(item.id.trim(), {
-              ...(item.title !== undefined ? { name: item.title } : {}),
-              ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-            });
-          }
-        }
-
-        const selectedMsg = threadMessages?.find((m) => m.id === selectedMessageId);
-        if (selectedMsg?.attachments) {
-          for (const att of selectedMsg.attachments) {
-            const attId = resolveAttachmentId(att);
-            const meta = {
-              ...(att.title !== undefined ? { name: att.title } : {}),
-              ...(att.mimeType !== undefined ? { mimeType: att.mimeType } : {}),
-            };
-            if (attId) metaMap.set(attId, meta);
-            if (att.id && att.id.trim()) metaMap.set(att.id.trim(), meta);
-            if (att.partId && att.partId.trim()) metaMap.set(att.partId.trim(), meta);
-            if (att.attachmentId && att.attachmentId.trim()) metaMap.set(att.attachmentId.trim(), meta);
-          }
-        }
-
-        for (const f of currentUiState.selectionState.files ?? []) {
-          const val = f.value.trim();
-          const existing = metaMap.get(val);
-          if (!existing) {
-            metaMap.set(val, { name: f.text });
-          } else if (!existing.name && f.text) {
-            existing.name = f.text;
-          }
-        }
-
-        activeSourceFiles = Array.from(checkedIds).map((id) => {
-          const meta = metaMap.get(id);
-          return {
-            id,
-            ...(meta?.name !== undefined ? { name: meta.name } : {}),
-            ...(meta?.mimeType !== undefined ? { mimeType: meta.mimeType } : {}),
-          };
-        });
-      } else {
-        const checkedFileIds = new Set(
-          (currentUiState.selectionState.files ?? [])
-            .filter((f) => f.selected)
-            .map((f) => f.value.trim())
-        );
-
-        const validSelectedItems = (normalizedContext.selectedItems ?? []).filter(
-          (item): item is { id: string; title?: string | undefined; mimeType?: string | undefined } =>
-            typeof item?.id === 'string' && item.id.trim().length > 0
-        );
-
-        activeSourceFiles = validSelectedItems
-          .filter((item) => checkedFileIds.has(item.id.trim()))
-          .map((item) => ({
-            id: item.id,
-            ...(item.title !== undefined ? { name: item.title } : {}),
-            ...(item.mimeType !== undefined ? { mimeType: item.mimeType } : {}),
-          }));
+      if (resolvedSelection.invalidDriveUrl) {
+        return createErrorRenderResult([
+          'Invalid Google Drive URL. Please enter a valid Google Drive file or folder link.',
+        ]);
       }
 
-      if (isGmail) {
-        const isSaveEmail =
-          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === true ||
-          currentUiState.formData[SAVE_EMAIL_TO_PDF_KEY] === 'true' ||
-          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === true ||
-          normalizedContext.formData?.[SAVE_EMAIL_TO_PDF_KEY] === 'true';
-
-        if (isSaveEmail && selectedMessageId) {
-          activeSourceFiles.push({
-            id: `email-pdf-${selectedMessageId}`,
-            mimeType: 'application/pdf',
-          });
-        }
-      }
+      const activeSourceFiles = resolvedSelection.files;
 
       let allowEmptySourceFiles = false;
+      let maxSourceFiles: number | undefined;
       if (resolvedDocumentTypeKey && manifestPort) {
         try {
           const schemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
           allowEmptySourceFiles = Boolean(schemas?.allowEmptySourceFiles);
+          maxSourceFiles =
+            typeof schemas?.maxSourceFiles === 'number' ? schemas.maxSourceFiles : undefined;
         } catch (e) {
           console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
         }
@@ -1067,11 +1152,23 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
 
       if (activeSourceFiles.length === 0 && !hasExplicitFileId) {
         if (!allowEmptySourceFiles) {
-          const isGmail = isGmailContext(normalizedContext);
           const errorMsg = isGmail
             ? 'Please select at least one file to process or enable Save Email to PDF.'
             : 'Please select at least one file in Google Drive to process.';
           return createErrorRenderResult([errorMsg]);
+        }
+      }
+
+      if (maxSourceFiles !== undefined) {
+        if (activeSourceFiles.length > maxSourceFiles) {
+          return createErrorRenderResult([
+            buildMaxSourceFilesMessage(maxSourceFiles, activeSourceFiles.length, isGmail, false),
+          ]);
+        }
+        if (activeSourceFiles.some((f) => f.mimeType === GOOGLE_FOLDER_MIME_TYPE)) {
+          return createErrorRenderResult([
+            'Folders cannot be submitted for this document type. Please select a single file instead.',
+          ]);
         }
       }
 
@@ -1144,8 +1241,24 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       const data = extractDocumentData(normalizedContext.formData);
 
       try {
+        const buildSuccessCardRenderResult = (
+          executionOutcome: UiProcessDocumentExecutionOutcome
+        ): UiProcessRenderResult => ({
+          type: 'render',
+          viewId: DOCUMENT_SUCCESS_CARD_VIEW_ID,
+          ...(resolvedDocumentTypeKey !== undefined
+            ? { documentTypeKey: resolvedDocumentTypeKey }
+            : {}),
+          spaceId: space.id,
+          isUpdateCard: false,
+          executionOutcome,
+        });
+
+        let result:
+          | Awaited<ReturnType<NonNullable<typeof documentRunner>['processDocument']>>
+          | undefined;
         if (documentRunner) {
-          const result = await documentRunner.processDocument(
+          result = await documentRunner.processDocument(
             {
               type: resolvedDocumentTypeKey ?? 'default',
               data,
@@ -1156,25 +1269,121 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
             },
             'onSubmit'
           );
-
-
-          if (result && result.success === false) {
-            const validationErrors =
-              result.errors ??
-              (result.error ? [result.error] : ['Document validation failed']);
-            return createErrorRenderResult(validationErrors);
-          }
         }
 
-        return {
-          type: 'notification',
-          text: 'Document processed successfully',
+        const rawNotices = result?.contextVariables?.notices;
+        const notices = Array.isArray(rawNotices)
+          ? rawNotices.filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+          : [];
+
+        if (result && result.success === false) {
+          const validationErrors =
+            result.errors && result.errors.length > 0
+              ? result.errors
+              : result.executionOutcome?.errors && result.executionOutcome.errors.length > 0
+                ? result.executionOutcome.errors
+                : result.error
+                  ? [result.error]
+                  : ['Document validation failed'];
+
+          const outcome = result.executionOutcome;
+          const completedStepCount = outcome?.completedStepCount ?? 0;
+          const producedFiles =
+            outcome?.stepResults.flatMap((step) => step.files) ?? [];
+
+          if (outcome && (completedStepCount >= 1 || producedFiles.length >= 1)) {
+            return buildSuccessCardRenderResult({
+              ...outcome,
+              success: false,
+              notices: outcome.notices.length > 0 ? outcome.notices : notices,
+              errors: outcome.errors.length > 0 ? outcome.errors : validationErrors,
+            });
+          }
+
+          return createErrorRenderResult(
+            validationErrors,
+            notices.length > 0 ? notices : undefined
+          );
+        }
+
+        const executionOutcome: UiProcessDocumentExecutionOutcome = result?.executionOutcome ?? {
+          success: true,
+          completedStepCount: 0,
+          spaceName: space.name,
+          documentData: data,
+          stepResults: [],
+          notices,
+          errors: [],
         };
+
+        return buildSuccessCardRenderResult(executionOutcome);
       } catch (error) {
         const validationErrors = [error instanceof Error ? error.message : 'Document processing failed'];
         return createErrorRenderResult(validationErrors);
       }
 
+    }
+
+    let docTypeStatusWarnings: string[] | undefined;
+    if (isDocTypeChange && resolvedDocumentTypeKey && manifestPort) {
+      if (!cachedDocTypeSchemas) {
+        try {
+          cachedDocTypeSchemas = await manifestPort.getDocumentTypeSchemas(resolvedDocumentTypeKey);
+        } catch (e) {
+          console.warn(`Could not fetch schemas for: ${resolvedDocumentTypeKey}`, e);
+        }
+      }
+      const maxSourceFiles =
+        typeof cachedDocTypeSchemas?.maxSourceFiles === 'number'
+          ? cachedDocTypeSchemas.maxSourceFiles
+          : undefined;
+      if (maxSourceFiles !== undefined) {
+        const previewUiState = evaluateProcessUiState({
+          context: normalizedContext,
+          resolvedDocumentTypeKey,
+          resolvedSpaceType: currentSpaceType,
+          config,
+          spaceTypes,
+          spaces,
+          threadMessages,
+          isResetOrInitial,
+        });
+        const previewMessageId = isGmail
+          ? (previewUiState.selectedMessageId ??
+              (previewUiState.formData[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+              (normalizedContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined) ??
+              context.gmail?.messageId ??
+              normalizedContext.gmail?.messageId)
+          : undefined;
+        const previewIsDriveUrl =
+          isGmail &&
+          (normalizedContext.formData?.[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL' ||
+            previewUiState.formData[SELECT_FILE_SOURCE_KEY] === 'Google Drive URL');
+        const previewSelection = resolveActiveSourceFiles({
+          isGmail,
+          isDriveUrlSource: previewIsDriveUrl,
+          selectedMessageId: previewMessageId,
+          normalizedContext,
+          currentUiState: previewUiState,
+          threadMessages,
+        });
+        const warnings: string[] = [];
+        if (previewSelection.files.length > maxSourceFiles) {
+          warnings.push(
+            buildMaxSourceFilesMessage(maxSourceFiles, previewSelection.files.length, isGmail, true)
+          );
+        }
+        if (previewSelection.files.some((f) => f.mimeType === GOOGLE_FOLDER_MIME_TYPE)) {
+          warnings.push(
+            'Note: Folders cannot be submitted for this document type. Please select a single file instead.'
+          );
+        }
+        if (warnings.length > 0) {
+          docTypeStatusWarnings = Array.from(
+            new Set([...(normalizedContext.statusMessages ?? []), ...warnings])
+          );
+        }
+      }
     }
 
     let evaluatedFormData = normalizedContext.formData;
@@ -1198,7 +1407,9 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
     return createRenderResult({
       formData: evaluatedFormData,
       hiddenFields,
-      isUpdateCard: actionName === 'onFormChange',
+      ...(docTypeStatusWarnings !== undefined ? { statusMessages: docTypeStatusWarnings } : {}),
+      isUpdateCard: isStartOver || actionName === 'onFormChange',
+      ...(isStartOver ? { popToRoot: true } : {}),
     });
   }
 
@@ -1225,11 +1436,12 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       !effectiveContext.selectedItems ||
       effectiveContext.selectedItems.length === 0 ||
       actionName === 'refresh' ||
+      actionName === 'startOver' ||
       isInCardAction;
 
     if (needsGmailFetch) {
       const token = context.userOAuthToken ?? context.gmail?.accessToken;
-      const skipCache = actionName === 'refresh';
+      const skipCache = actionName === 'refresh' || actionName === 'startOver';
 
       if (context.gmail?.threadId && typeof this.gmailPort.getThreadMessages === 'function') {
         try {
@@ -1271,9 +1483,10 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       }
 
       if (threadMessages && threadMessages.length > 0) {
-        const formMsgId = actionName === 'refresh'
-          ? undefined
-          : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
+        const formMsgId =
+          actionName === 'refresh' || actionName === 'startOver'
+            ? undefined
+            : (effectiveContext.formData?.[SELECT_EMAIL_MESSAGE_KEY] as string | undefined);
         activeMsg =
           threadMessages.find((m) => m.id === (formMsgId ?? context.gmail?.messageId)) ??
           threadMessages[threadMessages.length - 1];
@@ -1289,6 +1502,7 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
           !effectiveContext.selectedItems ||
           effectiveContext.selectedItems.length === 0 ||
           actionName === 'refresh' ||
+          actionName === 'startOver' ||
           isEmailSwitch
         ) {
           effectiveContext = {
@@ -1352,17 +1566,19 @@ export class WorkspaceAddonAdapter implements UiProcessOrchestratorPort {
       Boolean(parsedCurrentDriveUrl) &&
       effectiveFileSource === 'Google Drive URL' &&
       (actionName === 'refresh' ||
-       (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
-       actionName === 'onFileSourceChange');
+        actionName === 'startOver' ||
+        (actionName === 'onFormChange' && currentDriveUrl !== previousDriveUrl) ||
+        actionName === 'onFileSourceChange');
 
     const isGmailEmailPass1Event =
       isGmail &&
       Boolean(activeMsg) &&
       (effectiveFileSource === 'Email Attachments' || !effectiveFileSource) &&
       (isResetOrInitial ||
-       actionName === 'refresh' ||
-       actionName === 'onEmailMessageChange' ||
-       actionName === 'onFileSourceChange');
+        actionName === 'refresh' ||
+        actionName === 'startOver' ||
+        actionName === 'onEmailMessageChange' ||
+        actionName === 'onFileSourceChange');
 
     const isGmailPass1Event = isGmailDriveUrlPass1Event || isGmailEmailPass1Event;
 

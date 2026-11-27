@@ -294,6 +294,15 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
   it('executes full DocumentService.processDocument() (MOVE_FILE -> WRITE_LOG) for submittal-arch', async () => {
     const liveDriveClient = requireDriveClient();
+    const spreadsheetMeta = await sheetsApi.spreadsheets.get({
+      spreadsheetId: copiedSpreadsheetId,
+      fields: 'sheets(properties(sheetId,title))',
+    });
+    const archSheetId = spreadsheetMeta.data.sheets?.find(
+      (s) => s.properties?.title === sampleFixture.submittalArch.sheetName
+    )?.properties?.sheetId;
+    expect(typeof archSheetId).toBe('number');
+
     const archService = await documentServiceFactory({
       sourceFiles: [{ id: archFileId, name: archFileName, mimeType: 'application/pdf' }],
     });
@@ -326,11 +335,24 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
-      expect(result.contextVariables?.documentLogWrite).toMatchObject({
+      expect(result.activities.map((a) => a.type)).toEqual(
+        data.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
+      const logWrite = result.contextVariables?.documentLogWrite as
+        | { spreadsheetId: string; sheetName: string; sheetId?: number; rowNumber: number; uri: string }
+        | undefined;
+      expect(logWrite).toMatchObject({
         spreadsheetId: copiedSpreadsheetId,
         sheetName: sampleFixture.submittalArch.sheetName,
+        sheetId: archSheetId,
       });
+      expect(logWrite?.uri).toBe(
+        `https://docs.google.com/spreadsheets/d/${copiedSpreadsheetId}/edit#gid=${archSheetId}&range=${logWrite?.rowNumber}:${logWrite?.rowNumber}`
+      );
+      expect(result.stepOutputs?.writeLog?.files).toBeUndefined();
+      expect(result.files?.length).toBeGreaterThan(0);
     }
 
     const table = await sheetsClient.readTable({ target: archTarget() });
@@ -392,8 +414,15 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       'Submittals',
     ]);
     trackCleanupId(submittalsFolder.id);
+    const closedArchFolder = await liveDriveClient.resolveFolderPath(submittalsFolder.id, ['Closed']);
     const archFileMeta = await liveDriveClient.getFile(archFileId);
-    expect(archFileMeta.parents).toContain(submittalsFolder.id);
+    const archLeafFolderId = archFileMeta.parents?.[0];
+    expect(archLeafFolderId).toBeDefined();
+    if (archLeafFolderId) {
+      const archLeafMeta = await liveDriveClient.getFile(archLeafFolderId);
+      expect(archLeafMeta.name).toMatch(/^09\b/);
+      expect(archLeafMeta.parents).toContain(closedArchFolder.id);
+    }
   }, 180_000);
 
   it('hydrates full and batch-filtered Submittal Arch logs with live =HYPERLINK fileUri via DocumentLogPort.readLog()', async () => {
@@ -531,6 +560,15 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
   it('executes full DocumentService.processDocument() (MOVE_FILE -> WRITE_LOG) for submittal-ffe', async () => {
     const liveDriveClient = requireDriveClient();
+    const spreadsheetMeta = await sheetsApi.spreadsheets.get({
+      spreadsheetId: copiedSpreadsheetId,
+      fields: 'sheets(properties(sheetId,title))',
+    });
+    const ffeSheetId = spreadsheetMeta.data.sheets?.find(
+      (s) => s.properties?.title === sampleFixture.submittalFfe.sheetName
+    )?.properties?.sheetId;
+    expect(typeof ffeSheetId).toBe('number');
+
     const ffeService = await documentServiceFactory({
       sourceFiles: [{ id: ffeFileId, name: ffeFileName, mimeType: 'application/pdf' }],
     });
@@ -552,11 +590,24 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
-      expect(result.contextVariables?.documentLogWrite).toMatchObject({
+      expect(result.activities.map((a) => a.type)).toEqual(
+        data.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
+      const logWrite = result.contextVariables?.documentLogWrite as
+        | { spreadsheetId: string; sheetName: string; sheetId?: number; rowNumber: number; uri: string }
+        | undefined;
+      expect(logWrite).toMatchObject({
         spreadsheetId: copiedSpreadsheetId,
         sheetName: sampleFixture.submittalFfe.sheetName,
+        sheetId: ffeSheetId,
       });
+      expect(logWrite?.uri).toBe(
+        `https://docs.google.com/spreadsheets/d/${copiedSpreadsheetId}/edit#gid=${ffeSheetId}&range=${logWrite?.rowNumber}:${logWrite?.rowNumber}`
+      );
+      expect(result.stepOutputs?.writeLog?.files).toBeUndefined();
+      expect(result.files?.length).toBeGreaterThan(0);
     }
 
     const table = await sheetsClient.readTable({ target: ffeTarget() });
@@ -611,8 +662,13 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       '05 Submittals',
     ]);
     trackCleanupId(ffeSubmittalsFolder.id);
+    const ffeClosedLeafFolder = await liveDriveClient.resolveFolderPath(ffeSubmittalsFolder.id, [
+      'Closed',
+      'CG',
+      'CG104',
+    ]);
     const ffeFileMeta = await liveDriveClient.getFile(ffeFileId);
-    expect(ffeFileMeta.parents).toContain(ffeSubmittalsFolder.id);
+    expect(ffeFileMeta.parents).toContain(ffeClosedLeafFolder.id);
   }, 180_000);
 
   it('hydrates full and case-insensitive batch-filtered Submittal FF&E logs including readOnly Spec Title and live =HYPERLINK fileUri via DocumentLogPort.readLog()', async () => {
@@ -1123,7 +1179,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       );
       expect(archSubmit.success).toBe(true);
       if (!archSubmit.success) return;
-      expect(archSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(archSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']);
 
       const archSnapshotsAfter = await snapshotNamedRanges(
         sheetsApi,
@@ -1241,7 +1297,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       );
       expect(ffeSubmit.success).toBe(true);
       if (!ffeSubmit.success) return;
-      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']);
 
       const ffeSnapshotsAfter = await snapshotNamedRanges(
         sheetsApi,

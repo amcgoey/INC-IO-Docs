@@ -328,9 +328,9 @@ describe('workspace-addon.wiring (S3)', () => {
     });
     expect(res2.statusCode).toBe(200);
     expect(initSpy).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(res2.payload).action?.notification?.text).toBe(
-      'Document processed successfully'
-    );
+    const res2Body = JSON.parse(res2.payload);
+    expect(res2Body.action?.notification).toBeUndefined();
+    expect(res2Body.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Comm Doc Filed');
     expect(mockSheetsClient.insertIntoGroupedList).toHaveBeenCalledTimes(1);
 
     // Third request reuses the memoized initialization promise (no extra initialize call)

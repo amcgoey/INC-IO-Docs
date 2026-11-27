@@ -21,6 +21,7 @@ import { GoogleDocsClient, type GoogleDocsClientOptions } from '../src/infrastru
 import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
 
 function createArchOptionTablesSheetsMock(
   manifestPath: string,
@@ -29,6 +30,7 @@ function createArchOptionTablesSheetsMock(
       statuses: string[][];
       actions: string[][];
       contacts?: string[][];
+      csiDivisions?: string[][];
     };
   }
 ): {
@@ -54,14 +56,23 @@ function createArchOptionTablesSheetsMock(
     ['PMG', 'Pavarini McGovern', 'Contractor'],
     ['---', '', ''],
   ];
+  const defaultCsiDivisions = [
+    ['Division Number', 'Division Folder'],
+    ['01', '01 General Requirements'],
+    ['07', '07 Thermal and Moisture Protection'],
+    ['08', '08 Openings'],
+    ['---', ''],
+  ];
 
   const getSpy = vi.fn().mockImplementation(async ({ spreadsheetId }: { spreadsheetId: string }) => {
     const tables = options?.getTables?.(spreadsheetId) ?? {
       statuses: defaultStatuses,
       actions: defaultActions,
       contacts: defaultContacts,
+      csiDivisions: defaultCsiDivisions,
     };
     const contacts = tables.contacts ?? defaultContacts;
+    const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
     return {
       data: {
         spreadsheetId,
@@ -114,6 +125,17 @@ function createArchOptionTablesSheetsMock(
               endColumnIndex: 10,
             },
           },
+          {
+            namedRangeId: 'nr-csi-divisions',
+            name: 'Options_Submittal_Arch_CSI_Divisions',
+            range: {
+              sheetId: 103,
+              startRowIndex: 0,
+              endRowIndex: csiDivisions.length,
+              startColumnIndex: 11,
+              endColumnIndex: 13,
+            },
+          },
         ],
       },
     };
@@ -125,8 +147,10 @@ function createArchOptionTablesSheetsMock(
         statuses: defaultStatuses,
         actions: defaultActions,
         contacts: defaultContacts,
+        csiDivisions: defaultCsiDivisions,
       };
       const contacts = tables.contacts ?? defaultContacts;
+      const csiDivisions = tables.csiDivisions ?? defaultCsiDivisions;
       return {
         data: {
           spreadsheetId,
@@ -136,7 +160,9 @@ function createArchOptionTablesSheetsMock(
               ? tables.statuses
               : r.includes('C1:')
                 ? tables.actions
-                : contacts,
+                : r.includes('L1:')
+                  ? csiDivisions
+                  : contacts,
           })),
         },
       };
@@ -365,6 +391,9 @@ describe('App integration tests', () => {
           },
         ],
         outputs: [],
+        workflowName: 'SubmitCommProject',
+        completedStepCount: 0,
+        stepResults: [],
       });
       expect(mockActivityEngine.dispatch).toHaveBeenCalledWith(
         {
@@ -401,6 +430,8 @@ describe('App integration tests', () => {
         data: validDocument,
         activities: [],
         outputs: [],
+        completedStepCount: 0,
+        stepResults: [],
       });
       expect(mockActivityEngine.dispatch).not.toHaveBeenCalled();
     });
@@ -786,6 +817,7 @@ describe('App integration tests', () => {
       expect('aliases' in (body.data.data.direction as Record<string, unknown>)).toBe(false);
       expect(body.activities).toEqual([
         {
+          id: 'moveFiles',
           type: 'MOVE_FILE',
           payload: {
             rootStorageId: 'space-folder-proposal-id',
@@ -797,6 +829,7 @@ describe('App integration tests', () => {
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith(
         {
+          id: 'moveFiles',
           type: 'MOVE_FILE',
           payload: {
             rootStorageId: 'space-folder-proposal-id',
@@ -860,6 +893,7 @@ describe('App integration tests', () => {
       };
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         const response = await prodApp.server.inject({
           method: 'POST',
           url: '/documents?eventName=onSubmit',
@@ -873,28 +907,61 @@ describe('App integration tests', () => {
         expect(body.data.idDocument).toBe('071200-001-A');
         expect(body.data.idGroup).toBe('071200-001');
         expect(body.data.calculated.fileName).toBe('071200-001-A Waterproofing Specs - 261020 PMG');
+        expect(body.data.calculated.csiDivisionFolder).toBe('07 Thermal and Moisture Protection');
         expect(body.activities).toEqual([
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '6 Construction',
-              folderName: 'Submittals',
+              folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
             },
           },
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_071200-001-A Waterproofing Specs - 261020 PMG Transmittal.pdf',
+              },
+            },
+          },
+          {
+            id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
         ]);
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           1,
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '6 Construction',
-              folderName: 'Submittals',
+              folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
             },
           },
           {
@@ -907,8 +974,54 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '6 Construction',
+              folderName: 'Submittals',
+              fileName: '071200-001-A Waterproofing Specs - 261020 PMG',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          3,
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_071200-001-A Waterproofing Specs - 261020 PMG Transmittal.pdf',
+              },
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          4,
+          {
+            id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
           {
             document: body.data,
@@ -918,7 +1031,168 @@ describe('App integration tests', () => {
           }
         );
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
+      }
+    });
+
+    it('POST /documents enforces maxSourceFiles: 1, resolves Drive shortcuts, and rejects folders before Drive mutations on submittal-arch (#373)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue({ success: true }),
+      };
+
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath);
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-app-guard',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+      const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(
+        async (fileId: string) => {
+          if (fileId === 'folder-submittal') {
+            return {
+              id: 'folder-submittal',
+              name: 'Some Folder',
+              mimeType: 'application/vnd.google-apps.folder',
+            };
+          }
+          if (fileId === 'shortcut-to-folder') {
+            return {
+              id: 'shortcut-to-folder',
+              name: 'Shortcut to Folder',
+              mimeType: 'application/vnd.google-apps.shortcut',
+              shortcutDetails: {
+                targetId: 'folder-submittal',
+                targetMimeType: 'application/vnd.google-apps.folder',
+              },
+            };
+          }
+          if (fileId === 'shortcut-to-pdf') {
+            return {
+              id: 'shortcut-to-pdf',
+              name: 'Shortcut to Submittal.pdf',
+              mimeType: 'application/vnd.google-apps.shortcut',
+              shortcutDetails: {
+                targetId: 'real-submittal-pdf',
+                targetMimeType: 'application/pdf',
+              },
+            };
+          }
+          return {
+            id: fileId,
+            name: 'Submittal.pdf',
+            mimeType: 'application/pdf',
+          };
+        }
+      );
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+      });
+      await prodApp.initialize();
+
+      const basePayload = {
+        type: 'submittal-arch',
+        space: {
+          id: 'space-projects-1',
+          name: 'Active Projects',
+          typeId: 'projects',
+          abstractStorageId: 'space-projects-1',
+        },
+        data: {
+          status: 'Open',
+          section: '071200',
+          number: '001',
+          revision: 'A',
+          title: 'Waterproofing Specs',
+          date: '261020',
+          contact: 'PMG',
+          action: 'REC',
+        },
+      };
+
+      try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
+        // 1. > maxSourceFiles rejected with HTTP 400 before Drive lookups or mutations
+        const multiRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'file-1' }, { id: 'file-2' }],
+          },
+        });
+        expect(multiRes.statusCode).toBe(400);
+        expect(JSON.parse(multiRes.payload).success).toBe(false);
+        expect(getFileSpy).not.toHaveBeenCalled();
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 1b. Empty sourceFiles: [] rejected with HTTP 400 before Drive lookups or Step 1 (#384)
+        const emptyRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [],
+          },
+        });
+        expect(emptyRes.statusCode).toBe(400);
+        expect(JSON.parse(emptyRes.payload).success).toBe(false);
+        expect(getFileSpy).not.toHaveBeenCalled();
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 2. Folder rejected with HTTP 400 before Drive mutations
+        const folderRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'folder-submittal' }],
+          },
+        });
+        expect(folderRes.statusCode).toBe(400);
+        expect(JSON.parse(folderRes.payload).success).toBe(false);
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 3. Shortcut pointing to folder rejected with HTTP 400 before Drive mutations
+        const shortcutFolderRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'shortcut-to-folder' }],
+          },
+        });
+        expect(shortcutFolderRes.statusCode).toBe(400);
+        expect(JSON.parse(shortcutFolderRes.payload).success).toBe(false);
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
+
+        // 4. Shortcut pointing to valid PDF resolves target and succeeds
+        const shortcutFileRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            ...basePayload,
+            sourceFiles: [{ id: 'shortcut-to-pdf' }],
+          },
+        });
+        expect(shortcutFileRes.statusCode).toBe(200);
+        const shortcutFileBody = JSON.parse(shortcutFileRes.payload);
+        expect(shortcutFileBody.success).toBe(true);
+        expect(shortcutFileBody.data.sourceFiles).toEqual([
+          { id: 'real-submittal-pdf', name: 'Submittal.pdf', mimeType: 'application/pdf' },
+        ]);
+        expect(mockDispatcher.dispatch).toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+        searchSpy.mockRestore();
+        getFileSpy.mockRestore();
       }
     });
 
@@ -967,6 +1241,7 @@ describe('App integration tests', () => {
       };
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         const response = await prodApp.server.inject({
           method: 'POST',
           url: '/documents?eventName=onSubmit',
@@ -980,28 +1255,61 @@ describe('App integration tests', () => {
         expect(body.data.idDocument).toBe('CG104-A');
         expect(body.data.idGroup).toBe('CG104');
         expect(body.data.calculated.fileName).toBe('CG104-A Berman Falk - 261021 INC');
+        expect(body.data.calculated.specTagGroup).toBe('CG');
         expect(body.activities).toEqual([
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '3 FFE',
-              folderName: '05 Submittals',
+              folderName: '05 Submittals/Closed/CG/CG104',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
             },
           },
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_CG104-A Berman Falk - 261021 INC Transmittal.pdf',
+              },
+            },
+          },
+          {
+            id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
         ]);
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           1,
           {
+            id: 'moveOriginal',
             type: 'MOVE_FILE',
             payload: {
               rootStorageId: 'space-projects-1',
               parentPath: '3 FFE',
-              folderName: '05 Submittals',
+              folderName: '05 Submittals/Closed/CG/CG104',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
             },
           },
           {
@@ -1014,8 +1322,54 @@ describe('App integration tests', () => {
         expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
           2,
           {
+            id: 'duplicateForReview',
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileSourceStepId: 'moveOriginal',
+              rootStorageId: 'space-projects-1',
+              parentPath: '3 FFE',
+              folderName: '05 Submittals',
+              fileName: 'CG104-A Berman Falk - 261021 INC',
+              fileNamePrefix: '_',
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          3,
+          {
+            id: 'insertCoverSheet',
+            type: 'INSERT_PAGES',
+            payload: {
+              fileSourceStepId: 'duplicateForReview',
+              templateKey: 'submittalCoverSheet',
+              position: 'start',
+              sourcePages: [1],
+              fillForm: true,
+              onUnmodifiableTarget: {
+                strategy: 'createSiblingPdf',
+                fileName: '_CG104-A Berman Falk - 261021 INC Transmittal.pdf',
+              },
+            },
+          },
+          {
+            document: body.data,
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+        expect(mockDispatcher.dispatch).toHaveBeenNthCalledWith(
+          4,
+          {
+            id: 'writeLog',
             type: 'WRITE_LOG',
-            payload: {},
+            payload: { fileSourceStepId: 'moveOriginal' },
           },
           {
             document: body.data,
@@ -1025,6 +1379,7 @@ describe('App integration tests', () => {
           }
         );
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
       }
     });
@@ -2155,6 +2510,106 @@ describe('App integration tests', () => {
         const rejectedBody = JSON.parse(rejectedRes.payload);
         expect(rejectedBody.success).toBe(false);
         expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2); // only request 1 dispatched MOVE_FILE + WRITE_LOG
+
+        // 3. Unknown or unnormalized CSI division in submittal-arch -> HTTP 400 with zero activities dispatched
+        const missingDivRes = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Closed',
+              section: '990000',
+              number: '002',
+              revision: 'A',
+              title: 'Unknown Division',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+            },
+          },
+        });
+        expect(missingDivRes.statusCode).toBe(400);
+        const missingDivBody = JSON.parse(missingDivRes.payload);
+        expect(missingDivBody.success).toBe(false);
+        expect(JSON.stringify(missingDivBody.errors)).toContain('csiDivisionFolder');
+        expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(2);
+      } finally {
+        searchSpy.mockRestore();
+      }
+    });
+
+    it('POST /documents returns HTTP 400 when _Config Submittal Arch CSI division key is unnormalized ("1" vs "01") (#374)', async () => {
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient } = createArchOptionTablesSheetsMock(manifestPath, {
+        getTables: () => ({
+          statuses: [['Status'], ['Open'], ['---']],
+          actions: [
+            ['Action', 'Name', 'Suffix', 'Order'],
+            ['REC', 'Received', '', '1'],
+            ['---', '', '', ''],
+          ],
+          csiDivisions: [
+            ['Division Number', 'Division Folder'],
+            ['1', '01 General Requirements'],
+            ['---', ''],
+          ],
+        }),
+      });
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-unnorm',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+      });
+      await prodApp.initialize();
+
+      try {
+        const res = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-1',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-1',
+            },
+            data: {
+              status: 'Open',
+              section: '011000',
+              number: '001',
+              revision: '0',
+              title: 'Submittal Procedures',
+              date: '261020',
+              contact: 'PMG',
+              action: 'REC',
+            },
+          },
+        });
+        expect(res.statusCode).toBe(400);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(false);
+        expect(JSON.stringify(body.errors)).toContain('csiDivisionFolder');
+        expect(mockDispatcher.dispatch).not.toHaveBeenCalled();
       } finally {
         searchSpy.mockRestore();
       }
@@ -2226,16 +2681,34 @@ describe('App integration tests', () => {
         templateEvaluator: handlebars,
       });
 
+      const samplePdfBytes = await createAnonymizedSubmittalCoverSheetPdf();
       const mockDriveService: DriveServicePort = {
-        getFile: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
+        getFile: vi.fn().mockImplementation(async (id: string) => ({
+          id,
+          name: 'Waterproofing.pdf',
+          mimeType: 'application/pdf',
+          size: samplePdfBytes.byteLength,
+        })),
         findOrCreateFolder: vi.fn().mockResolvedValue({ id: 'folder-submittals', name: 'Submittals' }),
         resolveFolderPath: vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' }),
         move: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', webViewLink: 'https://drive.google.com/file/d/doc-file-ambig/view' }),
         rename: vi.fn().mockResolvedValue({ id: 'doc-file-ambig', name: 'Waterproofing.pdf' }),
-        duplicate: vi.fn(),
+        duplicate: vi.fn().mockResolvedValue({
+          id: 'doc-file-ambig-copy',
+          name: '_071200-002-A Waterproofing - 261020 PMG.pdf',
+          parents: ['folder-submittals'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/doc-file-ambig-copy/view',
+        }),
         searchFiles: vi.fn().mockResolvedValue([]),
-        downloadAsBuffer: vi.fn(),
-        saveBuffer: vi.fn(),
+        downloadAsBuffer: vi.fn().mockResolvedValue(samplePdfBytes),
+        saveBuffer: vi.fn().mockResolvedValue({
+          id: 'doc-file-ambig-copy',
+          name: '_071200-002-A Waterproofing - 261020 PMG.pdf',
+          parents: ['folder-submittals'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/doc-file-ambig-copy/view',
+        }),
         uploadStream: vi.fn(),
       };
 
@@ -2265,6 +2738,7 @@ describe('App integration tests', () => {
       }
 
       try {
+        vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
         // Validation passes using candidates[0] ("Open" + "REC"), MOVE_FILE succeeds,
         // and WRITE_LOG strictly rejects ambiguous_log.
         const res = await server.inject({
@@ -2300,6 +2774,7 @@ describe('App integration tests', () => {
         // candidates[0] used for validation; WRITE_LOG reused per-request resolveLog (1 search total)
         expect(searchSpy).toHaveBeenCalledTimes(1);
       } finally {
+        vi.unstubAllEnvs();
         searchSpy.mockRestore();
         folderSpy.mockRestore();
         resolveFolderSpy.mockRestore();

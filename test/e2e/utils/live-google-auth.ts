@@ -62,6 +62,15 @@ export function getDocumentLogTestFolderId(): string | undefined {
 }
 
 /**
+ * Returns the trimmed confidential cover-sheet template Drive file ID from environment
+ * for live Submittal Cover-Sheet E2E tests, or `undefined` when unset or blank.
+ */
+export function getSubmittalCoverSheetTemplateId(): string | undefined {
+  loadEnvIfPresent();
+  return process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID?.trim() || undefined;
+}
+
+/**
  * Resolves Google API credentials for live E2E tests in priority order:
  * 1. `GOOGLE_ACCESS_TOKEN`
  * 2. `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `GOOGLE_REFRESH_TOKEN`

@@ -36,6 +36,7 @@ import {
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  DOCUMENT_SUCCESS_CARD_VIEW_ID,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
   UiProcessGmailAttachmentDescriptorSchema,
@@ -81,6 +82,7 @@ export {
   isResetOrInitialLoad,
   DRIVE_WORKSPACE_ADDON_VIEW_ID,
   GMAIL_WORKSPACE_ADDON_VIEW_ID,
+  DOCUMENT_SUCCESS_CARD_VIEW_ID,
   UiProcessGmailEventContextSchema,
   type UiProcessGmailEventContext,
   UiProcessGmailAttachmentDescriptorSchema,
@@ -91,6 +93,65 @@ export {
 
 export const UiProcessEventContextSchema = ProcessUiStateEventSchema;
 export type UiProcessEventContext = ProcessUiStateEvent;
+
+export const UiProcessExecutionFileLocatorSchema = Type.Object(
+  {
+    id: Type.String(),
+    name: Type.String(),
+    parentId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    parentName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    parentUri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    mimeType: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    uri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessExecutionFileLocator = Static<typeof UiProcessExecutionFileLocatorSchema>;
+
+export const UiProcessExecutionStepResultSchema = Type.Object(
+  {
+    stepId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    activityType: Type.String(),
+    files: Type.Array(UiProcessExecutionFileLocatorSchema),
+    notices: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessExecutionStepResult = Static<typeof UiProcessExecutionStepResultSchema>;
+
+export const UiProcessExecutionLogWriteSchema = Type.Object(
+  {
+    sheetName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    sheetId: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    rowNumber: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
+    action: Type.Optional(
+      Type.Union([Type.Literal('inserted'), Type.Literal('updated'), Type.Undefined()])
+    ),
+    uri: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessExecutionLogWrite = Static<typeof UiProcessExecutionLogWriteSchema>;
+
+export const UiProcessDocumentExecutionOutcomeSchema = Type.Object(
+  {
+    success: Type.Boolean(),
+    workflowName: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    completedStepCount: Type.Integer({ minimum: 0 }),
+    failedStepId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+    spaceName: Type.String(),
+    documentData: Type.Record(Type.String(), Type.Unknown()),
+    stepResults: Type.Array(UiProcessExecutionStepResultSchema),
+    notices: Type.Array(Type.String()),
+    logWrite: Type.Optional(Type.Union([UiProcessExecutionLogWriteSchema, Type.Undefined()])),
+    errors: Type.Array(Type.String()),
+  },
+  { additionalProperties: false }
+);
+export type UiProcessDocumentExecutionOutcome = Static<
+  typeof UiProcessDocumentExecutionOutcomeSchema
+>;
+export type DocumentExecutionOutcome = UiProcessDocumentExecutionOutcome;
 
 export const UiProcessRenderResultSchema = Type.Object({
   type: Type.Literal('render'),
@@ -104,21 +165,16 @@ export const UiProcessRenderResultSchema = Type.Object({
   validationErrors: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   statusMessages: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Undefined()])),
   isUpdateCard: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
+  popToRoot: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
   notification: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  executionOutcome: Type.Optional(
+    Type.Union([UiProcessDocumentExecutionOutcomeSchema, Type.Undefined()])
+  ),
 });
 export type UiProcessRenderResult = Static<typeof UiProcessRenderResultSchema>;
 
-export const UiProcessNotificationResultSchema = Type.Object({
-  type: Type.Literal('notification'),
-  text: Type.String({ minLength: 1 }),
-});
-export type UiProcessNotificationResult = Static<typeof UiProcessNotificationResultSchema>;
-
-export const UiProcessResultSchema = Type.Union([
-  UiProcessRenderResultSchema,
-  UiProcessNotificationResultSchema,
-]);
-export type UiProcessResult = Static<typeof UiProcessResultSchema>;
+export const UiProcessResultSchema = UiProcessRenderResultSchema;
+export type UiProcessResult = UiProcessRenderResult;
 
 export const UiProcessDocumentSpaceDtoSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
@@ -156,6 +212,7 @@ export interface UiProcessManifestPort {
     docSchema?: unknown;
     uiSchema?: unknown;
     allowEmptySourceFiles?: boolean | undefined;
+    maxSourceFiles?: number | undefined;
   }>;
 }
 
@@ -171,6 +228,8 @@ export interface UiProcessDocumentExecutionResult {
   success: boolean;
   errors?: string[] | undefined;
   error?: string | undefined;
+  contextVariables?: Record<string, unknown> | undefined;
+  executionOutcome?: UiProcessDocumentExecutionOutcome | undefined;
 }
 
 export const UiProcessLogCandidateSchema = Type.Object({

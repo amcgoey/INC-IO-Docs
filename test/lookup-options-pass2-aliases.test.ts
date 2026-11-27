@@ -278,6 +278,9 @@ describe('SourceParser Pass 2 Live DocumentLog Options & Alias Integration at Wo
             timeZone: 'America/New_York',
           },
           drive: { pageSize: 100 },
+          templates: {
+            submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+          },
           documentLog: {
             preferredFolderPath: '1 Admin',
             fileNameContains: 'Document Log',

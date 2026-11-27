@@ -6,6 +6,7 @@ import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import {
   loadEnvIfPresent,
   getDocumentLogTestFolderId,
+  getSubmittalCoverSheetTemplateId,
   resolveLiveGoogleAuth,
 } from './utils/live-google-auth';
 
@@ -15,6 +16,7 @@ const TRACKED_ENV_KEYS = [
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_REFRESH_TOKEN',
   'DOCUMENT_LOG_TEST_FOLDER_ID',
+  'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
   'LIVE_AUTH_TEST_KEY',
 ] as const;
 
@@ -124,6 +126,20 @@ describe('live-google-auth', () => {
     it('returns trimmed folder ID from environment or .env', () => {
       process.env.DOCUMENT_LOG_TEST_FOLDER_ID = '  folder-xyz-789  ';
       expect(getDocumentLogTestFolderId()).toBe('folder-xyz-789');
+    });
+  });
+
+  describe('getSubmittalCoverSheetTemplateId', () => {
+    it('returns undefined when SUBMITTAL_COVER_SHEET_TEMPLATE_ID is unset or blank', () => {
+      expect(getSubmittalCoverSheetTemplateId()).toBeUndefined();
+
+      process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID = '   ';
+      expect(getSubmittalCoverSheetTemplateId()).toBeUndefined();
+    });
+
+    it('returns trimmed template ID from environment or .env', () => {
+      process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID = '  tpl-abc-123  ';
+      expect(getSubmittalCoverSheetTemplateId()).toBe('tpl-abc-123');
     });
   });
 

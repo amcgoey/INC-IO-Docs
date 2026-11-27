@@ -1,10 +1,12 @@
 import {
   DriveServiceError,
+  DriveFileTooLargeError,
   AmbiguousPathSpecError,
   FileNotFoundError,
   type DriveContentSaveOptions,
   type DriveDuplicateOptions,
   type DriveFileResult,
+  type DriveMoveOptions,
   type DriveSearchQuery,
   type DriveServicePort,
 } from '../ports';
@@ -14,8 +16,15 @@ interface DriveClientFileMetadata {
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?:
+    | {
+        targetId?: string | undefined;
+        targetMimeType?: string | undefined;
+      }
+    | undefined;
 }
 
 interface DriveClientSearchParams {
@@ -29,6 +38,10 @@ interface DriveClientSearchParams {
 interface DriveClientDuplicateOptions {
   newName?: string | undefined;
   targetFolderId?: string | undefined;
+}
+
+interface DriveClientMoveOptions {
+  newName?: string | undefined;
 }
 
 interface DriveClientCreateOptions {
@@ -58,7 +71,8 @@ export interface DriveClientPort {
   ): Promise<DriveClientFileMetadata>;
   move(
     fileId: string,
-    targetFolderId: string
+    targetFolderId: string,
+    moveOptions?: DriveClientMoveOptions
   ): Promise<DriveClientFileMetadata>;
   rename(
     fileId: string,
@@ -86,8 +100,10 @@ function mapMetadataToResult(metadata: DriveClientFileMetadata): DriveFileResult
     name: metadata.name,
     parents: metadata.parents,
     mimeType: metadata.mimeType,
+    ...(metadata.size !== undefined ? { size: metadata.size } : {}),
     webViewLink: metadata.webViewLink,
     modifiedTime: metadata.modifiedTime,
+    ...(metadata.shortcutDetails !== undefined ? { shortcutDetails: metadata.shortcutDetails } : {}),
   };
 }
 
@@ -149,6 +165,19 @@ export class DriveServiceAdapter implements DriveServicePort {
       throw new FileNotFoundError(baseMessage, { cause: error });
     }
 
+    if (
+      errorName === 'GoogleDriveFileTooLargeError' ||
+      errorName === 'DriveFileTooLargeError'
+    ) {
+      const baseMessage =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message: unknown }).message)
+            : String(error);
+      throw new DriveFileTooLargeError(baseMessage, { cause: error });
+    }
+
     const statusCode = extractHttpStatusCode(error);
 
     const baseMessage =
@@ -208,13 +237,14 @@ export class DriveServiceAdapter implements DriveServicePort {
 
   async move(
     fileId: string,
-    targetFolderId: string
+    targetFolderId: string,
+    moveOptions?: DriveMoveOptions
   ): Promise<DriveFileResult> {
     try {
-      const metadata = await this.driveClient.move(
-        fileId,
-        targetFolderId
-      );
+      const metadata =
+        moveOptions !== undefined
+          ? await this.driveClient.move(fileId, targetFolderId, moveOptions)
+          : await this.driveClient.move(fileId, targetFolderId);
       return mapMetadataToResult(metadata);
     } catch (error) {
       this.translateError('move', error);

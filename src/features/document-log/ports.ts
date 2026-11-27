@@ -220,8 +220,10 @@ export type WriteDocumentLogRequest = Static<typeof WriteDocumentLogRequestSchem
 export const WriteDocumentLogResultSchema = Type.Object({
   spreadsheetId: Type.String({ minLength: 1 }),
   sheetName: Type.String({ minLength: 1 }),
+  sheetId: Type.Optional(Type.Union([Type.Number(), Type.Undefined()])),
   rowNumber: Type.Number(),
   action: Type.Union([Type.Literal('inserted'), Type.Literal('updated')]),
+  uri: Type.String({ minLength: 1 }),
 });
 export type WriteDocumentLogResult = Static<typeof WriteDocumentLogResultSchema>;
 
@@ -544,6 +546,7 @@ export interface InsertLogRowRequest {
 export interface InsertLogRowResult {
   rowNumber: number;
   action: 'inserted' | 'updated';
+  sheetId?: number | undefined;
 }
 
 export interface ReadLogRowsRequest {

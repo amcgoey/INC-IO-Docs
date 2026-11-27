@@ -121,11 +121,45 @@ export const UiEventType = Type.Object({
 
 export type UiEvent = Static<typeof UiEventType>;
 
+export const DocumentUiSuccessSummarySchema = Type.Object(
+  {
+    topLabel: Type.Optional(Type.String()),
+    text: Type.String(),
+    bottomLabel: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessSummary = Static<typeof DocumentUiSuccessSummarySchema>;
+
+export const DocumentUiSuccessArtifactSchema = Type.Object(
+  {
+    stepId: Type.String(),
+    label: Type.String(),
+    whenWorkflow: Type.Optional(Type.Record(Type.String(), Type.String())),
+    fallbackLabel: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessArtifact = Static<typeof DocumentUiSuccessArtifactSchema>;
+
+export const DocumentUiSuccessViewSchema = Type.Object(
+  {
+    summary: Type.Optional(DocumentUiSuccessSummarySchema),
+    artifacts: Type.Optional(Type.Array(DocumentUiSuccessArtifactSchema)),
+  },
+  { additionalProperties: false }
+);
+
+export type DocumentUiSuccessView = Static<typeof DocumentUiSuccessViewSchema>;
+
 export const UiSchema = Type.Object({
   layout: Type.Optional(Type.Array(Type.String())),
   fields: Type.Optional(Type.Record(Type.String(), UiFieldSchema)),
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
   evaluationOrder: Type.Optional(Type.Array(Type.String())),
+  successView: Type.Optional(DocumentUiSuccessViewSchema),
 });
 
 export type UiSchema = Static<typeof UiSchema>;
@@ -389,47 +423,57 @@ export class SchemaDrivenUiService {
       | Promise<Record<string, DynamicOptionResolution | DynamicOptionItem[]>>
       | undefined;
 
+    const requiresDocumentSchema = adapter.requiresDocumentSchema ?? true;
+    const requiresUiSchema = adapter.requiresUiSchema ?? 'required';
+
     if (request.documentTypeKey) {
-      resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);
-      if (!resolvedUiSchema) {
-        throw new Error(`UiSchema not found for documentTypeKey "${request.documentTypeKey}"`);
+      if (requiresUiSchema !== 'none') {
+        resolvedUiSchema = await this.manifestPort.getUiSchema(request.documentTypeKey);
+        if (!resolvedUiSchema) {
+          if (requiresUiSchema === 'required') {
+            throw new Error(`UiSchema not found for documentTypeKey "${request.documentTypeKey}"`);
+          }
+        } else {
+          validateOrThrow(
+            UiSchema,
+            resolvedUiSchema,
+            `Invalid UiSchema for documentTypeKey "${request.documentTypeKey}"`
+          );
+        }
       }
-      validateOrThrow(
-        UiSchema,
-        resolvedUiSchema,
-        `Invalid UiSchema for documentTypeKey "${request.documentTypeKey}"`
-      );
 
-      resolvedDocSchema = await this.manifestPort.getDocumentSchema(request.documentTypeKey);
+      if (requiresDocumentSchema) {
+        resolvedDocSchema = await this.manifestPort.getDocumentSchema(request.documentTypeKey);
 
-      if (resolvedDocSchema?.fields && this.optionsFetcher) {
-        const queries: DynamicOptionQuery[] = [];
-        for (const field of resolvedDocSchema.fields) {
-          // nosemgrep: domain-pass-through-read
-          const options = field.options;
-          if (isDynamicLookupField(options, resolvedDocSchema)) {
-            if (!queries.some((q) => q.sourceKey === options.source)) {
-              const optionSource = resolvedDocSchema.optionSources?.[options.source];
-              queries.push({
-                sourceKey: options.source,
-                ...(optionSource !== undefined ? { optionSource } : {}),
-              });
+        if (resolvedDocSchema?.fields && this.optionsFetcher) {
+          const queries: DynamicOptionQuery[] = [];
+          for (const field of resolvedDocSchema.fields) {
+            // nosemgrep: domain-pass-through-read
+            const options = field.options;
+            if (isDynamicLookupField(options, resolvedDocSchema)) {
+              if (!queries.some((q) => q.sourceKey === options.source)) {
+                const optionSource = resolvedDocSchema.optionSources?.[options.source];
+                queries.push({
+                  sourceKey: options.source,
+                  ...(optionSource !== undefined ? { optionSource } : {}),
+                });
+              }
             }
           }
-        }
 
-        if (queries.length > 0) {
-          const rawSelectedLogId = request.formData?.['SelectDocumentLog'];
-          const selectedLogId =
-            typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
-              ? rawSelectedLogId.trim()
-              : undefined;
-          dynamicOptionsPromise = this.optionsFetcher.fetchOptions(queries, {
-            ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
-            documentTypeKey: request.documentTypeKey,
-            ...(selectedLogId !== undefined ? { selectedLogId } : {}),
-            ...(request.formData !== undefined ? { formData: request.formData } : {}),
-          });
+          if (queries.length > 0) {
+            const rawSelectedLogId = request.formData?.['SelectDocumentLog'];
+            const selectedLogId =
+              typeof rawSelectedLogId === 'string' && rawSelectedLogId.trim().length > 0
+                ? rawSelectedLogId.trim()
+                : undefined;
+            dynamicOptionsPromise = this.optionsFetcher.fetchOptions(queries, {
+              ...(resolvedSpaceId !== undefined ? { spaceId: resolvedSpaceId } : {}),
+              documentTypeKey: request.documentTypeKey,
+              ...(selectedLogId !== undefined ? { selectedLogId } : {}),
+              ...(request.formData !== undefined ? { formData: request.formData } : {}),
+            });
+          }
         }
       }
     }
@@ -501,8 +545,8 @@ export class SchemaDrivenUiService {
 
     const adapterContext: UiViewAdapterContext = {
       ...request,
-      uiSchema: resolvedUiSchema,
-      documentSchema: resolvedDocSchema,
+      ...(resolvedUiSchema !== undefined ? { uiSchema: resolvedUiSchema } : {}),
+      ...(resolvedDocSchema !== undefined ? { documentSchema: resolvedDocSchema } : {}),
       ...(dynamicOptions !== undefined ? { dynamicOptions } : {}),
       ...(uiContext !== undefined ? { uiContext } : {}),
       ...(deduplicatedStatusMessages.length > 0

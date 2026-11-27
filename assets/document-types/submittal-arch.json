@@ -1,6 +1,7 @@
 {
   "key": "submittal-arch",
   "name": "Submittal Arch",
+  "maxSourceFiles": 1,
   "documentSchema": {
     "fields": [
       {
@@ -98,6 +99,10 @@
       "contacts": {
         "provider": "document_log",
         "properties": ["key", "name"]
+      },
+      "csiDivisions": {
+        "provider": "document_log",
+        "properties": ["key", "folder"]
       }
     },
     "calculatedFields": [
@@ -125,6 +130,20 @@
         "name": "Contact Chain",
         "key": "contactChain",
         "template": "{{contact.key}}"
+      },
+      {
+        "name": "CSI Division Folder",
+        "key": "csiDivisionFolder",
+        "template": "{{section}}",
+        "transforms": [
+          { "type": "prefix", "length": 2 }
+        ],
+        "lookup": {
+          "source": "csiDivisions",
+          "matchProperty": "key",
+          "resultProperty": "folder"
+        },
+        "required": true
       }
     ],
     "identity": {
@@ -190,24 +209,110 @@
     },
     "events": {
       "onSubmit": {
-        "catchAllWorkflow": "FileSubmittalArch"
+        "rules": [
+          {
+            "matchFields": {
+              "action": "REC"
+            },
+            "workflow": "SubmittalReceived"
+          }
+        ],
+        "catchAllWorkflow": "SubmittalSent"
       }
+    },
+    "successView": {
+      "summary": {
+        "topLabel": "{{section}}-{{number}}-{{revision}} • {{status.key}}",
+        "text": "<b>{{action.name}}</b> • {{date}} ({{contact.key}})",
+        "bottomLabel": "{{title}}"
+      },
+      "artifacts": [
+        {
+          "stepId": "insertCoverSheet",
+          "label": "Review Copy (with Cover Sheet)",
+          "fallbackLabel": "Transmittal Cover Sheet"
+        },
+        {
+          "stepId": "duplicateForReview",
+          "label": "Review Copy"
+        },
+        {
+          "stepId": "moveOriginal",
+          "label": "Filed Original",
+          "whenWorkflow": {
+            "SubmittalReceived": "Archived Original",
+            "SubmittalSent": "Filed Submittal"
+          }
+        }
+      ]
     }
   },
   "documentWorkflowConfig": {
     "workflows": [
       {
-        "name": "FileSubmittalArch",
+        "name": "SubmittalReceived",
         "activitySequence": [
           {
+            "id": "moveOriginal",
             "type": "MOVE_FILE",
             "payload": {
               "rootStorageId": "{{Document.space.abstractStorageId}}",
               "parentPath": "{{StorageContext.basePath}}",
-              "folderName": "Submittals"
+              "folderName": "Submittals/Closed/{{Document.calculated.csiDivisionFolder}}",
+              "fileName": "{{Document.calculated.fileName}}"
             }
           },
           {
+            "id": "duplicateForReview",
+            "type": "DUPLICATE_FILE",
+            "payload": {
+              "fileSourceStepId": "moveOriginal",
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "Submittals",
+              "fileName": "{{Document.calculated.fileName}}",
+              "fileNamePrefix": "_"
+            }
+          },
+          {
+            "id": "insertCoverSheet",
+            "type": "INSERT_PAGES",
+            "payload": {
+              "fileSourceStepId": "duplicateForReview",
+              "templateKey": "submittalCoverSheet",
+              "position": "start",
+              "sourcePages": [1],
+              "fillForm": true,
+              "onUnmodifiableTarget": {
+                "strategy": "createSiblingPdf",
+                "fileName": "_{{Document.calculated.fileName}} Transmittal.pdf"
+              }
+            }
+          },
+          {
+            "id": "writeLog",
+            "type": "WRITE_LOG",
+            "payload": {
+              "fileSourceStepId": "moveOriginal"
+            }
+          }
+        ]
+      },
+      {
+        "name": "SubmittalSent",
+        "activitySequence": [
+          {
+            "id": "moveOriginal",
+            "type": "MOVE_FILE",
+            "payload": {
+              "rootStorageId": "{{Document.space.abstractStorageId}}",
+              "parentPath": "{{StorageContext.basePath}}",
+              "folderName": "Submittals/Closed/{{Document.calculated.csiDivisionFolder}}",
+              "fileName": "{{Document.calculated.fileName}}"
+            }
+          },
+          {
+            "id": "writeLog",
             "type": "WRITE_LOG",
             "payload": {}
           }
@@ -278,13 +383,23 @@
           "Name": "name"
         },
         "aliasesColumn": "Aliases"
+      },
+      "csiDivisions": {
+        "sheetName": "_Config Submittal Arch",
+        "rangeName": "Options_Submittal_Arch_CSI_Divisions",
+        "endMarker": "---",
+        "columns": {
+          "Division Number": "key",
+          "Division Folder": "folder"
+        }
       }
     }
   },
   "documentFormSchema": {
     "fields": {
       "Submittal No": {
-        "template": "{{section}}-{{number}}-{{revision}}"
+        "template": "{{section}}-{{number}}-{{revision}}",
+        "writable": true
       },
       "Submittal Response": {
         "template": "{{action.name}}",

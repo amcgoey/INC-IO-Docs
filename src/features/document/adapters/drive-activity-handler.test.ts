@@ -105,7 +105,9 @@ describe('DriveActivityHandler', () => {
           {
             id: 'file-123',
             name: 'Report.docx',
+            parentId: 'testmove-folder-id',
             parentName: 'Unfiled',
+            parentUri: 'https://drive.google.com/drive/folders/testmove-folder-id',
             uri: 'https://drive.google.com/file/d/file-123/view',
           },
         ],
@@ -341,7 +343,8 @@ describe('DriveActivityHandler', () => {
             {
               id: 'found-file-456',
               name: 'TargetDoc.pdf',
-              parentName: 'folder-123',
+              parentId: 'folder-123',
+              parentUri: 'https://drive.google.com/drive/folders/folder-123',
               mimeType: 'application/pdf',
               uri: 'https://drive.google.com/file/d/found-file-456/view',
             },
@@ -598,13 +601,57 @@ describe('DriveActivityHandler', () => {
           '260920 IN - Meeting Notes'
         );
         expect(mockDriveService.move).toHaveBeenCalledWith('sf-1', 'comm-folder-id');
+      });
+
+      it('prefers context.document.sourceFiles over constructor sourceFiles when provided (#373)', async () => {
+        (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'submittals-folder-id',
+          name: 'Submittals',
+          parents: ['root-shared-drive-id'],
+        });
+        (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          id: 'resolved-target-1',
+          name: 'Resolved.pdf',
+          parents: ['submittals-folder-id'],
+          mimeType: 'application/pdf',
+          webViewLink: 'https://drive.google.com/file/d/resolved-target-1/view',
+        });
+
+        const sfHandler = new DriveActivityHandler(mockDriveService, {
+          sourceFiles: [{ id: 'shortcut-1', name: 'Shortcut.pdf' }],
+        });
+
+        const result = await sfHandler.handle(
+          {
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-shared-drive-id',
+              folderName: 'Submittals',
+            },
+          },
+          {
+            document: {
+              type: 'submittal-arch',
+              data: {},
+              sourceFiles: [{ id: 'resolved-target-1', name: 'Resolved.pdf', mimeType: 'application/pdf' }],
+            },
+            files: [],
+            stepOutputs: {},
+            contextVariables: {},
+          }
+        );
+
+        expect(result.success).toBe(true);
+        expect(mockDriveService.move).toHaveBeenCalledWith('resolved-target-1', 'submittals-folder-id');
         expect(result.files).toEqual([
           {
-            id: 'sf-1',
-            name: 'Original_Report.pdf',
-            parentName: '260920 IN - Meeting Notes',
+            id: 'resolved-target-1',
+            name: 'Resolved.pdf',
+            parentId: 'submittals-folder-id',
+            parentName: 'Submittals',
+            parentUri: 'https://drive.google.com/drive/folders/submittals-folder-id',
             mimeType: 'application/pdf',
-            uri: 'https://drive.google.com/file/d/sf-1/view',
+            uri: 'https://drive.google.com/file/d/resolved-target-1/view',
           },
         ]);
       });
@@ -657,13 +704,17 @@ describe('DriveActivityHandler', () => {
           {
             id: 'sf-1',
             name: 'Doc1.pdf',
+            parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             uri: 'https://drive.google.com/file/d/sf-1/view',
           },
           {
             id: 'sf-2',
             name: 'Doc2.pdf',
+            parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             uri: 'https://drive.google.com/file/d/sf-2/view',
           },
         ]);
@@ -718,7 +769,9 @@ describe('DriveActivityHandler', () => {
           {
             id: 'sf-1',
             name: 'Doc1.pdf',
+            parentId: 'leaf-id',
             parentName: 'LeafFolder',
+            parentUri: 'https://drive.google.com/drive/folders/leaf-id',
             mimeType: 'application/pdf',
             uri: 'https://drive.google.com/file/d/sf-1/view',
           },
@@ -837,7 +890,17 @@ describe('DriveActivityHandler', () => {
 
         expect(result).toEqual({
           success: true,
-          files: [],
+          files: [
+            {
+              id: 'subfolder-id',
+              name: '260920 IN - Meeting Notes',
+              parentId: 'subfolder-id',
+              parentName: '260920 IN - Meeting Notes',
+              parentUri: 'https://drive.google.com/drive/folders/subfolder-id',
+              mimeType: 'application/vnd.google-apps.folder',
+              uri: 'https://drive.google.com/drive/folders/subfolder-id',
+            },
+          ],
         });
         expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith(
           'shared-drive-root-id',
@@ -910,7 +973,9 @@ describe('DriveActivityHandler', () => {
             {
               id: 'file-doc-123',
               name: 'Document.docx',
+              parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/vnd.google-apps.document',
               uri: 'https://docs.google.com/document/d/file-doc-123/edit',
             },
@@ -952,7 +1017,9 @@ describe('DriveActivityHandler', () => {
             {
               id: 'folder-sub-456',
               name: 'SubFolder',
+              parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/vnd.google-apps.folder',
               uri: 'https://drive.google.com/drive/folders/folder-sub-456',
             },
@@ -1099,7 +1166,9 @@ describe('DriveActivityHandler', () => {
             {
               id: 'drive-file-new-1',
               name: 'Invoice.pdf',
+              parentId: 'target-folder-id',
               parentName: 'Target Folder',
+              parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
               mimeType: 'application/pdf',
               uri: 'https://drive.google.com/file/d/drive-file-new-1/view',
             },
@@ -1503,7 +1572,9 @@ describe('DriveActivityHandler', () => {
           expect(result.files?.[0]).toEqual({
             id: 'saved-att-1',
             name: 'Invoice.pdf',
+            parentId: 'target-folder-id',
             parentName: 'Target Folder',
+            parentUri: 'https://drive.google.com/drive/folders/target-folder-id',
             mimeType: 'application/pdf',
             uri: 'https://drive.google.com/file/d/saved-att-1/view',
           });
@@ -1588,6 +1659,896 @@ describe('DriveActivityHandler', () => {
           expect(mockDriveService.findOrCreateFolder).toHaveBeenCalled();
           expect(mockDriveService.move).not.toHaveBeenCalled();
           expect(mockDriveService.saveBuffer).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('MOVE_FILE atomic rename and extension preservation (#375)', () => {
+        it('preserves real source extension and calls driveService.move with newName', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'closed-folder-id',
+            name: '08 Openings',
+          });
+          (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'file-arch-1',
+            name: '081100-001-0 Doors - 261102 PMG.pdf',
+            parents: ['closed-folder-id'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/file-arch-1/view',
+          });
+
+          const renameHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              { id: 'file-arch-1', name: 'Original Upload.pdf', mimeType: 'application/pdf' },
+            ],
+          });
+
+          const result = await renameHandler.handle({
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals/Closed/08 Openings',
+              fileName: '081100-001-0 Doors - 261102 PMG',
+            },
+          });
+
+          expect(mockDriveService.move).toHaveBeenCalledWith('file-arch-1', 'closed-folder-id', {
+            newName: '081100-001-0 Doors - 261102 PMG.pdf',
+          });
+          expect(result).toEqual({
+            success: true,
+            files: [
+              {
+                id: 'file-arch-1',
+                name: '081100-001-0 Doors - 261102 PMG.pdf',
+                parentId: 'closed-folder-id',
+                parentName: '08 Openings',
+                parentUri: 'https://drive.google.com/drive/folders/closed-folder-id',
+                mimeType: 'application/pdf',
+                uri: 'https://drive.google.com/file/d/file-arch-1/view',
+              },
+            ],
+          });
+        });
+
+        it('fetches getFile metadata when sourceFile lacks name or mimeType during MOVE_FILE rename', async () => {
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'file-meta-1',
+            name: '08.11.00 - Doors',
+            mimeType: 'application/pdf',
+            parents: ['inbox'],
+          });
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'closed-folder-id',
+            name: '08 Openings',
+          });
+          (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'file-meta-1',
+            name: '081100-001-0 Doors - 261102 PMG.pdf',
+            parents: ['closed-folder-id'],
+            mimeType: 'application/pdf',
+          });
+
+          const renameHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'file-meta-1' }],
+          });
+
+          const result = await renameHandler.handle({
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'drive-root-1',
+              folderName: '08 Openings',
+              fileName: '081100-001-0 Doors - 261102 PMG',
+            },
+          });
+
+          expect(result.success).toBe(true);
+          expect(mockDriveService.getFile).toHaveBeenCalledWith('file-meta-1');
+          expect(mockDriveService.move).toHaveBeenCalledWith('file-meta-1', 'closed-folder-id', {
+            newName: '081100-001-0 Doors - 261102 PMG.pdf',
+          });
+        });
+
+        it.each([
+          {
+            label: 'dotted non-extension text with whitespace falls back to MIME extension',
+            sourceName: '08.11.00 - Doors',
+            mimeType: 'application/pdf',
+            requestedName: '081100-001-0 Doors - 261102 PMG',
+            expectedName: '081100-001-0 Doors - 261102 PMG.pdf',
+          },
+          {
+            label: 'dotted numeric section name falls back to MIME extension',
+            sourceName: '08.11.00',
+            mimeType: 'application/pdf',
+            requestedName: '081100-001-0 Doors - 261102 PMG',
+            expectedName: '081100-001-0 Doors - 261102 PMG.pdf',
+          },
+          {
+            label: 'dotfile / dot-only basename falls back to MIME extension',
+            sourceName: '..pdf',
+            mimeType: 'application/pdf',
+            requestedName: '081100-001-0 Doors - 261102 PMG',
+            expectedName: '081100-001-0 Doors - 261102 PMG.pdf',
+          },
+          {
+            label: 'dot-only name with unknown MIME preserves base without fabricated extension',
+            sourceName: '...',
+            mimeType: undefined,
+            requestedName: '081100-001-0 Doors - 261102 PMG',
+            expectedName: '081100-001-0 Doors - 261102 PMG',
+          },
+          {
+            label: 'Google Workspace native doc skips MIME suffix',
+            sourceName: '08.11.00 - Doors',
+            mimeType: 'application/vnd.google-apps.document',
+            requestedName: '081100-001-0 Doors - 261102 PMG',
+            expectedName: '081100-001-0 Doors - 261102 PMG',
+          },
+          {
+            label: 'Google Workspace native sheet skips MIME suffix',
+            sourceName: 'Schedule',
+            mimeType: 'application/vnd.google-apps.spreadsheet',
+            requestedName: '081100-001-0 Schedule - 261102 PMG',
+            expectedName: '081100-001-0 Schedule - 261102 PMG',
+          },
+          {
+            label: 'extensionless binary file falls back to MIME extension',
+            sourceName: 'Scan_001',
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            requestedName: '081100-001-0 Spec - 261102 PMG',
+            expectedName: '081100-001-0 Spec - 261102 PMG.docx',
+          },
+          {
+            label: 'prevents double extension when requested fileName already ends with same extension',
+            sourceName: 'Original.pdf',
+            mimeType: 'application/pdf',
+            requestedName: '081100-001-0 Doors - 261102 PMG.PDF',
+            expectedName: '081100-001-0 Doors - 261102 PMG.PDF',
+          },
+          {
+            label: 'preserves source extension even when requested fileName has dotted CSI prefix',
+            sourceName: 'Doors.dwg',
+            mimeType: 'image/vnd.dwg',
+            requestedName: '08.11.00 - Doors',
+            expectedName: '08.11.00 - Doors.dwg',
+          },
+        ])('$label', async ({ sourceName, mimeType, requestedName, expectedName }) => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'dest-folder-id',
+            name: 'Dest',
+          });
+          (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'file-case-1',
+            name: expectedName,
+            parents: ['dest-folder-id'],
+            mimeType,
+          });
+
+          const caseHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'file-case-1', name: sourceName, ...(mimeType ? { mimeType } : {}) }],
+          });
+
+          const result = await caseHandler.handle({
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Dest',
+              fileName: requestedName,
+            },
+          });
+
+          expect(result.success).toBe(true);
+          expect(mockDriveService.move).toHaveBeenCalledWith('file-case-1', 'dest-folder-id', {
+            newName: expectedName,
+          });
+        });
+
+        it('applies extension-preserving fileName when saving binary SourceFile via saveBuffer', async () => {
+          const bytes = new Uint8Array([1, 2, 3]);
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'dest-folder-id',
+            name: '07 Thermal and Moisture Protection',
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'saved-renamed-1',
+            name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['dest-folder-id'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/saved-renamed-1/view',
+          });
+
+          const binaryRenameHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              {
+                id: 'att-1',
+                name: '07.12.00 - Waterproofing',
+                mimeType: 'application/pdf',
+                content: bytes,
+              },
+            ],
+          });
+
+          const result = await binaryRenameHandler.handle({
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Submittals/Closed/07 Thermal and Moisture Protection',
+              fileName: '071200-001-0 Waterproofing - 261102 PMG',
+            },
+          });
+
+          expect(result.success).toBe(true);
+          expect(mockDriveService.saveBuffer).toHaveBeenCalledWith(bytes, {
+            action: 'create',
+            targetFolderId: 'dest-folder-id',
+            name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+            mimeType: 'application/pdf',
+          });
+          expect(result.files?.[0]).toMatchObject({
+            id: 'saved-renamed-1',
+            name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parentId: 'dest-folder-id',
+          });
+        });
+
+        it('returns failure when payload.fileName is blank or whitespace-only', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'dest-folder-id',
+            name: 'Dest',
+          });
+          const renameHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'file-1', name: 'Doc.pdf', mimeType: 'application/pdf' }],
+          });
+
+          const result = await renameHandler.handle({
+            type: 'MOVE_FILE',
+            payload: {
+              rootStorageId: 'root-id',
+              folderName: 'Dest',
+              fileName: '   ',
+            },
+          });
+
+          expect(result.success).toBe(false);
+          expect(result.error).toMatch(/fileName/i);
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('does not treat payload.fileName as a search query in MOVE_FILE when fileId and sourceFiles are missing', async () => {
+          await expect(
+            handler.handle({
+              type: 'MOVE_FILE',
+              payload: {
+                rootStorageId: 'root-id',
+                folderName: 'Dest',
+                fileName: '071200-001-0 Waterproofing - 261102 PMG',
+              },
+            })
+          ).rejects.toThrow(/No fileId found in activity payload or execution context/);
+          expect(mockDriveService.searchFiles).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('DUPLICATE_FILE active review copy (#377)', () => {
+        it('canHandle returns true for DUPLICATE_FILE', () => {
+          expect(handler.canHandle({ type: 'DUPLICATE_FILE', payload: {} })).toBe(true);
+        });
+
+        it('duplicates file resolved via context.stepOutputs[fileSourceStepId] into destination folder with non-doubling "_" prefix and FileLocator.parentId', async () => {
+          (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-6-const',
+            name: '6 Construction',
+          });
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+            parents: ['folder-6-const'],
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'review-copy-1',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/review-copy-1/view',
+          });
+
+          const result = await handler.handle(
+            {
+              id: 'duplicateForReview',
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                parentPath: '6 Construction',
+                folderName: 'Submittals',
+                fileName: '071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: {
+                type: 'submittal-arch',
+                data: {},
+              },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'archived-original-1',
+                      name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                      parentId: 'folder-closed-07',
+                      parentName: '07 Thermal and Moisture Protection',
+                      mimeType: 'application/pdf',
+                      uri: 'https://drive.google.com/file/d/archived-original-1/view',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(mockDriveService.resolveFolderPath).toHaveBeenCalledWith('drive-root-1', [
+            '6 Construction',
+          ]);
+          expect(mockDriveService.findOrCreateFolder).toHaveBeenCalledWith(
+            'folder-6-const',
+            'Submittals'
+          );
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('archived-original-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+          expect(result).toEqual({
+            success: true,
+            files: [
+              {
+                id: 'review-copy-1',
+                name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+                parentId: 'folder-submittals',
+                parentName: 'Submittals',
+                parentUri: 'https://drive.google.com/drive/folders/folder-submittals',
+                mimeType: 'application/pdf',
+                uri: 'https://drive.google.com/file/d/review-copy-1/view',
+              },
+            ],
+          });
+        });
+
+        it('does not double leading "_" prefix when fileName or source name already begins with "_"', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+            parents: ['drive-root-1'],
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'review-copy-2',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+          });
+
+          const result = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+                fileName: '_071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'orig-1',
+                      name: '_AlreadyPrefixed.pdf',
+                      mimeType: 'application/pdf',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(result.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('orig-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+        });
+
+        it('uses source file name with "_" prefix when fileName is omitted, and skips MIME suffix on Google Workspace native files', async () => {
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'gdoc-1',
+            name: 'Original Spec',
+            parents: ['folder-3-ffe'],
+            mimeType: 'application/vnd.google-apps.document',
+          });
+          (mockDriveService.resolveFolderPath as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-3-ffe',
+            name: '3 FFE',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce({
+              id: 'copy-native-1',
+              name: '_Original Spec',
+              parents: ['folder-3-ffe'],
+              mimeType: 'application/vnd.google-apps.document',
+            })
+            .mockResolvedValueOnce({
+              id: 'copy-renamed-native-2',
+              name: '_AC102-A Berman Falk - 261102 INC',
+              parents: ['folder-3-ffe'],
+              mimeType: 'application/vnd.google-apps.document',
+            });
+
+          const r1 = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                parentPath: '3 FFE',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-ffe', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'gdoc-1',
+                      name: 'Original Spec',
+                      mimeType: 'application/vnd.google-apps.document',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(r1.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenNthCalledWith(1, 'gdoc-1', {
+            targetFolderId: 'folder-3-ffe',
+            newName: '_Original Spec',
+          });
+
+          const r2 = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileId: 'gdoc-1',
+                rootStorageId: 'drive-root-1',
+                parentPath: '3 FFE',
+                fileName: 'AC102-A Berman Falk - 261102 INC',
+                fileNamePrefix: '_',
+              },
+            }
+          );
+          expect(r2.success).toBe(true);
+          expect(mockDriveService.duplicate).toHaveBeenNthCalledWith(2, 'gdoc-1', {
+            targetFolderId: 'folder-3-ffe',
+            newName: '_AC102-A Berman Falk - 261102 INC',
+          });
+        });
+
+        it('allows native Drive duplicate filenames and falls back to context.files when fileSourceStepId is omitted', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>)
+            .mockResolvedValueOnce({
+              id: 'dup-1',
+              name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+              parents: ['folder-submittals'],
+              mimeType: 'application/pdf',
+            })
+            .mockResolvedValueOnce({
+              id: 'dup-2',
+              name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+              parents: ['folder-submittals'],
+              mimeType: 'application/pdf',
+            });
+
+          const ctx = {
+            document: { type: 'submittal-arch', data: {} },
+            files: [
+              {
+                id: 'moved-1',
+                name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                mimeType: 'application/pdf',
+              },
+            ],
+            stepOutputs: {},
+            contextVariables: {},
+          };
+          const act: Activity = {
+            type: 'DUPLICATE_FILE',
+            payload: {
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileNamePrefix: '_',
+            },
+          };
+
+          const first = await handler.handle(act, ctx);
+          const second = await handler.handle(act, ctx);
+          expect(first.success).toBe(true);
+          expect(second.success).toBe(true);
+          expect(first.files?.[0]?.name).toBe('_071200-001-0 Waterproofing - 261102 PMG.pdf');
+          expect(second.files?.[0]?.name).toBe('_071200-001-0 Waterproofing - 261102 PMG.pdf');
+        });
+
+        it('fails fast when fileSourceStepId is unexecuted, missing context, or resolves zero FileLocators', async () => {
+          const unexecuted = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'missingStep',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {},
+              contextVariables: {},
+            }
+          );
+          expect(unexecuted.success).toBe(false);
+          expect(unexecuted.error).toContain('missingStep');
+          expect(mockDriveService.findOrCreateFolder).not.toHaveBeenCalled();
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+
+          const zeroFiles = await handler.handle(
+            {
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [{ id: 'unrelated', name: 'Other.pdf' }],
+              stepOutputs: {
+                moveOriginal: { success: true, files: [] },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(zeroFiles.success).toBe(false);
+          expect(zeroFiles.error).toMatch(/zero files/i);
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+
+          const moveZeroFiles = await handler.handle(
+            {
+              type: 'MOVE_FILE',
+              payload: {
+                fileSourceStepId: 'prevStep',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                prevStep: { success: true, files: [] },
+              },
+              contextVariables: {},
+            }
+          );
+          expect(moveZeroFiles.success).toBe(false);
+          expect(moveZeroFiles.error).toMatch(/zero files/i);
+          expect(mockDriveService.move).not.toHaveBeenCalled();
+        });
+
+        it('rejects blank fileName or fileNamePrefix on DUPLICATE_FILE before Drive calls', async () => {
+          const badFileName = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileId: 'file-1',
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileName: '   ',
+            },
+          });
+          expect(badFileName.success).toBe(false);
+          expect(badFileName.error).toMatch(/fileName/i);
+
+          const badPrefix = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: {
+              fileId: 'file-1',
+              rootStorageId: 'drive-root-1',
+              folderName: 'Submittals',
+              fileNamePrefix: '  ',
+            },
+          });
+          expect(badPrefix.success).toBe(false);
+          expect(badPrefix.error).toMatch(/fileNamePrefix/i);
+          expect(mockDriveService.duplicate).not.toHaveBeenCalled();
+        });
+
+        it('does not re-hydrate or reject fileSourceStepId FileLocators as unhydrated email attachments in Gmail mode', async () => {
+          const mockHydrator: SourceFileHydratorPort = {
+            hydrate: vi.fn().mockRejectedValue(new Error('Should not hydrate Drive FileLocators')),
+          };
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'folder-submittals',
+            name: 'Submittals',
+          });
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: 'gmail-dup-1',
+            name: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+            parents: ['folder-submittals'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/gmail-dup-1/view',
+          });
+
+          const gmailHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [{ id: 'part-arch-1', name: 'Upload.pdf' }],
+            sourceFileHydrator: mockHydrator,
+            isFileSourceEmailAttachments: true,
+          });
+
+          const result = await gmailHandler.handle(
+            {
+              id: 'duplicateForReview',
+              type: 'DUPLICATE_FILE',
+              payload: {
+                fileSourceStepId: 'moveOriginal',
+                rootStorageId: 'drive-root-1',
+                folderName: 'Submittals',
+                fileName: '071200-001-0 Waterproofing - 261102 PMG',
+                fileNamePrefix: '_',
+              },
+            },
+            {
+              document: { type: 'submittal-arch', data: {} },
+              files: [],
+              stepOutputs: {
+                moveOriginal: {
+                  success: true,
+                  files: [
+                    {
+                      id: 'drive-saved-gmail-1',
+                      name: '071200-001-0 Waterproofing - 261102 PMG.pdf',
+                      parentId: 'folder-closed-07',
+                      parentName: '07 Thermal and Moisture Protection',
+                      mimeType: 'application/pdf',
+                    },
+                  ],
+                },
+              },
+              contextVariables: {},
+            }
+          );
+
+          expect(result.success).toBe(true);
+          expect(mockHydrator.hydrate).not.toHaveBeenCalled();
+          expect(mockDriveService.duplicate).toHaveBeenCalledWith('drive-saved-gmail-1', {
+            targetFolderId: 'folder-submittals',
+            newName: '_071200-001-0 Waterproofing - 261102 PMG.pdf',
+          });
+        });
+      });
+
+      describe('parentUri, handleSearch parentName fix, and empty MOVE_FILE placeholder (#384)', () => {
+        it('populates parentUri from leafFolder.webViewLink (or folder URL fallback) across MOVE_FILE (remote and binary) and DUPLICATE_FILE', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-custom-link',
+            name: 'Closed',
+            parents: ['root'],
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/folder-custom-link',
+          });
+          (mockDriveService.move as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'file-123',
+            name: 'Report.docx',
+            parents: ['folder-custom-link'],
+            webViewLink: 'https://drive.google.com/file/d/file-123/view',
+          });
+          const moveOutput = await handler.handle({
+            type: 'MOVE_FILE',
+            payload: { fileId: 'file-123', folderName: 'Closed' },
+          });
+          expect(moveOutput.files?.[0]?.parentUri).toBe(
+            'https://drive.google.com/drive/u/0/folders/folder-custom-link'
+          );
+
+          // Fallback URL when webViewLink is absent on destination folder
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-no-link',
+            name: 'Submittals',
+            parents: ['root'],
+          });
+          (mockDriveService.saveBuffer as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'bin-saved-1',
+            name: 'Attachment.pdf',
+            parents: ['folder-no-link'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/bin-saved-1/view',
+          });
+          const binaryHandler = new DriveActivityHandler(mockDriveService, {
+            sourceFiles: [
+              {
+                id: 'att-1',
+                name: 'Attachment.pdf',
+                mimeType: 'application/pdf',
+                content: new Uint8Array([1, 2, 3]),
+              },
+            ],
+          });
+          const binaryOutput = await binaryHandler.handle({
+            type: 'MOVE_FILE',
+            payload: { rootStorageId: 'root', folderName: 'Submittals' },
+          });
+          expect(binaryOutput.files?.[0]?.parentUri).toBe(
+            'https://drive.google.com/drive/folders/folder-no-link'
+          );
+
+          // In-place DUPLICATE_FILE without leafFolder resolves real parentName and parentUri instead of writing parents[0] ID
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockImplementation(
+            async (id: string) => {
+              if (id === 'folder-real-parent') {
+                return {
+                  id: 'folder-real-parent',
+                  name: '07 Thermal & Moisture',
+                  mimeType: 'application/vnd.google-apps.folder',
+                  webViewLink: 'https://drive.google.com/drive/folders/folder-real-parent',
+                };
+              }
+              return {
+                id,
+                name: 'Original.pdf',
+                mimeType: 'application/pdf',
+                parents: ['folder-real-parent'],
+              };
+            }
+          );
+          (mockDriveService.duplicate as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'dup-inplace-1',
+            name: '_Original.pdf',
+            parents: ['folder-real-parent'],
+            mimeType: 'application/pdf',
+            webViewLink: 'https://drive.google.com/file/d/dup-inplace-1/view',
+          });
+          const dupOutput = await handler.handle({
+            type: 'DUPLICATE_FILE',
+            payload: { fileId: 'file-orig-1', fileNamePrefix: '_' },
+          });
+          expect(dupOutput.files?.[0]).toEqual({
+            id: 'dup-inplace-1',
+            name: '_Original.pdf',
+            parentId: 'folder-real-parent',
+            parentName: '07 Thermal & Moisture',
+            parentUri: 'https://drive.google.com/drive/folders/folder-real-parent',
+            mimeType: 'application/pdf',
+            uri: 'https://drive.google.com/file/d/dup-inplace-1/view',
+          });
+        });
+
+        it('resolves real parentName and parentUri on SEARCH_DRIVE_FILE and never writes parents[0] ID into parentName', async () => {
+          (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+            {
+              id: 'found-1',
+              name: 'Budget.xlsx',
+              parents: ['folder-acme-id'],
+              mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              webViewLink: 'https://drive.google.com/file/d/found-1/view',
+            },
+          ]);
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'folder-acme-id',
+            name: 'Acme Corp',
+            mimeType: 'application/vnd.google-apps.folder',
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/folder-acme-id',
+          });
+
+          const resolvedSearch = await handler.handle({
+            type: 'SEARCH_DRIVE_FILE',
+            payload: { targetName: 'Budget.xlsx' },
+          });
+          expect(resolvedSearch.files?.[0]).toEqual({
+            id: 'found-1',
+            name: 'Budget.xlsx',
+            parentId: 'folder-acme-id',
+            parentName: 'Acme Corp',
+            parentUri: 'https://drive.google.com/drive/u/0/folders/folder-acme-id',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            uri: 'https://drive.google.com/file/d/found-1/view',
+          });
+
+          // When parent folder lookup fails, parentName is omitted (never folder ID) and parentUri falls back
+          (mockDriveService.searchFiles as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+            {
+              id: 'found-2',
+              name: 'Spec.pdf',
+              parents: ['folder-unknown-id'],
+              mimeType: 'application/pdf',
+            },
+          ]);
+          (mockDriveService.getFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+            new Error('Not found')
+          );
+
+          const fallbackSearch = await handler.handle({
+            type: 'FIND_DRIVE_FILE',
+            payload: { targetName: 'Spec.pdf' },
+          });
+          expect(fallbackSearch.files?.[0]).toEqual({
+            id: 'found-2',
+            name: 'Spec.pdf',
+            parentId: 'folder-unknown-id',
+            parentUri: 'https://drive.google.com/drive/folders/folder-unknown-id',
+            mimeType: 'application/pdf',
+          });
+          expect(fallbackSearch.files?.[0]?.parentName).toBeUndefined();
+        });
+
+        it('emits a single folder-only placeholder FileLocator (id === parentId, uri === parentUri) when MOVE_FILE runs with 0 SourceFiles', async () => {
+          (mockDriveService.findOrCreateFolder as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+            id: 'empty-dest-folder-1',
+            name: '261126 OT - Empty Comm',
+            parents: ['comm-contact-folder'],
+            mimeType: 'application/vnd.google-apps.folder',
+            webViewLink: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+          });
+
+          const zeroFilesHandler = new DriveActivityHandler(mockDriveService);
+          const result = await zeroFilesHandler.handle(
+            {
+              id: 'moveFiles',
+              type: 'MOVE_FILE',
+              payload: {
+                rootStorageId: 'shared-drive-1',
+                folderName: '261126 OT - Empty Comm',
+              },
+            },
+            {
+              document: {
+                type: 'communication-project',
+                data: {},
+                sourceFiles: [],
+              },
+              files: [],
+              stepOutputs: {},
+              contextVariables: {},
+            }
+          );
+
+          expect(result).toEqual({
+            success: true,
+            files: [
+              {
+                id: 'empty-dest-folder-1',
+                name: '261126 OT - Empty Comm',
+                parentId: 'empty-dest-folder-1',
+                parentName: '261126 OT - Empty Comm',
+                parentUri: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+                mimeType: 'application/vnd.google-apps.folder',
+                uri: 'https://drive.google.com/drive/u/0/folders/empty-dest-folder-1',
+              },
+            ],
+          });
+          expect(mockDriveService.move).not.toHaveBeenCalled();
         });
       });
 

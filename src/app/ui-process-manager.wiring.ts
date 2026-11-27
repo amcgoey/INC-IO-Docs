@@ -19,6 +19,12 @@ import {
   type UiProcessGmailMessageDescriptor,
   type UiProcessSourceParserPort,
   type UiProcessLockedFieldsPort,
+  type UiProcessSourceFileDto,
+  type UiProcessDocumentExecutionOutcome,
+  type UiProcessDocumentExecutionResult,
+  type UiProcessExecutionFileLocator,
+  type UiProcessExecutionLogWrite,
+  type UiProcessExecutionStepResult,
 } from '../features/ui-process-manager';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import {
@@ -45,7 +51,11 @@ import {
 } from '../infrastructure/workspace-addon/translator';
 import type { WorkspaceConfigProviderPort } from '../infrastructure/workspace-addon/config';
 import type { FormChangeEvaluatorFn as FormChangeEvaluator } from '../features/ui-process-manager';
-import type { OptionsFetcherPort, UiContextQueryPort } from '../features/schema-driven-ui/ports';
+import type {
+  OptionsFetcherPort,
+  UiContextQueryPort,
+  DocumentExecutionOutcome as SchemaDrivenDocumentExecutionOutcome,
+} from '../features/schema-driven-ui/ports';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type {
   GmailThreadDetails,
@@ -59,7 +69,171 @@ import type {
   DocumentDynamicValidationPort,
   DynamicValidationMessageFormatter,
   DocumentModel,
+  FileLocator,
+  ProcessDocumentResult,
+  SourceFile,
 } from '../features/document/ports';
+
+function extractNonEmptyStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function mapFileLocatorToOutcomeFile(file: FileLocator): UiProcessExecutionFileLocator {
+  return {
+    id: file.id,
+    name: file.name,
+    ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
+    ...(file.parentName !== undefined ? { parentName: file.parentName } : {}),
+    ...(file.parentUri !== undefined ? { parentUri: file.parentUri } : {}),
+    ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+    ...(file.uri !== undefined ? { uri: file.uri } : {}),
+  };
+}
+
+function mapLogWriteContext(raw: unknown): UiProcessExecutionLogWrite | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const sheetName = typeof record.sheetName === 'string' ? record.sheetName : undefined;
+  const sheetId = typeof record.sheetId === 'number' ? record.sheetId : undefined;
+  const rowNumber = typeof record.rowNumber === 'number' ? record.rowNumber : undefined;
+  const action =
+    record.action === 'inserted' || record.action === 'updated' ? record.action : undefined;
+  const uri = typeof record.uri === 'string' ? record.uri : undefined;
+  return {
+    ...(sheetName !== undefined ? { sheetName } : {}),
+    ...(sheetId !== undefined ? { sheetId } : {}),
+    ...(rowNumber !== undefined ? { rowNumber } : {}),
+    ...(action !== undefined ? { action } : {}),
+    ...(uri !== undefined ? { uri } : {}),
+  };
+}
+
+function mapProcessDocumentResultToExecutionResult(
+  result: ProcessDocumentResult,
+  fallback: { spaceName: string; documentData: Record<string, unknown> }
+): UiProcessDocumentExecutionResult {
+  const notices = extractNonEmptyStrings(result.contextVariables?.notices);
+  const logWrite = mapLogWriteContext(result.contextVariables?.documentLogWrite);
+  const rawStepResults: UiProcessExecutionStepResult[] = Array.isArray(result.stepResults)
+    ? result.stepResults.map((step) => {
+        const stepNotices = extractNonEmptyStrings(step.output?.contextVariables?.notices);
+        return {
+          ...(step.stepId !== undefined ? { stepId: step.stepId } : {}),
+          activityType: step.activityType,
+          files: Array.isArray(step.output?.files)
+            ? step.output.files.map(mapFileLocatorToOutcomeFile)
+            : [],
+          ...(stepNotices.length > 0 ? { notices: stepNotices } : {}),
+        };
+      })
+    : [];
+
+  const completedStepCount =
+    typeof result.completedStepCount === 'number'
+      ? result.completedStepCount
+      : rawStepResults.length;
+
+  const stepResults: UiProcessExecutionStepResult[] =
+    rawStepResults.length === 0 && Array.isArray(result.files) && result.files.length > 0
+      ? [
+          {
+            activityType: 'UNKNOWN',
+            files: result.files.map(mapFileLocatorToOutcomeFile),
+          },
+        ]
+      : rawStepResults;
+  const workflowName =
+    typeof result.workflowName === 'string' ? result.workflowName : undefined;
+  const failedStepId =
+    !result.success && typeof result.failedStepId === 'string' ? result.failedStepId : undefined;
+  const errors = !result.success && Array.isArray(result.errors) ? result.errors : [];
+  const documentData = result.data?.data ?? fallback.documentData;
+
+  const executionOutcome: UiProcessDocumentExecutionOutcome = {
+    success: result.success,
+    ...(workflowName !== undefined ? { workflowName } : {}),
+    completedStepCount,
+    ...(failedStepId !== undefined ? { failedStepId } : {}),
+    spaceName: fallback.spaceName,
+    documentData,
+    stepResults,
+    notices,
+    ...(logWrite !== undefined ? { logWrite } : {}),
+    errors,
+  };
+
+  return {
+    success: result.success,
+    ...(!result.success && Array.isArray(result.errors) ? { errors: result.errors } : {}),
+    ...(result.contextVariables !== undefined ? { contextVariables: result.contextVariables } : {}),
+    executionOutcome,
+  };
+}
+
+function mapUiProcessExecutionOutcomeToSchemaDrivenOutcome(
+  outcome: UiProcessDocumentExecutionOutcome
+): SchemaDrivenDocumentExecutionOutcome {
+  return {
+    success: outcome.success,
+    ...(outcome.workflowName !== undefined ? { workflowName: outcome.workflowName } : {}),
+    completedStepCount: outcome.completedStepCount,
+    ...(outcome.failedStepId !== undefined ? { failedStepId: outcome.failedStepId } : {}),
+    spaceName: outcome.spaceName,
+    documentData: outcome.documentData,
+    stepResults: outcome.stepResults.map((step) => ({
+      ...(step.stepId !== undefined ? { stepId: step.stepId } : {}),
+      activityType: step.activityType,
+      files: step.files.map((file) => ({
+        id: file.id,
+        name: file.name,
+        ...(file.parentId !== undefined ? { parentId: file.parentId } : {}),
+        ...(file.parentName !== undefined ? { parentName: file.parentName } : {}),
+        ...(file.parentUri !== undefined ? { parentUri: file.parentUri } : {}),
+        ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+        ...(file.uri !== undefined ? { uri: file.uri } : {}),
+      })),
+      ...(step.notices !== undefined ? { notices: step.notices } : {}),
+    })),
+    notices: outcome.notices,
+    ...(outcome.logWrite !== undefined
+      ? {
+          logWrite: {
+            ...(outcome.logWrite.sheetName !== undefined
+              ? { sheetName: outcome.logWrite.sheetName }
+              : {}),
+            ...(outcome.logWrite.sheetId !== undefined
+              ? { sheetId: outcome.logWrite.sheetId }
+              : {}),
+            ...(outcome.logWrite.rowNumber !== undefined
+              ? { rowNumber: outcome.logWrite.rowNumber }
+              : {}),
+            ...(outcome.logWrite.action !== undefined ? { action: outcome.logWrite.action } : {}),
+            ...(outcome.logWrite.uri !== undefined ? { uri: outcome.logWrite.uri } : {}),
+          },
+        }
+      : {}),
+    errors: outcome.errors,
+  };
+}
+
+function toDocumentSourceFiles(
+  sourceFiles: readonly UiProcessSourceFileDto[] | undefined
+): SourceFile[] | undefined {
+  if (sourceFiles === undefined) {
+    return undefined;
+  }
+  return sourceFiles.map((file) => ({
+    id: file.id,
+    ...(file.name !== undefined ? { name: file.name } : {}),
+    ...(file.mimeType !== undefined ? { mimeType: file.mimeType } : {}),
+    ...(file.content !== undefined ? { content: file.content } : {}),
+  }));
+}
 
 export function resolveActionRoute(route: string, baseUrl?: string): string {
   try {
@@ -348,16 +522,6 @@ export function createUiProcessRequestWrapper(
 
     const intent: UiProcessResult = await orchestratorInstance.processUiEvent(eventContext);
 
-    if (intent.type === 'notification') {
-      return {
-        action: {
-          notification: {
-            text: intent.text,
-          },
-        },
-      };
-    }
-
     const view = await schemaDrivenUiInstance.generateView({
       viewId: intent.viewId,
       ...(intent.spaceId !== undefined ? { spaceId: intent.spaceId } : {}),
@@ -367,6 +531,9 @@ export function createUiProcessRequestWrapper(
       ...(intent.formData !== undefined ? { formData: intent.formData } : {}),
       ...(intent.hiddenFields !== undefined ? { hiddenFields: intent.hiddenFields } : {}),
       ...(intent.lockedFields !== undefined ? { lockedFields: intent.lockedFields } : {}),
+      ...(intent.executionOutcome !== undefined
+        ? { executionOutcome: mapUiProcessExecutionOutcomeToSchemaDrivenOutcome(intent.executionOutcome) }
+        : {}),
       ...(intent.selectionState !== undefined
         ? {
             selectionState: {
@@ -388,8 +555,10 @@ export function createUiProcessRequestWrapper(
     });
 
     const mappedView = mapUiViewToWorkspaceUiView(view, context.baseUrl);
-    if (intent.isUpdateCard) {
-      return translateUiViewToUpdateCardAction(mappedView, intent.notification);
+    if (intent.popToRoot || intent.isUpdateCard) {
+      return translateUiViewToUpdateCardAction(mappedView, intent.notification, {
+        ...(intent.popToRoot ? { popToRoot: true } : {}),
+      });
     }
     return translateUiViewToNavigationAction(mappedView);
   };
@@ -567,16 +736,22 @@ export function createUiProcessManagerWiring(
     ? {
         processDocument: async (payload, eventName) => {
           const space = toStructuredDocumentSpace(payload.space);
+          const mappedSourceFiles = toDocumentSourceFiles(payload.sourceFiles);
           const documentPayload: DocumentModel = {
             type: payload.type,
             data: payload.data,
             ...(space ? { space } : {}),
+            ...(mappedSourceFiles !== undefined ? { sourceFiles: mappedSourceFiles } : {}),
           };
 
-          return options.documentService!.processDocument(
+          const result = await options.documentService!.processDocument(
             documentPayload,
             eventName
           );
+          return mapProcessDocumentResultToExecutionResult(result, {
+            spaceName: space?.name ?? '',
+            documentData: payload.data,
+          });
         },
       }
     : undefined;
@@ -647,10 +822,12 @@ export function createUiProcessManagerWiring(
             processDocument: async (payload, eventName) => {
               const { sourceFiles, targetMessageId, selectedLogId, ...documentPayload } = payload;
               const space = toStructuredDocumentSpace(documentPayload.space);
+              const mappedSourceFiles = toDocumentSourceFiles(sourceFiles);
               const targetDocPayload: DocumentModel = {
                 type: documentPayload.type,
                 data: documentPayload.data,
                 ...(space ? { space } : {}),
+                ...(mappedSourceFiles !== undefined ? { sourceFiles: mappedSourceFiles } : {}),
               };
 
               const activeSourceFiles = sourceFiles ?? [];
@@ -681,10 +858,14 @@ export function createUiProcessManagerWiring(
                 throw new Error('DocumentService not provided');
               }
 
-              return docService.processDocument(
+              const result = await docService.processDocument(
                 targetDocPayload,
                 eventName
               );
+              return mapProcessDocumentResultToExecutionResult(result, {
+                spaceName: space?.name ?? '',
+                documentData: documentPayload.data,
+              });
             },
           }
         : undefined;

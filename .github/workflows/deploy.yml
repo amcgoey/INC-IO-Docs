@@ -119,6 +119,9 @@ jobs:
           config-map: |
             image:
               value: ${{ env.IMAGE_SHA_TAG }}
+            submittalCoverSheetTemplateId:
+              value: ${{ secrets.SUBMITTAL_COVER_SHEET_TEMPLATE_ID }}
+              secret: true
         env:
           PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE || '' }}
 

@@ -2,10 +2,12 @@ import { Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import {
   DocumentTypeSchema,
+  DocumentUiSuccessViewSchema,
   validateManifestTemplates,
   UiEventType,
   type DocumentType,
   type DocumentUiEvents,
+  type DocumentUiSuccessView,
 } from '../domain';
 import {
   type DocumentSchemaRegistryPort,
@@ -19,6 +21,7 @@ const DocumentUiValidationSchema = Type.Object({
   fields: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   events: Type.Optional(Type.Record(Type.String(), UiEventType)),
   evaluationOrder: Type.Optional(Type.Array(Type.String())),
+  successView: Type.Optional(DocumentUiSuccessViewSchema),
 });
 
 const RawDocumentKeySchema = Type.Object({
@@ -54,6 +57,8 @@ export function stripOptionAliases(documentType: DocumentType): DocumentType {
 }
 
 export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort {
+  private cachedLoadPromise: Promise<DocumentType[]> | undefined;
+
   constructor(
     private readonly manifestProvider: RawManifestProviderPort,
     private readonly templateEvaluator: TemplateEvaluatorPort,
@@ -61,9 +66,29 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
   ) {}
 
   async loadAll(): Promise<DocumentType[]> {
+    if (!this.cachedLoadPromise) {
+      this.cachedLoadPromise = this.loadAndValidateAll().catch((error) => {
+        this.cachedLoadPromise = undefined;
+        throw error;
+      });
+    }
+    return [...(await this.cachedLoadPromise)];
+  }
+
+  private async loadAndValidateAll(): Promise<DocumentType[]> {
     const rawManifest = (await this.manifestProvider.getRawManifest()) as {
       documentTypes?: string[];
+      configuration?: {
+        templates?: Record<string, unknown>;
+      };
     };
+    const configuredTemplateKeys = new Set(
+      rawManifest?.configuration?.templates &&
+      typeof rawManifest.configuration.templates === 'object' &&
+      !Array.isArray(rawManifest.configuration.templates)
+        ? Object.keys(rawManifest.configuration.templates)
+        : []
+    );
     const documentTypes: DocumentType[] = [];
 
     for (const relPath of rawManifest?.documentTypes ?? []) {
@@ -102,7 +127,8 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
 
       const templateErrors = validateManifestTemplates(
         validatedDocumentType,
-        this.templateEvaluator
+        this.templateEvaluator,
+        { configuredTemplateKeys }
       );
       if (templateErrors.length > 0) {
         throw new Error(
@@ -116,6 +142,7 @@ export class DocumentSchemaRegistryAdapter implements DocumentSchemaRegistryPort
             fields?: Record<string, unknown>;
             events?: Record<string, unknown>;
             evaluationOrder?: string[];
+            successView?: DocumentUiSuccessView;
           }
         | undefined = undefined;
       const rawUiSchema = (rawDocumentType as { documentUiSchema?: unknown })?.documentUiSchema;

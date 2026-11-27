@@ -116,6 +116,7 @@ export class DriveSourceContextAdapter implements DriveSourceContextPort {
         id: itemMetadata.id,
         name: itemMetadata.name,
         ...(itemMetadata.mimeType !== undefined ? { mimeType: itemMetadata.mimeType } : {}),
+        ...(itemMetadata.size !== undefined ? { size: itemMetadata.size } : {}),
         ...(itemMetadata.createdTime !== undefined ? { createdTime: itemMetadata.createdTime } : {}),
         ...(itemMetadata.modifiedTime !== undefined ? { modifiedTime: itemMetadata.modifiedTime } : {}),
       },

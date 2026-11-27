@@ -118,6 +118,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     };
 
     const expectedActivity: Activity = {
+      id: 'moveFiles',
       type: 'MOVE_FILE',
       payload: expectedPayload,
     };
@@ -193,6 +194,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     };
 
     const expectedActivity: Activity = {
+      id: 'moveFiles',
       type: 'MOVE_FILE',
       payload: expectedPayload,
     };
@@ -273,6 +275,7 @@ describe('Workflow & Activity End-to-End Hexagonal Integration (Production Schem
     };
 
     const expectedActivity: Activity = {
+      id: 'moveFiles',
       type: 'MOVE_FILE',
       payload: expectedPayload,
     };

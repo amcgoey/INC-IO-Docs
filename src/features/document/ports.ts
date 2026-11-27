@@ -13,11 +13,28 @@ import {
   OptionSourceSchema,
   DocumentLogOptionSourceSchema,
   GoogleDriveOptionSourceSchema,
+  CalculatedFieldTransformSchema,
+  CalculatedFieldLookupSchema,
+  DocumentFormFieldFormatSchema,
+  DocumentFormFieldBindingSchema,
+  DocumentFormSchemaSchema,
+  DocumentUiSuccessSummarySchema,
+  DocumentUiSuccessArtifactSchema,
+  DocumentUiSuccessViewSchema,
+  isFolderOnlyPlaceholderFileLocator,
+  findPrimaryFiledFile,
+  type DocumentFormFieldFormat,
+  type DocumentFormFieldBinding,
+  type DocumentFormSchema,
+  type DocumentUiSuccessSummary,
+  type DocumentUiSuccessArtifact,
+  type DocumentUiSuccessView,
   type Activity,
   type ActivityExecutionContext,
   type ActivityOutput,
   type FileLocator,
   type SourceFile,
+  type ProcessStepResult,
   type ProcessDocumentResult,
   type DocumentType,
   type UiEvent,
@@ -48,6 +65,20 @@ export {
   type DocumentLogOptionSource,
   GoogleDriveOptionSourceSchema,
   type GoogleDriveOptionSource,
+  DocumentFormFieldFormatSchema,
+  type DocumentFormFieldFormat,
+  DocumentFormFieldBindingSchema,
+  type DocumentFormFieldBinding,
+  DocumentFormSchemaSchema,
+  type DocumentFormSchema,
+  DocumentUiSuccessSummarySchema,
+  type DocumentUiSuccessSummary,
+  DocumentUiSuccessArtifactSchema,
+  type DocumentUiSuccessArtifact,
+  DocumentUiSuccessViewSchema,
+  type DocumentUiSuccessView,
+  isFolderOnlyPlaceholderFileLocator,
+  findPrimaryFiledFile,
 };
 
 export type SchemaOrKeys =
@@ -95,6 +126,13 @@ export const FormDocumentCalculatedFieldType = Type.Object({
   name: Type.Optional(Type.String()),
   template: Type.String(),
   description: Type.Optional(Type.String()),
+  transforms: Type.Optional(
+    Type.Union([Type.Array(CalculatedFieldTransformSchema, { minItems: 1 }), Type.Undefined()])
+  ),
+  lookup: Type.Optional(
+    Type.Union([CalculatedFieldLookupSchema, Type.Undefined()])
+  ),
+  required: Type.Optional(Type.Union([Type.Boolean(), Type.Undefined()])),
 }, { additionalProperties: true });
 
 export type FormDocumentCalculatedField = Static<typeof FormDocumentCalculatedFieldType>;
@@ -117,6 +155,7 @@ export const FormSchemaType = Type.Object({
   documentSchema: FormDocumentSchemaType,
   documentUiSchema: Type.Optional(DocumentUiEventsSchema),
   allowEmptySourceFiles: Type.Optional(Type.Boolean()),
+  maxSourceFiles: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export type FormSchema = Static<typeof FormSchemaType>;
@@ -125,6 +164,7 @@ export type {
   ActivityExecutionContext,
   FileLocator,
   ActivityOutput,
+  ProcessStepResult,
   ProcessDocumentResult,
   DocumentType,
   Document,
@@ -225,6 +265,46 @@ export interface DocumentDynamicValidationPort {
   ): Promise<Record<string, DynamicValidationResult>>;
 }
 
+export const DocumentOptionTableStatusSchema = Type.Union([
+  Type.Literal('ready'),
+  Type.Literal('empty'),
+  Type.Literal('missing_space'),
+  Type.Literal('path_not_found'),
+  Type.Literal('ambiguous_path'),
+  Type.Literal('missing_log'),
+  Type.Literal('ambiguous_log'),
+  Type.Literal('config_error'),
+  Type.Literal('timeout'),
+  Type.Literal('error'),
+]);
+
+export type DocumentOptionTableStatus = Static<typeof DocumentOptionTableStatusSchema>;
+
+export const DocumentOptionTableResolutionSchema = Type.Object({
+  status: DocumentOptionTableStatusSchema,
+  tuples: Type.Array(Type.Record(Type.String(), Type.Unknown())),
+  targetPath: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  errorMessage: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type DocumentOptionTableResolution = Static<typeof DocumentOptionTableResolutionSchema>;
+
+export const DocumentOptionTableContextSchema = Type.Object({
+  spaceId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+  space: Type.Optional(Type.Union([DynamicValidationSpaceSchema, Type.Undefined()])),
+  documentTypeKey: Type.String({ minLength: 1 }),
+  selectedLogId: Type.Optional(Type.Union([Type.String(), Type.Undefined()])),
+});
+
+export type DocumentOptionTableContext = Static<typeof DocumentOptionTableContextSchema>;
+
+export interface DocumentOptionTablePort {
+  resolveOptionTables(
+    sourceKeys: readonly string[],
+    context: DocumentOptionTableContext
+  ): Promise<Record<string, DocumentOptionTableResolution>>;
+}
+
 
 export interface DocumentSchemaRegistryPort {
   loadAll(): Promise<DocumentType[]>;
@@ -242,9 +322,20 @@ export interface RawManifestProviderPort {
 
 export type TemplateEvaluationContext = { [key: string]: unknown };
 
+export interface MustacheTemplateToken {
+  original: string;
+  parts: string[];
+}
+
+export interface ParsedMustacheTemplate {
+  tokens: MustacheTemplateToken[];
+  literals: string[];
+}
+
 export interface TemplateEvaluatorPort {
   validate(template: string, allowedVariables: string[]): boolean;
   evaluate(template: string, context: TemplateEvaluationContext): string;
+  parseMustacheTemplate?(template: string): ParsedMustacheTemplate;
 }
 
 export class DriveServiceError extends Error {
@@ -275,6 +366,115 @@ export class FileNotFoundError extends DriveServiceError {
   }
 }
 
+export class DriveFileTooLargeError extends DriveServiceError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DriveFileTooLargeError';
+  }
+}
+
+export class DocumentContentError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'DocumentContentError';
+  }
+}
+
+export class UnsupportedDocumentMimeTypeError extends DocumentContentError {
+  readonly mimeType: string | undefined;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { mimeType?: string | undefined }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'UnsupportedDocumentMimeTypeError';
+    this.mimeType = options?.mimeType;
+  }
+}
+
+export class DocumentTemplateError extends DocumentContentError {
+  readonly templateKey: string | undefined;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { templateKey?: string | undefined }
+  ) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'DocumentTemplateError';
+    this.templateKey = options?.templateKey;
+  }
+}
+
+export interface ResolvedDocumentTemplate {
+  templateKey: string;
+  fileId: string;
+  envVarName?: string | undefined;
+}
+
+export interface TemplateRegistryPort {
+  resolveTemplate(templateKey: string): Promise<ResolvedDocumentTemplate>;
+  redactSecrets?(message: string): string;
+}
+
+export type DocumentFormFieldInputValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | undefined
+  | null;
+
+export interface DocumentContentInsertDataRequest {
+  targetFileId: string;
+  targetMimeType?: string | undefined;
+  targetFileName?: string | undefined;
+  formData: Record<string, DocumentFormFieldInputValue>;
+}
+
+export type DocumentContentInsertPosition = 'start' | 'end' | number;
+
+export type DocumentContentUnmodifiableTargetReason =
+  | 'non_pdf'
+  | 'encrypted'
+  | 'pure_xfa'
+  | 'signed'
+  | 'oversized';
+
+export type DocumentContentUnmodifiableTargetStrategy =
+  | { strategy: 'error' }
+  | {
+      strategy: 'createSiblingPdf';
+      fileName: string;
+      targetFolderId?: string | undefined;
+    };
+
+export interface DocumentContentInsertPagesRequest {
+  targetFileId: string;
+  targetMimeType?: string | undefined;
+  targetFileName?: string | undefined;
+  targetFolderId?: string | undefined;
+  sourceFileId: string;
+  sourceMimeType?: string | undefined;
+  sourceIsTemplate?: boolean | undefined;
+  position?: DocumentContentInsertPosition | undefined;
+  sourcePages?: number[] | undefined;
+  formData?: Record<string, DocumentFormFieldInputValue> | undefined;
+  onUnmodifiableTarget?: DocumentContentUnmodifiableTargetStrategy | undefined;
+}
+
+export interface DocumentContentEditResult {
+  file: FileLocator;
+  skipped?: boolean | undefined;
+  fallbackUsed?: boolean | undefined;
+  unmodifiableReason?: DocumentContentUnmodifiableTargetReason | undefined;
+}
+
+export interface DocumentContentEditorPort {
+  insertData(request: DocumentContentInsertDataRequest): Promise<DocumentContentEditResult>;
+  insertPages(request: DocumentContentInsertPagesRequest): Promise<DocumentContentEditResult>;
+}
+
 export interface DriveSearchQuery {
   targetName: string;
   exactMatch?: boolean | undefined;
@@ -283,13 +483,20 @@ export interface DriveSearchQuery {
   expectedParentPathNames?: string[] | undefined;
 }
 
+export interface DriveShortcutDetails {
+  targetId?: string | undefined;
+  targetMimeType?: string | undefined;
+}
+
 export interface DriveFileResult {
   id: string;
   name: string;
   parents?: string[] | undefined;
   mimeType?: string | undefined;
+  size?: number | undefined;
   webViewLink?: string | undefined;
   modifiedTime?: string | undefined;
+  shortcutDetails?: DriveShortcutDetails | undefined;
 }
 
 export type DriveFile = DriveFileResult;
@@ -303,11 +510,18 @@ export interface DriveConfiguration {
 
 export interface AppConfigurationProviderPort {
   getDriveConfig(): Promise<DriveConfiguration | undefined>;
+  getMaxInMemoryFileBytes?(): Promise<number | undefined>;
+  getTemplatesConfig?(): Promise<Record<string, string> | undefined>;
 }
 
 export interface DriveDuplicateOptions {
   newName?: string | undefined;
   targetFolderId?: string | undefined;
+}
+
+/** Options for atomic Drive move and optional rename operations. */
+export interface DriveMoveOptions {
+  newName?: string | undefined;
 }
 
 export interface DriveContentCreateOptions {
@@ -329,7 +543,11 @@ export interface DriveServicePort {
   getFile(fileId: string): Promise<DriveFileResult>;
   findOrCreateFolder(parentId: string, folderName: string): Promise<DriveFileResult>;
   resolveFolderPath(rootFolderId: string, pathSegments: string[]): Promise<DriveFileResult>;
-  move(fileId: string, targetFolderId: string): Promise<DriveFileResult>;
+  move(
+    fileId: string,
+    targetFolderId: string,
+    moveOptions?: DriveMoveOptions
+  ): Promise<DriveFileResult>;
   rename(fileId: string, newName: string): Promise<DriveFileResult>;
   duplicate(
     fileId: string,

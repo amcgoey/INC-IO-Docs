@@ -1,11 +1,13 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { Readable } from 'node:stream';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppOptions } from '../src/app/server';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import {
   createDocumentDynamicValidationAdapter,
+  createDocumentOptionTableAdapter,
   createLookupOptionsService,
 } from '../src/app/lookup-options.wiring';
 import {
@@ -17,6 +19,13 @@ import { ActivityEngine } from '../src/features/document/adapters/activity-engin
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
 import { DocumentSchemaRegistryAdapter } from '../src/features/document/adapters/document-schema-registry';
 import { DriveActivityHandler } from '../src/features/document/adapters/drive-activity-handler';
+import { DocumentContentEditorAdapter } from '../src/features/document/adapters/document-content-editor.adapter';
+import { DocumentContentActivityHandler } from '../src/features/document/adapters/document-content-activity-handler';
+import { EnvTemplateRegistryAdapter } from '../src/features/document/adapters/env-template-registry.adapter';
+import { PdfProcessor } from '../src/infrastructure/pdf/pdf-processor';
+import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
+
+const sampleCoverPdfBytesPromise = createAnonymizedSubmittalCoverSheetPdf();
 import {
   DocumentService,
   type Activity,
@@ -26,6 +35,7 @@ import {
 import type {
   ActivityHandler,
   ActivityOutput,
+  DocumentOptionTablePort,
   DocumentSchemaRegistryPort,
 } from '../src/features/document/ports';
 import {
@@ -108,9 +118,12 @@ interface MockDriveState {
 }
 
 function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClientOptions['drive']> {
+  const dynamicFolders = new Map<string, { id: string; name: string; parents: string[]; mimeType: string }>();
+  let nextFolderId = 1;
+
   const list = vi.fn().mockImplementation(async (params: { q?: string }) => {
     const q = params.q ?? '';
-    // Folder resolution for MOVE_FILE ("6 Construction" -> "Submittals")
+    // Folder resolution for MOVE_FILE ("6 Construction" -> "Submittals/Closed/..." or "3 FFE" -> "05 Submittals/Closed/...")
     if (q.includes("mimeType = 'application/vnd.google-apps.folder'")) {
       if (q.includes("name = '6 Construction'")) {
         return {
@@ -168,6 +181,16 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
           },
         };
       }
+
+      const parentMatch = /'([^']+)' in parents/.exec(q);
+      const nameMatch = /name = '((?:\\'|[^'])*)'/.exec(q);
+      if (parentMatch && nameMatch) {
+        const key = `${parentMatch[1]}/${nameMatch[1].replace(/\\'/g, "'")}`;
+        const existing = dynamicFolders.get(key);
+        if (existing) {
+          return { data: { files: [existing] } };
+        }
+      }
       return { data: { files: [] } };
     }
 
@@ -183,28 +206,66 @@ function createMockDriveSdk(state: MockDriveState): NonNullable<GoogleDriveClien
     return { data: { files: [] } };
   });
 
-  const get = vi.fn().mockImplementation(async ({ fileId }: { fileId: string }) => ({
+  const create = vi.fn().mockImplementation(async (params: { requestBody?: { name?: string; parents?: string[]; mimeType?: string } }) => {
+    const name = params.requestBody?.name ?? 'Untitled';
+    const parents = params.requestBody?.parents ?? ['root'];
+    const mimeType = params.requestBody?.mimeType ?? 'application/vnd.google-apps.folder';
+    const key = `${parents[0]}/${name}`;
+    const existing = dynamicFolders.get(key);
+    if (existing) {
+      return { data: existing };
+    }
+    const created = {
+      id: `folder-dyn-${nextFolderId++}`,
+      name,
+      parents,
+      mimeType,
+    };
+    dynamicFolders.set(key, created);
+    return { data: created };
+  });
+
+  const get = vi.fn().mockImplementation(async ({ fileId, alt }: { fileId: string; alt?: string }) => {
+    const pdfBytes = await sampleCoverPdfBytesPromise;
+    if (alt === 'media') {
+      return {
+        data: Readable.from([Buffer.from(pdfBytes)]),
+      };
+    }
+    return {
+      data: {
+        id: fileId,
+        name: '071200-001-0 Fluid-Applied Waterproofing Membrane.pdf',
+        parents: ['inbox-folder'],
+        mimeType: 'application/pdf',
+        size: String(pdfBytes.byteLength),
+        webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+      },
+    };
+  });
+
+  const update = vi.fn().mockImplementation(async ({ fileId, requestBody, addParents }: { fileId: string; requestBody?: { name?: string }; addParents?: string }) => ({
     data: {
       id: fileId,
-      name: '071200-001-0 Fluid-Applied Waterproofing Membrane.pdf',
-      parents: ['inbox-folder'],
+      name: requestBody?.name ?? '071200-001-0 Fluid-Applied Waterproofing Membrane - 260204 MB.pdf',
+      parents: [addParents ?? 'folder-submittals'],
       mimeType: 'application/pdf',
       webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
     },
   }));
 
-  const update = vi.fn().mockImplementation(async ({ fileId }: { fileId: string }) => ({
+  const copy = vi.fn().mockImplementation(async ({ fileId, requestBody }: { fileId: string; requestBody?: { name?: string; parents?: string[] } }) => ({
     data: {
-      id: fileId,
-      name: '071200-001-0 Fluid-Applied Waterproofing Membrane - 260204 MB.pdf',
-      parents: ['folder-submittals'],
+      id: `${fileId}-copy`,
+      name: requestBody?.name ?? 'Copy.pdf',
+      parents: requestBody?.parents ?? ['folder-submittals'],
       mimeType: 'application/pdf',
-      webViewLink: `https://drive.google.com/file/d/${fileId}/view`,
+      webViewLink: `https://drive.google.com/file/d/${fileId}-copy/view`,
     },
   }));
 
   return {
-    files: { list, get, update },
+    files: { list, get, update, create, copy },
   } as unknown as NonNullable<GoogleDriveClientOptions['drive']>;
 }
 
@@ -455,6 +516,34 @@ const CONFIG_ARCH_CONTACTS: SimCellValue[][] = [
   ['---', '', ''],
 ];
 
+const CONFIG_ARCH_CSI_DIVISIONS: SimCellValue[][] = [
+  ['Division Number', 'Division Folder'],
+  ['01', '01 General Requirements'],
+  ['03', '03 Concrete'],
+  ['07', '07 Thermal and Moisture Protection'],
+  ['08', '08 Openings'],
+  ['09', '09 Finishes'],
+  ['90', '90 Commissioning'],
+  ['---', ''],
+];
+
+function createStaticCsiDivisionsOptionTablePort(): DocumentOptionTablePort {
+  return {
+    resolveOptionTables: async () => ({
+      csiDivisions: {
+        status: 'ready',
+        tuples: [
+          { key: '01', folder: '01 General Requirements' },
+          { key: '03', folder: '03 Concrete' },
+          { key: '07', folder: '07 Thermal and Moisture Protection' },
+          { key: '08', folder: '08 Openings' },
+          { key: '09', folder: '09 Finishes' },
+        ],
+      },
+    }),
+  };
+}
+
 const CONFIG_FFE_CONTACTS: SimCellValue[][] = [
   ['Contact', 'Name', 'Contact Type'],
   ['INC', 'INC Architecture & Design', 'INC'],
@@ -603,6 +692,17 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
           },
         },
         {
+          namedRangeId: 'nr-arch-csi-divisions',
+          name: 'Options_Submittal_Arch_CSI_Divisions',
+          range: {
+            sheetId: 103,
+            startRowIndex: 0,
+            endRowIndex: CONFIG_ARCH_CSI_DIVISIONS.length,
+            startColumnIndex: 11,
+            endColumnIndex: 13,
+          },
+        },
+        {
           namedRangeId: 'nr-ffe-statuses',
           name: 'Options_Submittal_FFE_Statuses',
           range: {
@@ -732,6 +832,9 @@ function createMockSheetsSdk(state: MockSheetsState): NonNullable<GoogleSheetsCl
       if (bounds.startColumnIndex === 7) {
         return CONFIG_ARCH_CONTACTS;
       }
+      if (bounds.startColumnIndex === 11) {
+        return CONFIG_ARCH_CSI_DIVISIONS;
+      }
       return [];
     }
     if (range.includes('_Config Submittal FF&E')) {
@@ -853,11 +956,13 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
   let handlebars: HandlebarsAdapter;
 
   beforeEach(() => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
     manifestProvider = new AppManifestProvider({ manifestPath });
     handlebars = new HandlebarsAdapter();
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -868,6 +973,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     sourceFiles?: Array<{ id: string; name?: string }>;
     selectedLogId?: string;
     manifestProviderOverride?: RawManifestProviderPort;
+    optionTablePortOverride?: DocumentOptionTablePort;
   }) {
     const driveSdk = createMockDriveSdk(params.driveState);
     const sheetsSdk = createMockSheetsSdk(params.sheetsState);
@@ -900,25 +1006,42 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     });
     await logWiring.logSchemaRegistry.initialize();
 
-    const driveActivityHandler = new DriveActivityHandler(
-      {
-        getFile: (id) => driveClient.getFile(id),
-        findOrCreateFolder: (p, n) => driveClient.findOrCreateFolder(p, n),
-        resolveFolderPath: (r, s) => driveClient.resolveFolderPath(r, s),
-        move: (f, t) => driveClient.move(f, t),
-        rename: (f, n) => driveClient.rename(f, n),
-        duplicate: (f, o) => driveClient.duplicate(f, o),
-        searchFiles: (q) => driveClient.searchFiles(q),
-        downloadAsBuffer: (f) => driveClient.downloadAsBuffer(f),
-        saveBuffer: (c, o) => driveClient.saveBuffer(c, o),
-        uploadStream: (s, o) => driveClient.uploadStream(s, o),
-      },
-      {
-        configProvider: manifestProvider,
-        ...(params.primaryTargetId !== undefined ? { primaryTargetId: params.primaryTargetId } : {}),
-        ...(params.sourceFiles !== undefined ? { sourceFiles: params.sourceFiles } : {}),
-      }
-    );
+    const driveServiceObj = {
+      getFile: (id: string) => driveClient.getFile(id),
+      findOrCreateFolder: (p: string, n: string) => driveClient.findOrCreateFolder(p, n),
+      resolveFolderPath: (r: string, s: string[]) => driveClient.resolveFolderPath(r, s),
+      move: (f: string, t: string, o?: { newName?: string }) => driveClient.move(f, t, o),
+      rename: (f: string, n: string) => driveClient.rename(f, n),
+      duplicate: (f: string, o?: { newName?: string; targetFolderId?: string }) =>
+        driveClient.duplicate(f, o),
+      searchFiles: (q: Parameters<typeof driveClient.searchFiles>[0]) => driveClient.searchFiles(q),
+      downloadAsBuffer: (f: string) => driveClient.downloadAsBuffer(f),
+      saveBuffer: (c: Uint8Array, o: Parameters<typeof driveClient.saveBuffer>[1]) =>
+        driveClient.saveBuffer(c, o),
+      uploadStream: (
+        s: ReadableStream<Uint8Array>,
+        o: Parameters<typeof driveClient.uploadStream>[1]
+      ) => driveClient.uploadStream(s, o),
+    };
+
+    const driveActivityHandler = new DriveActivityHandler(driveServiceObj, {
+      configProvider: manifestProvider,
+      ...(params.primaryTargetId !== undefined ? { primaryTargetId: params.primaryTargetId } : {}),
+      ...(params.sourceFiles !== undefined ? { sourceFiles: params.sourceFiles } : {}),
+    });
+
+    const templateRegistry = new EnvTemplateRegistryAdapter({
+      getTemplatesConfig: () => manifestProvider.getTemplatesConfig(),
+    });
+    const contentHandler = new DocumentContentActivityHandler({
+      contentEditor: new DocumentContentEditorAdapter({
+        driveService: driveServiceObj,
+        pdfProcessor: new PdfProcessor(),
+      }),
+      documentSchemaRegistry: docSchemaRegistry,
+      templateEvaluator: handlebars,
+      templateRegistry,
+    });
 
     const logHandler = logWiring.createActivityHandler({
       ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
@@ -932,7 +1055,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       documentLogService: logWiring.documentLogService,
       ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
     });
-    const activityEngine = new ActivityEngine([driveActivityHandler, logHandler]);
+    const activityEngine = new ActivityEngine([
+      driveActivityHandler,
+      contentHandler,
+      logHandler,
+    ]);
     const documentService = new DocumentService(
       activityEngine,
       docSchemaRegistry,
@@ -940,7 +1067,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       compiledRegistry,
       createDocumentDynamicValidationAdapter(lookupOptions),
       undefined,
-      params.selectedLogId
+      params.selectedLogId,
+      undefined,
+      undefined,
+      params.optionTablePortOverride ?? createDocumentOptionTableAdapter(lookupOptions),
+      templateRegistry
     );
     await documentService.initialize();
 
@@ -1007,13 +1138,20 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+    expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
     expect(result.contextVariables).toEqual({
       documentLogWrite: {
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal Arch',
+        sheetId: 101,
         rowNumber: 6,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=6:6',
       },
     });
 
@@ -1096,8 +1234,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 8,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=8:8',
     });
 
     const batchReqs = sheetsState.batchUpdates[0].requests;
@@ -1165,10 +1305,16 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       const archDef = JSON.parse(archRaw) as DocumentType;
       return {
         ...archDef,
+        documentUiSchema: {
+          ...archDef.documentUiSchema,
+          events: {
+            onSubmit: { catchAllWorkflow: 'SubmittalSent' },
+          },
+        },
         documentWorkflowConfig: {
           workflows: [
             {
-              name: 'FileSubmittalArch',
+              name: 'SubmittalSent',
               activitySequence: [
                 { id: 'createSubmittal', type: 'CREATE_SUBMITTAL', payload: {} },
                 { id: 'archiveCopy', type: 'ARCHIVE_COPY', payload: {} },
@@ -1219,7 +1365,18 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         archiveHandler,
         logWiring.createActivityHandler(),
       ]);
-      const service = new DocumentService(engine, customRegistry, handlebars, compiled);
+      const service = new DocumentService(
+        engine,
+        customRegistry,
+        handlebars,
+        compiled,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createStaticCsiDivisionsOptionTablePort()
+      );
       await service.initialize();
 
       return service.processDocument(
@@ -1255,6 +1412,134 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(failResult.errors[0]).toContain('neverExecutedStep');
     }
     expect(sheetsState.batchUpdates).toHaveLength(callsBeforeFail);
+  });
+
+  it('keeps WRITE_LOG ActivityOutput.files unset so downstream ActivityExecutionContext.files stay intact', async () => {
+    const sheetsState: MockSheetsState = {
+      tableValues: [
+        sampleFixture.submittalArch.headers,
+        [],
+        ['<--->'],
+        [],
+        ['<--->'],
+      ],
+      batchUpdates: [],
+    };
+    const driveSdk = createMockDriveSdk({
+      searchResults: [
+        {
+          id: 'harborview-log-1',
+          name: sampleFixture.space.expectedLogFileName,
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ],
+    });
+    const sheetsSdk = createMockSheetsSdk(sheetsState);
+    const logWiring = createDocumentLogWiring({
+      manifestProvider,
+      driveClient: new GoogleDriveClient({ drive: driveSdk }),
+      sheetsClient: new GoogleSheetsClient({ sheets: sheetsSdk }),
+      templateEvaluator: handlebars,
+    });
+    await logWiring.logSchemaRegistry.initialize();
+
+    const archRaw = fs.readFileSync(
+      path.resolve(__dirname, '../assets/document-types/submittal-arch.json'),
+      'utf-8'
+    );
+    const archDef = JSON.parse(archRaw) as DocumentType;
+    const isolationDocType: DocumentType = {
+      ...archDef,
+      documentUiSchema: {
+        ...archDef.documentUiSchema,
+        events: {
+          onSubmit: { catchAllWorkflow: 'SubmittalSent' },
+        },
+      },
+      documentWorkflowConfig: {
+        workflows: [
+          {
+            name: 'SubmittalSent',
+            activitySequence: [
+              { id: 'moveStep', type: 'MOVE_FILE', payload: {} },
+              { id: 'writeLog', type: 'WRITE_LOG', payload: {} },
+              { id: 'downstreamStep', type: 'NOTIFY_DOWNSTREAM', payload: {} },
+            ],
+          },
+        ],
+      },
+    };
+
+    const customRegistry: DocumentSchemaRegistryPort = {
+      loadAll: vi.fn().mockResolvedValue([isolationDocType]),
+    };
+    const compiled = new CompiledSchemaRegistry(customRegistry);
+    await compiled.initialize();
+
+    const upstreamFiles = [
+      {
+        id: 'upstream-file-1',
+        name: 'Submittal.pdf',
+        parentId: 'dest-folder-1',
+        parentName: 'Submittals',
+        uri: 'https://drive.google.com/file/d/upstream-file-1/view',
+      },
+    ];
+    let seenByDownstreamFiles: unknown;
+
+    const moveHandler: ActivityHandler = {
+      canHandle: (a) => a.type === 'MOVE_FILE',
+      handle: () => ({
+        success: true,
+        files: upstreamFiles,
+      }),
+    };
+    const downstreamHandler: ActivityHandler = {
+      canHandle: (a) => a.type === 'NOTIFY_DOWNSTREAM',
+      handle: (_activity, context) => {
+        seenByDownstreamFiles = context?.files;
+        return { success: true };
+      },
+    };
+
+    const engine = new ActivityEngine([
+      moveHandler,
+      logWiring.createActivityHandler(),
+      downstreamHandler,
+    ]);
+    const service = new DocumentService(
+      engine,
+      customRegistry,
+      handlebars,
+      compiled,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      createStaticCsiDivisionsOptionTablePort()
+    );
+    await service.initialize();
+
+    const result = await service.processDocument(
+      {
+        type: 'submittal-arch',
+        space: {
+          id: sampleFixture.space.id,
+          typeId: sampleFixture.space.typeId,
+          name: sampleFixture.space.name,
+          abstractStorageId: sampleFixture.space.abstractStorageId,
+        },
+        data: sampleFixture.submittalArch.seedEntries[0].documentData,
+      },
+      'onSubmit'
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.stepOutputs?.writeLog?.files).toBeUndefined();
+    expect(seenByDownstreamFiles).toEqual(upstreamFiles);
+    expect(result.files).toEqual(upstreamFiles);
   });
 
   it('writes user text starting with =, +, -, @ strictly as literal stringValue (never formulaValue)', async () => {
@@ -1356,6 +1641,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       compiledSchemaRegistry: compiledRegistry,
       configProvider: manifestProvider,
       driveClient,
+      optionTablePort: createStaticCsiDivisionsOptionTablePort(),
       createAdditionalActivityHandlers: (context) => [
         logWiring.createPerRequestActivityHandler(context),
       ],
@@ -1363,7 +1649,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
     const service = await factory({
       selectedLogId: 'explicit-selected-log-777',
-      sourceFiles: [],
+      sourceFiles: [{ id: 'selected-log-file-1', name: 'Submittal.pdf' }],
     });
 
     const result = await service.processDocument(
@@ -1385,8 +1671,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'explicit-selected-log-777',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/explicit-selected-log-777/edit#gid=101&range=6:6',
     });
     // Zero Drive searchSpreadsheets calls when selectedLogId is provided
     expect(driveSdk.files.list).not.toHaveBeenCalledWith(
@@ -1407,7 +1695,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     const missingCtx = await buildWiredDocumentService({
       driveState: emptyDriveState,
       sheetsState: emptySheetsState,
-      sourceFiles: [],
+      primaryTargetId: 'missing-log-file-1',
+      optionTablePortOverride: createStaticCsiDivisionsOptionTablePort(),
     });
 
     const missingResult = await missingCtx.documentService.processDocument(
@@ -1440,7 +1729,7 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     const ambiguousCtx = await buildWiredDocumentService({
       driveState: ambiguousDriveState,
       sheetsState: { tableValues: [], batchUpdates: [] },
-      sourceFiles: [],
+      primaryTargetId: 'ambig-log-file-1',
     });
 
     const ambiguousResult = await ambiguousCtx.documentService.processDocument(
@@ -1516,6 +1805,16 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
             tuples: [
               { key: 'INC', name: 'INC Architecture and Design' },
               { key: 'MB', name: 'Meridian Builders' },
+            ],
+          },
+          csiDivisions: {
+            status: 'ready',
+            tuples: [
+              { key: '01', folder: '01 General Requirements' },
+              { key: '03', folder: '03 Concrete' },
+              { key: '07', folder: '07 Thermal and Moisture Protection' },
+              { key: '08', folder: '08 Openings' },
+              { key: '09', folder: '09 Finishes' },
             ],
           },
         },
@@ -1606,15 +1905,36 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       id: 'submittals-id',
       name: 'Submittals',
     });
-    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
-      id: 'moved-doc-1',
+    vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockImplementation(async (fileId: string) => ({
+      id: fileId,
       name: 'Waterproofing.pdf',
+      mimeType: 'application/pdf',
+      size: (await sampleCoverPdfBytesPromise).byteLength,
       parents: ['inbox-id'],
-    });
+    }));
+    vi.spyOn(GoogleDriveClient.prototype, 'downloadAsBuffer').mockImplementation(
+      async () => await sampleCoverPdfBytesPromise
+    );
+    vi.spyOn(GoogleDriveClient.prototype, 'saveBuffer').mockImplementation(
+      async (_content: Uint8Array, opts: { action: string; fileId?: string }) => ({
+        id: opts.action === 'update' ? opts.fileId! : 'saved-pdf-1',
+        name: '_Moved.pdf',
+        parents: ['submittals-id'],
+        mimeType: 'application/pdf',
+        webViewLink: `https://drive.google.com/file/d/${opts.action === 'update' ? opts.fileId : 'saved-pdf-1'}/view`,
+      })
+    );
     vi.spyOn(GoogleDriveClient.prototype, 'move').mockResolvedValue({
       id: 'moved-doc-1',
       name: 'Moved.pdf',
       webViewLink: 'https://drive.google.com/file/d/moved-doc-1/view',
+    });
+    vi.spyOn(GoogleDriveClient.prototype, 'duplicate').mockResolvedValue({
+      id: 'moved-doc-1-copy',
+      name: '_Moved.pdf',
+      parents: ['submittals-id'],
+      mimeType: 'application/pdf',
+      webViewLink: 'https://drive.google.com/file/d/moved-doc-1-copy/view',
     });
     vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
       {
@@ -1662,10 +1982,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       },
     });
     expect(overrideWsRes.statusCode).toBe(200);
+    const overrideWsBody = JSON.parse(overrideWsRes.payload);
+    expect(overrideWsBody.action?.notification, overrideWsRes.payload).toBeUndefined();
     expect(
-      JSON.parse(overrideWsRes.payload).action?.notification?.text,
+      overrideWsBody.action?.navigations?.[0]?.pushCard?.header?.title,
       overrideWsRes.payload
-    ).toBe('Document processed successfully');
+    ).toBe('Submittal Arch Filed');
     expect(writeLog).toHaveBeenCalledTimes(2);
 
     // Also verify AppOptions.sheetsClient works via /workspace/action even with userOAuthToken
@@ -1720,7 +2042,8 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
     expect(wsRes.statusCode).toBe(200);
     const wsBody = JSON.parse(wsRes.payload);
-    expect(wsBody.action?.notification?.text).toBe('Document processed successfully');
+    expect(wsBody.action?.notification).toBeUndefined();
+    expect(wsBody.action?.navigations?.[0]?.pushCard?.header?.title).toBe('Submittal Arch Filed');
     expect(mockSheetsSdk.spreadsheets.batchUpdate).toHaveBeenCalledTimes(1);
     expect(driveSpy).toHaveBeenCalled();
   });
@@ -1878,7 +2201,11 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
       if (!result.success) return;
 
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual(
+        scenario.documentData.action === 'REC'
+          ? ['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']
+          : ['MOVE_FILE', 'WRITE_LOG']
+      );
       const writeInfo = result.contextVariables?.documentLogWrite as {
         rowNumber: number;
         action: string;
@@ -2060,8 +2387,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(upsertResult.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 9,
       action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=9:9',
     });
     expect(upsertSheetsState.batchUpdates).toHaveLength(1);
     const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
@@ -2235,12 +2564,19 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+      expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
       expect(result.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
+        sheetId: 102,
         rowNumber: 6,
         action: 'inserted',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=102&range=6:6',
       });
 
       expect(sheetsState.batchUpdates).toHaveLength(1);
@@ -2323,7 +2659,12 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
         expect(result.success, `Scenario ${scenario.scenario} failed`).toBe(true);
         if (!result.success) return;
 
-        expect(result.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
+        expect(result.activities.map((a) => a.type)).toEqual([
+      'MOVE_FILE',
+      'DUPLICATE_FILE',
+      'INSERT_PAGES',
+      'WRITE_LOG',
+    ]);
         const writeInfo = result.contextVariables?.documentLogWrite as {
           rowNumber: number;
           action: string;
@@ -2544,8 +2885,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
       expect(upsertRes.contextVariables?.documentLogWrite).toEqual({
         spreadsheetId: 'harborview-log-1',
         sheetName: 'Submittal FF&E',
+        sheetId: 102,
         rowNumber: 6,
         action: 'updated',
+        uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=102&range=6:6',
       });
 
       const upsertReqs = upsertSheetsState.batchUpdates[0].requests;
@@ -2707,8 +3050,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step1.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 16,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=16:16',
     });
 
     // Verify top edge (idx 5..7) and lower unrelated messy gap (idx 22..24 after -2 net delta) were NOT disturbed!
@@ -2731,8 +3076,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step2.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 6,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=6:6',
     });
     expect(sheetsState.grid![4]).toEqual(['<--->']);
     expect(sheetsState.grid![5][1]).toBe('013300');
@@ -2745,8 +3092,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(step3.result.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 23,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=23:23',
     });
     expect(sheetsState.grid![21]).toEqual(['---']);
     expect(sheetsState.grid![22][1]).toBe('075100');
@@ -2797,8 +3146,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(bottomDocResult.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 29,
       action: 'inserted',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=29:29',
     });
     const finalGrid = sheetsState.grid!;
     expect(finalGrid[finalGrid.length - 1]).toEqual(['<--->']);
@@ -2888,8 +3239,10 @@ describe('DocumentLog Tracer Bullet Integration (Issue #339)', () => {
     expect(res.contextVariables?.documentLogWrite).toEqual({
       spreadsheetId: 'harborview-log-1',
       sheetName: 'Submittal Arch',
+      sheetId: 101,
       rowNumber: 10,
       action: 'updated',
+      uri: 'https://docs.google.com/spreadsheets/d/harborview-log-1/edit#gid=101&range=10:10',
     });
 
     expect(sheetsState.grid![6]).toEqual(['---']); // healed upper divider
@@ -2918,11 +3271,13 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
   let handlebars: HandlebarsAdapter;
 
   beforeEach(() => {
+    vi.stubEnv('SUBMITTAL_COVER_SHEET_TEMPLATE_ID', 'test-cover-sheet-tpl');
     manifestProvider = new AppManifestProvider({ manifestPath });
     handlebars = new HandlebarsAdapter();
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -3386,7 +3741,13 @@ describe('Resilient READ_LOG Hydration & Workflow Integration (Issue #348)', () 
       activityEngine,
       docSchemaRegistry,
       handlebars,
-      compiledRegistry
+      compiledRegistry,
+      undefined,
+      undefined,
+      'harborview-log-1',
+      undefined,
+      undefined,
+      createStaticCsiDivisionsOptionTablePort()
     );
     await documentService.initialize();
 

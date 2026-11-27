@@ -1,6 +1,11 @@
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { createHttpServer, type HttpServer } from '../infrastructure/http';
-import { AppManifestProvider } from '../infrastructure/manifest/app-manifest-provider';
+import {
+  AppManifestProvider,
+  createMaxInMemoryFileBytesProvider,
+  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
+  resolveMaxInMemoryFileBytesFromEnv,
+} from '../infrastructure/manifest/app-manifest-provider';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { GoogleDocsClient } from '../infrastructure/docs';
@@ -14,7 +19,7 @@ import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
 import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
 import { createDocumentLogWiring } from './document-log.wiring';
-import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
+import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
 import type { SheetsClient, SheetsConfigProvider } from '../infrastructure/sheets';
 import type { DocumentLogPort, LogSchemaRegistryPort } from '../features/document-log/ports';
 
@@ -128,7 +133,16 @@ export function createApp(options?: AppOptions): AppInstance {
 
   const defaultAppConfigProvider: AppConfigurationProviderPort = {
     getDriveConfig: async () => undefined,
+    getMaxInMemoryFileBytes: async () =>
+      resolveMaxInMemoryFileBytesFromEnv() ?? DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
   };
+
+  const resolvedConfigProvider = manifestProvider ?? defaultAppConfigProvider;
+  const pdfProcessor =
+    options?.pdfProcessor ??
+    new PdfProcessor({
+      getMaxInMemoryFileBytes: createMaxInMemoryFileBytesProvider(resolvedConfigProvider),
+    });
 
   const defaultSpaceRawManifestProvider: SpaceRawManifestProviderPort = {
     getRawManifest: async () => ({}),
@@ -151,6 +165,7 @@ export function createApp(options?: AppOptions): AppInstance {
     documentSchemaRegistry,
     templateEvaluator,
     driveService: options?.driveService,
+    pdfProcessor,
     activityEngine: options?.activityEngine,
     documentService: options?.documentService,
     compiledSchemaRegistry,
@@ -191,10 +206,10 @@ export function createApp(options?: AppOptions): AppInstance {
     manifestProvider,
     driveClient,
     driveContextClient: options?.driveContextClient,
-    configProvider: manifestProvider ?? defaultAppConfigProvider,
+    configProvider: resolvedConfigProvider,
     workspaceConfigProvider: manifestProvider,
     templateEvaluator,
-    ...(options?.pdfProcessor !== undefined ? { pdfProcessor: options.pdfProcessor } : {}),
+    pdfProcessor,
     ...(options?.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
   });
 
@@ -213,7 +228,7 @@ export function createApp(options?: AppOptions): AppInstance {
     gmailClient,
     documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
     storageAdapter,
-    pdfProcessor: options?.pdfProcessor,
+    pdfProcessor,
     driveContextClient: options?.driveContextClient,
     ...(options?.docsClient !== undefined ? { docsClient: options.docsClient } : {}),
     ...(options?.sheetsClient !== undefined ? { sheetsClient: options.sheetsClient } : {}),

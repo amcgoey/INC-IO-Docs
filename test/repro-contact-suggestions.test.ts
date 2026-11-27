@@ -864,8 +864,10 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         expect(response.statusCode).toBe(200);
         const body = JSON.parse(response.payload);
-        expect(body.action?.notification).toBeDefined();
-        expect(body.action?.notification?.text).toBe('Document processed successfully');
+        expect(body.action?.notification).toBeUndefined();
+        expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+          'Communication Proposal Filed'
+        );
       });
 
       it('successfully processes submission when Contact folder does not exist (new contact allowed via allowUserInput)', async () => {
@@ -902,8 +904,10 @@ describe('Permanent E2E Regression Suite: Document Space resolution and Contact 
 
         expect(response.statusCode).toBe(200);
         const body = JSON.parse(response.payload);
-        expect(body.action?.notification).toBeDefined();
-        expect(body.action?.notification?.text).toBe('Document processed successfully');
+        expect(body.action?.notification).toBeUndefined();
+        expect(body.action?.navigations?.[0]?.pushCard?.header?.title).toBe(
+          'Communication Proposal Filed'
+        );
       });
 
       it('rejects submission when duplicate Contact folders exist', async () => {

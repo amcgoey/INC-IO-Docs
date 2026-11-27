@@ -163,12 +163,16 @@ describe("AppInfrastructure ComponentResource", () => {
     expect(runRes?.inputs.name).toBe("inc-io-docs-dev");
     expect(runRes?.inputs.project).toBe("inc-io-docs-dev");
 
-    // Check Cloud Run template serviceAccount attachment
+    // Check Cloud Run template serviceAccount attachment and concurrency limit
     const template = runRes?.inputs.template as {
       serviceAccount?: string;
+      maxInstanceRequestConcurrency?: number;
       containers?: Array<{ envs?: Array<{ name: string; value: string }> }>;
     };
     expect(template?.serviceAccount).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(template?.maxInstanceRequestConcurrency).toBeGreaterThanOrEqual(4);
+    expect(template?.maxInstanceRequestConcurrency).toBeLessThanOrEqual(8);
+    expect(template?.maxInstanceRequestConcurrency).toBe(4);
 
     // Check Cloud Run container envs
     const envs = template?.containers?.[0]?.envs;
@@ -270,9 +274,11 @@ describe("AppInfrastructure ComponentResource", () => {
 
     const template = runRes?.inputs.template as {
       serviceAccount?: string;
+      maxInstanceRequestConcurrency?: number;
       containers?: Array<{ envs?: Array<{ name: string; value: string }> }>;
     };
     expect(template?.serviceAccount).toBe("addon-runtime@mock-project.iam.gserviceaccount.com");
+    expect(template?.maxInstanceRequestConcurrency).toBe(4);
     expect(template?.containers?.[0]?.envs).toContainEqual({
       name: "NODE_ENV",
       value: "production",
@@ -373,6 +379,31 @@ describe("AppInfrastructure ComponentResource", () => {
       containers?: Array<{ image?: string }>;
     };
     expect(template?.containers?.[0]?.image).toBe("us-docker.pkg.dev/cloudrun/container/hello");
+  });
+
+  it("injects SUBMITTAL_COVER_SHEET_TEMPLATE_ID env when provided and omits when unset or blank", async () => {
+    const { AppInfrastructure } = await import("./app-infrastructure");
+
+    const configuredInfra = new AppInfrastructure("template-configured", {
+      projectId: "inc-io-docs-dev",
+      submittalCoverSheetTemplateId: pulumi.secret("mock-submittal-cover-sheet-template-id"),
+    });
+    const configuredTemplate = await promiseOf(configuredInfra.service.template);
+    expect(configuredTemplate?.containers?.[0]?.envs).toContainEqual({
+      name: "SUBMITTAL_COVER_SHEET_TEMPLATE_ID",
+      value: "mock-submittal-cover-sheet-template-id",
+    });
+
+    const blankInfra = new AppInfrastructure("template-blank", {
+      projectId: "inc-io-docs-dev",
+      submittalCoverSheetTemplateId: "   ",
+    });
+    const blankTemplate = await promiseOf(blankInfra.service.template);
+    expect(
+      blankTemplate?.containers?.[0]?.envs?.some(
+        (envVar) => envVar.name === "SUBMITTAL_COVER_SHEET_TEMPLATE_ID"
+      )
+    ).toBe(false);
   });
 
   it("maintains structural parity between Pulumi.dev.yaml and Pulumi.prod.yaml", () => {

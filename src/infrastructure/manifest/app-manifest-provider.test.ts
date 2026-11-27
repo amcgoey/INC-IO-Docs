@@ -4,6 +4,8 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import {
   AppManifestProvider,
+  createMaxInMemoryFileBytesProvider,
+  DEFAULT_MAX_IN_MEMORY_FILE_BYTES,
   SheetsConfigurationSchema,
   WorkspaceConfigurationSchema,
 } from './app-manifest-provider';
@@ -250,6 +252,44 @@ describe('AppManifestProvider', () => {
       expect(await provider.getRawManifest()).toEqual(rawData);
     });
 
+    it('retains configuration.templates through Value.Clean, exposes getTemplatesConfig(), and rejects blank env var names (#379)', async () => {
+      const manifestPath = path.join(tempDir, 'templates-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            templates: {
+              submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+      await expect(provider.getTemplatesConfig()).resolves.toEqual({
+        submittalCoverSheet: 'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
+      });
+
+      const invalidManifestPath = path.join(tempDir, 'invalid-templates-manifest.json');
+      await fs.writeFile(
+        invalidManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            templates: {
+              submittalCoverSheet: '   ',
+            },
+          },
+        }),
+        'utf-8'
+      );
+
+      const invalidProvider = new AppManifestProvider({ manifestPath: invalidManifestPath });
+      await expect(invalidProvider.getTemplatesConfig()).rejects.toThrow(/templates/i);
+    });
+
     it('loads production assets/manifest.json without legacy sheets defaultHeaderRangeName or defaultDataRangeName keys', async () => {
       const prodManifestPath = path.resolve(__dirname, '../../../assets/manifest.json');
       const provider = new AppManifestProvider({ manifestPath: prodManifestPath });
@@ -393,6 +433,122 @@ describe('AppManifestProvider', () => {
 
       const provider = new AppManifestProvider({ manifestPath });
       await expect(provider.getWorkspaceConfig()).rejects.toThrow(/timeZone/i);
+    });
+
+    it('defaults maxInMemoryFileBytes to 200 MB when omitted and retains manifest override', async () => {
+      expect(DEFAULT_MAX_IN_MEMORY_FILE_BYTES).toBe(200 * 1024 * 1024);
+
+      const defaultManifestPath = path.join(tempDir, 'default-limit-manifest.json');
+      await fs.writeFile(
+        defaultManifestPath,
+        JSON.stringify({ documentTypes: [] }),
+        'utf-8'
+      );
+      const defaultProvider = new AppManifestProvider({ manifestPath: defaultManifestPath });
+      await expect(defaultProvider.getMaxInMemoryFileBytes()).resolves.toBe(
+        200 * 1024 * 1024
+      );
+
+      const customManifestPath = path.join(tempDir, 'custom-limit-manifest.json');
+      await fs.writeFile(
+        customManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 50 * 1024 * 1024,
+          },
+        }),
+        'utf-8'
+      );
+      const customProvider = new AppManifestProvider({ manifestPath: customManifestPath });
+      await expect(customProvider.getMaxInMemoryFileBytes()).resolves.toBe(
+        50 * 1024 * 1024
+      );
+    });
+
+    it('honors MAX_IN_MEMORY_FILE_BYTES environment variable override and rejects invalid values', async () => {
+      const manifestPath = path.join(tempDir, 'env-limit-manifest.json');
+      await fs.writeFile(
+        manifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 50 * 1024 * 1024,
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath });
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '1048576');
+      await expect(provider.getMaxInMemoryFileBytes()).resolves.toBe(1048576);
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '0');
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(
+        /MAX_IN_MEMORY_FILE_BYTES/i
+      );
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', 'not-a-number');
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(
+        /MAX_IN_MEMORY_FILE_BYTES/i
+      );
+    });
+
+    it('fails fast when manifest configuration.maxInMemoryFileBytes is non-positive or non-integer', async () => {
+      const zeroManifestPath = path.join(tempDir, 'zero-limit-manifest.json');
+      await fs.writeFile(
+        zeroManifestPath,
+        JSON.stringify({
+          documentTypes: [],
+          configuration: {
+            maxInMemoryFileBytes: 0,
+          },
+        }),
+        'utf-8'
+      );
+
+      const provider = new AppManifestProvider({ manifestPath: zeroManifestPath });
+      await expect(provider.getMaxInMemoryFileBytes()).rejects.toThrow(/invalid manifest/i);
+    });
+
+    it('createMaxInMemoryFileBytesProvider resolves direct override, nested configProvider, env, default, and validates positive finite numbers', async () => {
+      const fromDirectAndConfig = createMaxInMemoryFileBytesProvider({
+        getMaxInMemoryFileBytes: async () => 1024,
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => 2048,
+        },
+      });
+      await expect(fromDirectAndConfig()).resolves.toBe(1024);
+
+      const fallbackToConfig = createMaxInMemoryFileBytesProvider({
+        getMaxInMemoryFileBytes: () => undefined,
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => 2048,
+        },
+      });
+      await expect(fallbackToConfig()).resolves.toBe(2048);
+
+      vi.stubEnv('MAX_IN_MEMORY_FILE_BYTES', '4096');
+      const fallbackToEnv = createMaxInMemoryFileBytesProvider({
+        configProvider: {
+          getMaxInMemoryFileBytes: async () => undefined,
+        },
+      });
+      await expect(fallbackToEnv()).resolves.toBe(4096);
+
+      vi.unstubAllEnvs();
+      const fallbackToDefault = createMaxInMemoryFileBytesProvider();
+      await expect(fallbackToDefault()).resolves.toBe(DEFAULT_MAX_IN_MEMORY_FILE_BYTES);
+
+      for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const invalidProvider = createMaxInMemoryFileBytesProvider({
+          getMaxInMemoryFileBytes: () => invalid,
+        });
+        await expect(invalidProvider()).rejects.toThrow(
+          /Invalid maxInMemoryFileBytes configuration.*must be a positive finite number/
+        );
+      }
     });
   });
 

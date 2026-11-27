@@ -436,11 +436,15 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           contact: 'Alice Corp',
           date: '260920',
         },
+        sourceFiles: [{ id: 'file-123' }],
       },
       'onSubmit'
     );
 
-    expect(response.action?.notification?.text).toBe('Document processed successfully');
+    expect(response.action?.notification).toBeUndefined();
+    expect(response.action?.navigations?.[0]?.pushCard?.header.title).toBe(
+      'Communication Project Filed'
+    );
   });
 
   it('handles processDocument failure through wired documentService returning error card with validation errors', async () => {
@@ -600,15 +604,33 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
   });
 
   describe('createUiProcessRequestWrapper (CQRS Request-Scoped Wrapper)', () => {
-    it('intercepts notification intent and translates into infrastructure notification JSON', async () => {
+    it('forwards executionOutcome on render intent into SchemaDrivenUi.generateView and translates pushed card without notification (#382)', async () => {
+      const outcome = {
+        success: true,
+        workflowName: 'FileCommProject',
+        completedStepCount: 1,
+        spaceName: 'Project Alpha',
+        documentData: { contact: 'Acme' },
+        stepResults: [],
+        notices: [],
+        errors: [],
+      };
       const mockOrchestrator = {
         processUiEvent: vi.fn().mockResolvedValue({
-          type: 'notification',
-          text: 'Operation completed successfully',
+          type: 'render',
+          viewId: 'document-success-card',
+          documentTypeKey: 'communication-project',
+          spaceId: 'proj-1',
+          isUpdateCard: false,
+          executionOutcome: outcome,
         }),
       };
       const mockSchemaDrivenUi = {
-        generateView: vi.fn(),
+        generateView: vi.fn().mockResolvedValue({
+          id: 'document-success-card',
+          header: { title: 'Communication Project Filed', subtitle: 'Project Alpha' },
+          sections: [{ widgets: [{ textParagraph: { text: 'Filed via <b>FileCommProject</b>' } }] }],
+        }),
       } as unknown as SchemaDrivenUiService;
 
       const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
@@ -619,7 +641,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         baseUrl: 'https://example.com',
       };
 
-      const result = await wrapper(context);
+      const result = (await wrapper(context)) as GoogleWorkspaceActionResponse;
 
       expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith({
         actionName: 'processDocument',
@@ -629,14 +651,18 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         userOAuthToken: undefined,
         selectedItems: undefined,
       });
-      expect(mockSchemaDrivenUi.generateView).not.toHaveBeenCalled();
-      expect(result).toEqual({
-        action: {
-          notification: {
-            text: 'Operation completed successfully',
-          },
-        },
-      });
+      expect(mockSchemaDrivenUi.generateView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          viewId: 'document-success-card',
+          documentTypeKey: 'communication-project',
+          spaceId: 'proj-1',
+          executionOutcome: outcome,
+        })
+      );
+      expect(result.action.notification).toBeUndefined();
+      expect(result.action.navigations?.[0]?.pushCard?.header.title).toBe(
+        'Communication Project Filed'
+      );
     });
 
     it('intercepts render intent, queries SchemaDrivenUi read module, and translates with baseUrl', async () => {
@@ -756,11 +782,16 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     it('forwards hostApp and gmail context from WorkspaceExecutionContext to UiProcessEventContext', async () => {
       const mockOrchestrator = {
         processUiEvent: vi.fn().mockResolvedValue({
-          type: 'notification',
-          text: 'Gmail event received',
+          type: 'render',
+          viewId: 'test-view',
         }),
       };
-      const mockSchemaDrivenUi = {} as unknown as SchemaDrivenUiService;
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'test-view',
+          sections: [{ widgets: [{ textParagraph: { text: 'OK' } }] }],
+        }),
+      } as unknown as SchemaDrivenUiService;
 
       const wrapper = createUiProcessRequestWrapper(mockOrchestrator, mockSchemaDrivenUi);
 
@@ -790,11 +821,17 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
     it('supports asynchronous resolver functions for per-request instantiation', async () => {
       const mockOrchestrator = {
         processUiEvent: vi.fn().mockResolvedValue({
-          type: 'notification',
-          text: 'Resolved per-request',
+          type: 'render',
+          viewId: 'test-view',
         }),
       };
-      const mockSchemaDrivenUi = {} as unknown as SchemaDrivenUiService;
+      const mockSchemaDrivenUi = {
+        generateView: vi.fn().mockResolvedValue({
+          id: 'test-view',
+          header: { title: 'Resolved per-request' },
+          sections: [{ widgets: [{ textParagraph: { text: 'OK' } }] }],
+        }),
+      } as unknown as SchemaDrivenUiService;
 
       const orchestratorResolver = vi.fn().mockResolvedValue(mockOrchestrator);
       const schemaUiResolver = vi.fn().mockResolvedValue(mockSchemaDrivenUi);
@@ -806,7 +843,7 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         userOAuthToken: 'token-resolver-test',
       };
 
-      const result = await wrapper(context);
+      const result = (await wrapper(context)) as GoogleWorkspaceActionResponse;
 
       expect(orchestratorResolver).toHaveBeenCalledWith(context);
       expect(mockOrchestrator.processUiEvent).toHaveBeenCalledWith(
@@ -814,13 +851,9 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           actionName: 'customAction',
         })
       );
-      expect(result).toEqual({
-        action: {
-          notification: {
-            text: 'Resolved per-request',
-          },
-        },
-      });
+      expect(result.action.navigations?.[0]?.pushCard?.header.title).toBe(
+        'Resolved per-request'
+      );
     });
   });
 
@@ -915,10 +948,13 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         wiring.requestScopedWrapper.processUiEvent(req3),
       ])) as GoogleWorkspaceActionResponse[];
 
-      // All requests must succeed
-      expect(res1.action?.notification?.text).toBe('Document processed successfully');
-      expect(res2.action?.notification?.text).toBe('Document processed successfully');
-      expect(res3.action?.notification?.text).toBe('Document processed successfully');
+      // All requests must succeed with pushed Success Cards (no notification toast)
+      expect(res1.action?.notification).toBeUndefined();
+      expect(res2.action?.notification).toBeUndefined();
+      expect(res3.action?.notification).toBeUndefined();
+      expect(res1.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
+      expect(res2.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
+      expect(res3.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
 
       // createDocumentService factory was invoked exactly 3 times
       expect(createDocumentService).toHaveBeenCalledTimes(3);
@@ -1423,7 +1459,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
 
-      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(result.action?.notification).toBeUndefined();
+      expect(result.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
       expect(createDocumentService).toHaveBeenCalledTimes(1);
 
       // Verify activeContext.selectedItems has only the checked file (file-2) and preserved mimeType
@@ -1432,7 +1469,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
       ]);
       expect(passedContext?.userOAuthToken).toBe('token-user-123');
 
-      // Verify activeDocService.processDocument received clean documentPayload without sourceFiles
+      // Verify activeDocService.processDocument receives forwarded sourceFiles on DocumentModel
+      // while ephemeral fields (targetMessageId, selectedLogId) remain stripped per ADR-0005/ADR-0020
       expect(mockProcessDocument).toHaveBeenCalledWith(
         {
           type: 'communication-project',
@@ -1446,12 +1484,19 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
             typeId: 'projects',
             abstractStorageId: 'proj-1',
           },
+          sourceFiles: [
+            {
+              id: 'file-2',
+              name: 'Second.png',
+              mimeType: 'image/png',
+            },
+          ],
         },
         'onSubmit'
       );
-      // Ensure sourceFiles is not present on documentPayload per ADR-0005
       const calledPayload = mockProcessDocument.mock.calls[0][0];
-      expect(calledPayload).not.toHaveProperty('sourceFiles');
+      expect(calledPayload).not.toHaveProperty('targetMessageId');
+      expect(calledPayload).not.toHaveProperty('selectedLogId');
     });
 
     it('instantiates DocumentService exactly once per request and dispatches processDocument', async () => {
@@ -1491,7 +1536,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
 
-      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(result.action?.notification).toBeUndefined();
+      expect(result.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
       expect(createDocumentService).toHaveBeenCalledTimes(1);
       expect(mockProcessDocument).toHaveBeenCalledTimes(1);
       expect(passedContext?.sourceFiles).toEqual([
@@ -1557,7 +1603,8 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       const result = (await wiring.requestScopedWrapper.processUiEvent(req)) as GoogleWorkspaceActionResponse;
 
-      expect(result.action?.notification?.text).toBe('Document processed successfully');
+      expect(result.action?.notification).toBeUndefined();
+      expect(result.action?.navigations?.[0]?.pushCard?.header.title).toBe('Communication Project Filed');
       expect(createDocumentService).toHaveBeenCalledTimes(1);
       expect(passedContext?.gmail?.messageId).toBe('msg-thread-2');
       expect(passedContext?.gmail?.threadId).toBe('th-thread-123');
@@ -2299,11 +2346,11 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
         },
       });
 
-      expect(response).toEqual({
-        action: {
-          notification: { text: 'Document processed successfully' },
-        },
-      });
+      const typedResponse = response as GoogleWorkspaceActionResponse;
+      expect(typedResponse.action?.notification).toBeUndefined();
+      expect(typedResponse.action?.navigations?.[0]?.pushCard?.header.title).toBe(
+        'Communication Project Filed'
+      );
       expect(capturedContexts).toHaveLength(1);
       expect(capturedContexts[0].selectedLogId).toBe('validated-log-id');
     });
@@ -2446,11 +2493,11 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
 
       const response = await wiring.requestScopedWrapper.processUiEvent(outerContext);
 
-      expect(response).toEqual({
-        action: {
-          notification: { text: 'Document processed successfully' },
-        },
-      });
+      const typedResponse = response as GoogleWorkspaceActionResponse;
+      expect(typedResponse.action?.notification).toBeUndefined();
+      expect(typedResponse.action?.navigations?.[0]?.pushCard?.header.title).toBe(
+        'Communication Project Filed'
+      );
       expect(capturedContexts).toHaveLength(1);
       expect(capturedContexts[0].selectedLogId).toBe('log-2');
       expect(capturedContexts[0]).not.toBe(outerContext);
@@ -2677,6 +2724,266 @@ describe('ui-process-manager.wiring (CQRS Loop)', () => {
           lockedFields: { specTitle: 'HOOK' },
         })
       );
+    });
+
+    it('maps ProcessDocumentResult into DocumentExecutionOutcome with full parity across fallbackDocumentRunner and reqDocumentRunner, pushes document-success-card, and emits popToRoot+updateCard on startOver (#382)', async () => {
+      const richProcessResult = {
+        success: true as const,
+        workflowName: 'SubmittalReceived',
+        completedStepCount: 2,
+        data: {
+          type: 'communication-project',
+          data: { contact: 'Alice Corp', date: '260920' },
+        },
+        activities: [],
+        outputs: [],
+        stepResults: [
+          {
+            stepId: 'moveFiles',
+            activityType: 'MOVE_FILE',
+            output: {
+              success: true,
+              files: [
+                {
+                  id: 'moved-1',
+                  name: 'Filed.pdf',
+                  parentId: 'folder-1',
+                  parentName: 'Communications',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-1',
+                  uri: 'https://drive.google.com/file/d/moved-1/view',
+                },
+              ],
+              contextVariables: { notices: ['Fallback notice'] },
+            },
+          },
+        ],
+        contextVariables: {
+          notices: ['Fallback notice'],
+          documentLogWrite: {
+            sheetName: 'Comm Log',
+            sheetId: 0,
+            rowNumber: 12,
+            action: 'inserted' as const,
+            uri: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=12:12',
+          },
+        },
+      };
+
+      const fallbackDocService = {
+        processDocument: vi.fn().mockResolvedValue(richProcessResult),
+      } as unknown as DocumentService;
+
+      const fallbackWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        documentService: fallbackDocService,
+      });
+
+      const reqDocService = {
+        processDocument: vi.fn().mockResolvedValue(richProcessResult),
+      } as unknown as DocumentService;
+
+      const reqWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService: () => reqDocService,
+      });
+
+      const submitCtx: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'Communication Project',
+          SelectFiles: 'file-123',
+          contact: 'Alice Corp',
+          date: '260920',
+        },
+        selectedItems: [{ id: 'file-123' }],
+      };
+
+      for (const wiring of [fallbackWiring, reqWiring]) {
+        const res = (await wiring.requestScopedWrapper.processUiEvent(
+          submitCtx
+        )) as GoogleWorkspaceActionResponse;
+
+        expect(res.action?.notification).toBeUndefined();
+        const pushCard = res.action?.navigations?.[0]?.pushCard;
+        expect(pushCard).toBeDefined();
+        expect(pushCard?.header.title).toBe('Communication Project Filed (with Warnings)');
+        expect(pushCard?.header.subtitle).toBe('Project Alpha');
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toBe(
+          'Filed via <b>SubmittalReceived</b>'
+        );
+        expect(pushCard?.sections[0].widgets[1].textParagraph?.text).toContain('Fallback notice');
+        const summarySec = pushCard?.sections.find((s) => s.header === 'Summary');
+        expect(summarySec?.widgets[0].decoratedText?.text).toBe('<b>Comm Log</b> • Row 12');
+        expect(summarySec?.widgets[0].decoratedText?.button).toEqual({
+          text: 'Open Log',
+          onClick: {
+            openLink: {
+              url: 'https://docs.google.com/spreadsheets/d/log-1/edit#gid=0&range=12:12',
+              openAs: 'FULL_SIZE',
+            },
+          },
+        });
+        const foldersSec = pushCard?.sections.find((s) => s.header === 'Folders');
+        expect(foldersSec?.widgets[0].decoratedText?.text).toBe('Communications');
+        expect(foldersSec?.widgets[0].decoratedText?.button?.onClick).toEqual({
+          openLink: {
+            url: 'https://drive.google.com/drive/folders/folder-1',
+            openAs: 'FULL_SIZE',
+          },
+        });
+        const filesSec = pushCard?.sections.find((s) => s.header === 'Created & Filed');
+        expect(filesSec?.widgets[0].decoratedText?.text).toBe('Filed.pdf');
+        expect(filesSec?.widgets[0].decoratedText?.button?.onClick).toEqual({
+          openLink: {
+            url: 'https://drive.google.com/file/d/moved-1/view',
+            openAs: 'FULL_SIZE',
+          },
+        });
+      }
+
+      const startOverRes = (await reqWiring.requestScopedWrapper.processUiEvent({
+        actionName: 'startOver',
+        selectedItems: [{ id: 'file-123', title: 'Sample.pdf' }],
+      })) as GoogleWorkspaceActionResponse;
+
+      expect(startOverRes.action?.navigations).toHaveLength(2);
+      expect(startOverRes.action?.navigations?.[0]).toEqual({ popToRoot: true });
+      expect(startOverRes.action?.navigations?.[1]?.updateCard?.header.title).toBe('INC-IO Engine');
+    });
+
+    it('routes partial failures (completedStepCount >= 1 or Step 1 batch files) to Partial Failure Success Card and zero-effect failures to inline validationErrors across both runners (#386)', async () => {
+      const batchFailureResult = {
+        success: false as const,
+        errors: ['Permission denied on second file'],
+        failedStepId: 'moveFiles',
+        workflowName: 'FileCommProject',
+        completedStepCount: 0,
+        data: {
+          type: 'communication-project',
+          data: { contact: 'Alice Corp', date: '260920' },
+        },
+        activities: [],
+        outputs: [],
+        stepResults: [
+          {
+            stepId: 'moveFiles',
+            activityType: 'MOVE_FILE',
+            output: {
+              success: false,
+              error: 'Permission denied on second file',
+              files: [
+                {
+                  id: 'moved-1',
+                  name: 'First.pdf',
+                  parentId: 'folder-1',
+                  parentName: 'Communications',
+                  parentUri: 'https://drive.google.com/drive/folders/folder-1',
+                  uri: 'https://drive.google.com/file/d/moved-1/view',
+                },
+              ],
+            },
+          },
+        ],
+        files: [
+          {
+            id: 'moved-1',
+            name: 'First.pdf',
+            parentId: 'folder-1',
+            parentName: 'Communications',
+            parentUri: 'https://drive.google.com/drive/folders/folder-1',
+            uri: 'https://drive.google.com/file/d/moved-1/view',
+          },
+        ],
+        contextVariables: {
+          notices: ['Early fallback notice'],
+        },
+      };
+
+      const zeroEffectFailureResult = {
+        success: false as const,
+        errors: ['Invalid payload field'],
+        workflowName: 'FileCommProject',
+        completedStepCount: 0,
+        stepResults: [],
+        files: [],
+      };
+
+      const fallbackDocService = {
+        processDocument: vi
+          .fn()
+          .mockResolvedValueOnce(batchFailureResult)
+          .mockResolvedValueOnce(zeroEffectFailureResult),
+      } as unknown as DocumentService;
+
+      const reqDocService = {
+        processDocument: vi
+          .fn()
+          .mockResolvedValueOnce(batchFailureResult)
+          .mockResolvedValueOnce(zeroEffectFailureResult),
+      } as unknown as DocumentService;
+
+      const fallbackWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        documentService: fallbackDocService,
+      });
+
+      const reqWiring = createUiProcessManagerWiring({
+        configProvider: mockConfigProvider,
+        documentSpaceService: mockDocumentSpaceService,
+        manifestProvider: mockManifestProvider,
+        createDocumentService: () => reqDocService,
+      });
+
+      const submitCtx: WorkspaceExecutionContext = {
+        actionName: 'processDocument',
+        formData: {
+          SelectDocumentSpaceType: 'projects',
+          SelectDocumentSpace: 'Project Alpha',
+          SelectDocumentType: 'Communication Project',
+          SelectFiles: 'file-123',
+        },
+        selectedItems: [{ id: 'file-123' }],
+      };
+
+      for (const wiring of [fallbackWiring, reqWiring]) {
+        const partialRes = (await wiring.requestScopedWrapper.processUiEvent(
+          submitCtx
+        )) as GoogleWorkspaceActionResponse;
+
+        expect(partialRes.action?.notification).toBeUndefined();
+        const pushCard = partialRes.action?.navigations?.[0]?.pushCard;
+        expect(pushCard).toBeDefined();
+        expect(pushCard?.header.title).toBe('Communication Project \u2014 Partial Failure');
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain('moveFiles');
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain(
+          'Permission denied on second file'
+        );
+        expect(pushCard?.sections[0].widgets[0].textParagraph?.text).toContain('0 completed steps');
+        expect(pushCard?.sections[0].widgets[1].textParagraph?.text).toContain(
+          'Early fallback notice'
+        );
+        const filesSec = pushCard?.sections.find((s) => s.header === 'Created & Filed');
+        expect(filesSec?.widgets[0].decoratedText?.text).toBe('First.pdf');
+
+        const zeroRes = (await wiring.requestScopedWrapper.processUiEvent(
+          submitCtx
+        )) as GoogleWorkspaceActionResponse;
+        const updateCard = zeroRes.action?.navigations?.[0]?.updateCard;
+        expect(updateCard).toBeDefined();
+        expect(
+          updateCard?.sections.some((s) =>
+            s.widgets.some((w) => w.textParagraph?.text?.includes('Invalid payload field'))
+          )
+        ).toBe(true);
+      }
     });
   });
 });

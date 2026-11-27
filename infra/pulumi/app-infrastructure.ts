@@ -41,6 +41,17 @@ export interface AppInfrastructureArgs {
    * Port on which the container listens. Defaults to 8080.
    */
   port?: pulumi.Input<number>;
+
+  /**
+   * Maximum concurrent requests per Cloud Run instance. Defaults to 4 to bound peak PDF heap usage.
+   */
+  maxInstanceRequestConcurrency?: pulumi.Input<number>;
+
+  /**
+   * Confidential Drive file ID for the Submittal Cover Sheet template.
+   * Injected as SUBMITTAL_COVER_SHEET_TEMPLATE_ID on Cloud Run when configured.
+   */
+  submittalCoverSheetTemplateId?: pulumi.Input<string | undefined>;
 }
 
 export class AppInfrastructure extends pulumi.ComponentResource {
@@ -68,6 +79,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
     const runtimeAccountName = args.runtimeAccountName ?? "addon-runtime";
     const port = args.port ?? 8080;
     const image = args.image ?? "us-docker.pkg.dev/cloudrun/container/hello";
+    const maxInstanceRequestConcurrency = args.maxInstanceRequestConcurrency ?? 4;
 
     // 1. Enable required GCP APIs
     const requiredApis = [
@@ -140,6 +152,7 @@ export class AppInfrastructure extends pulumi.ComponentResource {
         ingress: "INGRESS_TRAFFIC_ALL",
         template: {
           serviceAccount: runtimeServiceAccount.email,
+          maxInstanceRequestConcurrency,
           containers: [
             {
               image: image,
@@ -152,20 +165,30 @@ export class AppInfrastructure extends pulumi.ComponentResource {
                   cpu: "2",
                 },
               },
-              envs: [
-                {
-                  name: "NODE_ENV",
-                  value: "production",
-                },
-                {
-                  name: "NODE_OPTIONS",
-                  value: "--max-old-space-size=3584",
-                },
-                {
-                  name: "SKIP_SPACE_VALIDATION",
-                  value: "true",
-                },
-              ],
+              envs: pulumi.output(args.submittalCoverSheetTemplateId).apply((templateId) => {
+                const baseEnvs = [
+                  {
+                    name: "NODE_ENV",
+                    value: "production",
+                  },
+                  {
+                    name: "NODE_OPTIONS",
+                    value: "--max-old-space-size=3584",
+                  },
+                  {
+                    name: "SKIP_SPACE_VALIDATION",
+                    value: "true",
+                  },
+                ];
+                const normalizedTemplateId = templateId?.trim();
+                if (normalizedTemplateId) {
+                  baseEnvs.push({
+                    name: "SUBMITTAL_COVER_SHEET_TEMPLATE_ID",
+                    value: normalizedTemplateId,
+                  });
+                }
+                return baseEnvs;
+              }),
             },
           ],
         },

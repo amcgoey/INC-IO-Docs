@@ -33,6 +33,7 @@ import {
   parseDocumentFieldTemplate,
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  PDF_FORM_FILE_TOO_LARGE_ERROR_MESSAGE,
   formatAmbiguousFormFieldMessage,
 } from './form-field-parser';
 import {
@@ -56,6 +57,7 @@ import { formatYymmdd } from './form-date';
 export {
   PDF_FORM_ENCRYPTED_ERROR_MESSAGE,
   DOCUMENT_FORM_CORRUPTED_ERROR_MESSAGE,
+  PDF_FORM_FILE_TOO_LARGE_ERROR_MESSAGE,
   formatAmbiguousFormFieldMessage,
   DRIVE_METADATA_EXTRACT_ERROR_MESSAGE,
   escapeRegExp,
