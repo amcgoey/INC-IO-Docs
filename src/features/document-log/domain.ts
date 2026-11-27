@@ -321,6 +321,26 @@ function parseRfc4180CsvList(cell: LogCellPrimitive | undefined): string[] {
   return values;
 }
 
+/**
+ * Appends trimmed, non-empty aliases to `targetTuple.aliases`, deduplicating
+ * case-insensitively while preserving first-seen order and casing.
+ */
+function appendUniqueAliases(
+  targetTuple: LogTargetDocumentOptionTuple,
+  seenAliases: Set<string>,
+  parsedAliases: readonly string[]
+): void {
+  for (const alias of parsedAliases) {
+    const normalizedAlias = alias.trim().toLowerCase();
+    if (normalizedAlias.length === 0 || seenAliases.has(normalizedAlias)) {
+      continue;
+    }
+    seenAliases.add(normalizedAlias);
+    targetTuple.aliases ??= [];
+    targetTuple.aliases.push(alias.trim());
+  }
+}
+
 function parseOptionTableEntry(
   sourceKey: string,
   binding: DocumentLogOptionBinding,
@@ -396,7 +416,8 @@ function parseOptionTableEntry(
   }
 
   const tuples: LogTargetDocumentOptionTuple[] = [];
-  const seenKeys = new Set<string>();
+  const tuplesByNormalizedKey = new Map<string, LogTargetDocumentOptionTuple>();
+  const seenAliasesByNormalizedKey = new Map<string, Set<string>>();
 
   for (let i = 1; i < terminatorIndex; i++) {
     const row = rows[i] ?? [];
@@ -425,19 +446,26 @@ function parseOptionTableEntry(
     }
 
     const normalizedKey = rawKey.toLowerCase();
-    if (seenKeys.has(normalizedKey)) {
-      continue;
+    let targetTuple = tuplesByNormalizedKey.get(normalizedKey);
+    if (!targetTuple) {
+      targetTuple = tuple;
+      tuplesByNormalizedKey.set(normalizedKey, targetTuple);
+      tuples.push(targetTuple);
     }
-    seenKeys.add(normalizedKey);
+
     if (aliasesColIdx !== undefined) {
       const parsedAliases = parseRfc4180CsvList(
         aliasesColIdx < row.length ? row[aliasesColIdx] : undefined
       );
       if (parsedAliases.length > 0) {
-        tuple.aliases = parsedAliases;
+        let seenAliases = seenAliasesByNormalizedKey.get(normalizedKey);
+        if (!seenAliases) {
+          seenAliases = new Set<string>();
+          seenAliasesByNormalizedKey.set(normalizedKey, seenAliases);
+        }
+        appendUniqueAliases(targetTuple, seenAliases, parsedAliases);
       }
     }
-    tuples.push(tuple);
   }
 
   return {

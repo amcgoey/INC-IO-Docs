@@ -3674,6 +3674,181 @@ describe('DocumentLogService', () => {
         });
       }
     });
+
+    it('preserves first-row-wins properties while concatenating and deduplicating aliases across duplicate canonical key rows (Ticket #388)', async () => {
+      const logSchemaWithSpecsAndContacts: DocumentLogSchema = {
+        ...logSchema,
+        optionBindings: {
+          specs: {
+            sheetName: '_Config Submittal FFE',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            endMarker: '---',
+            columns: {
+              Tag: 'key',
+              Title: 'name',
+            },
+            aliasesColumn: 'Aliases',
+          },
+          contacts: {
+            sheetName: '_Config Submittal FFE',
+            rangeName: 'Options_Submittal_FFE_Contacts',
+            endMarker: '---',
+            columns: {
+              Key: 'key',
+              Name: 'name',
+            },
+            aliasesColumn: 'Aliases',
+          },
+        },
+      };
+
+      const targetSchemaWithSpecsAndContacts: LogTargetDocumentSchema = {
+        ...targetSchema,
+        optionSources: {
+          specs: { provider: 'document_log', properties: ['key', 'name'] },
+          contacts: { provider: 'document_log', properties: ['key', 'name'] },
+        },
+      };
+
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        specs: {
+          status: 'found',
+          values: [
+            ['Tag', 'Title', 'Aliases'],
+            ['CG104', 'BED - KING', 'King Bed, king bed, "Royal, Bed"'],
+            ['  cg104 ', 'BED - KING ALT TITLE', '  KING BED , Canopy Bed, "Royal, Bed", @king.com'],
+            ['CG105', 'NIGHTSTAND', ''],
+            ['CG105', 'NIGHTSTAND SECOND', 'Bedside Table, bedside table'],
+            ['---', '', ''],
+          ],
+        },
+        contacts: {
+          status: 'found',
+          values: [
+            ['Key', 'Name'],
+            ['PMG', 'Pavarini McGovern'],
+            [' pmg ', 'Pavarini Duplicate'],
+            ['---', ''],
+          ],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithSpecsAndContacts),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSpecsAndContacts),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: {
+          readNamedRanges,
+        },
+      });
+
+      const result = await service.readOptionTables({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+      });
+
+      expect(result.status).toBe('ready');
+      if (result.status === 'ready') {
+        expect(result.tables.specs).toEqual({
+          status: 'ready',
+          tuples: [
+            {
+              key: 'CG104',
+              name: 'BED - KING',
+              aliases: ['King Bed', 'Royal, Bed', 'Canopy Bed', '@king.com'],
+            },
+            {
+              key: 'CG105',
+              name: 'NIGHTSTAND',
+              aliases: ['Bedside Table'],
+            },
+          ],
+        });
+        expect(result.tables.contacts).toEqual({
+          status: 'ready',
+          tuples: [{ key: 'PMG', name: 'Pavarini McGovern' }],
+        });
+      }
+    });
+
+    it('handles unbalanced RFC 4180 quotes in Aliases cells safely without throwing across single and duplicate rows (Ticket #388)', async () => {
+      const logSchemaWithSpecs: DocumentLogSchema = {
+        ...logSchema,
+        optionBindings: {
+          specs: {
+            sheetName: '_Config Submittal FFE',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            endMarker: '---',
+            columns: {
+              Tag: 'key',
+              Title: 'name',
+            },
+            aliasesColumn: 'Aliases',
+          },
+        },
+      };
+
+      const targetSchemaWithSpecs: LogTargetDocumentSchema = {
+        ...targetSchema,
+        optionSources: {
+          specs: { provider: 'document_log', properties: ['key', 'name'] },
+        },
+      };
+
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        specs: {
+          status: 'found',
+          values: [
+            ['Tag', 'Title', 'Aliases'],
+            ['UNBAL1', 'First', '"Unclosed, Phrase'],
+            ['UNBAL2', 'Second', 'Valid One, "Unclosed Second'],
+            ['UNBAL3', 'Third', '"'],
+            ['UNBAL4', 'Fourth', 'Acme "Corp, Trailing"'],
+            [' unbal4 ', 'Fourth Dup', 'acme "corp, """'],
+            ['---', '', ''],
+          ],
+        },
+      });
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(logSchemaWithSpecs),
+          getTargetSchema: vi.fn().mockReturnValue(targetSchemaWithSpecs),
+        },
+        discovery: {
+          searchSpreadsheets: vi.fn().mockResolvedValue([
+            { id: 'log-1', name: 'Harborview Hotel Document Log' },
+          ]),
+        },
+        storage: {
+          readNamedRanges,
+        },
+      });
+
+      const result = await service.readOptionTables({
+        documentTypeKey: 'submittal-ffe',
+        space: sampleSpace,
+      });
+
+      expect(result.status).toBe('ready');
+      if (result.status === 'ready') {
+        expect(result.tables.specs).toEqual({
+          status: 'ready',
+          tuples: [
+            { key: 'UNBAL1', name: 'First', aliases: ['Unclosed, Phrase'] },
+            { key: 'UNBAL2', name: 'Second', aliases: ['Valid One', 'Unclosed Second'] },
+            { key: 'UNBAL3', name: 'Third' },
+            { key: 'UNBAL4', name: 'Fourth', aliases: ['Acme "Corp', 'Trailing"', '"'] },
+          ],
+        });
+      }
+    });
   });
 
   describe('READ_LOG live _Config hydration & partial_hydration (Ticket #359)', () => {
