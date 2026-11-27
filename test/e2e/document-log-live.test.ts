@@ -1514,7 +1514,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
     }
   }, 120_000);
 
-  it('verifies live submittal-ffe DocumentLog option reads, Named Range expansion, VLOOKUP Spec Title resolution, and side-by-side _Config Submittal FF&E stability on a fresh copied template', async () => {
+  it('verifies live submittal-ffe DocumentLog option reads, seeded Aliases, Validation_* bounds, empty-table Row 4 format cloning across 3- and 4-column tables, Named Range expansion, VLOOKUP Spec Title & shifted Calc File Name formulas, and side-by-side _Config Submittal FF&E stability on a fresh copied template', async () => {
     const liveDriveClient = requireDriveClient();
     const templateId = sampleFixture.metadata.templateSpreadsheetId;
     const discoveryConfig = logWiring.logSchemaRegistry.getDiscoveryConfig('proposals');
@@ -1584,7 +1584,23 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         groupDividerMarker: ffeLogSchema.target.groupDividerMarker,
       };
       await ensureClearedPositiveTable(sheetsApi, optFfeTarget);
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, optSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
 
+      // Verify Submittal FF&E cross-tab formulas reference shifted Actions columns (H4:I) and VLOOKUP col 2 (Title)
+      const ffeFormulaRowRes = await sheetsApi.spreadsheets.values.get({
+        spreadsheetId: optSpreadsheetId,
+        range: `'${ffeLogSchema.target.sheetName}'!A4:O4`,
+        valueRenderOption: 'FORMULA',
+      });
+      const ffeFormulaRow = (ffeFormulaRowRes.data.values?.[0] as string[] | undefined) ?? [];
+      expect(ffeFormulaRow[4]).toBe(
+        '=ARRAYFORMULA(IFERROR(VLOOKUP(B4:B,Options_Submittal_FFE_Specs,2,FALSE)))'
+      );
+      expect(ffeFormulaRow[11]).toContain("'_Config Submittal FF&E'!H4:I");
+
+      // 1) Live option reads from untouched copied template (unprefixed Row 3 headers + seeded Contacts/Vendors Aliases + blank Specs Aliases)
       const initialFfeOptions = await logWiring.documentLogService.readOptionTables!({
         documentTypeKey: 'submittal-ffe',
         space: optSpace,
@@ -1593,16 +1609,172 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       expect(initialFfeOptions.status).toBe('ready');
       if (initialFfeOptions.status !== 'ready') return;
       expect(initialFfeOptions.spreadsheetId).toBe(optSpreadsheetId);
-      for (const sourceKey of ['statuses', 'actions', 'contacts', 'vendors', 'specs']) {
-        expect(initialFfeOptions.tables[sourceKey]?.status).toBe('ready');
-        expect(initialFfeOptions.tables[sourceKey]?.tuples.length).toBeGreaterThan(0);
-      }
+      expect(initialFfeOptions.tables.statuses?.status).toBe('ready');
+      expect(initialFfeOptions.tables.statuses?.tuples.map((t) => t.key)).toEqual([
+        'Open',
+        'Closed',
+        'Waiting',
+        'Manager',
+        'Billed',
+      ]);
+      expect(initialFfeOptions.tables.actions?.status).toBe('ready');
+      expect(initialFfeOptions.tables.actions?.tuples.length).toBe(7);
+      expect(initialFfeOptions.tables.contacts?.status).toBe('ready');
+      expect(initialFfeOptions.tables.contacts?.tuples).toEqual([
+        {
+          key: 'INC',
+          name: 'INC Architecture & Design',
+          aliases: ['@inc.nyc', 'INC Architecture', 'INC Architecture and Design', 'INC Architecture & Design'],
+        },
+        {
+          key: 'BW',
+          name: 'Benjamin West',
+          aliases: ['@benjaminwest.com', 'Benjamin West', 'BenjaminWest'],
+        },
+        {
+          key: 'VLD',
+          name: 'Ventresca Lighting Design',
+          aliases: ['@ventresca.com', 'Ventresca Lighting Design', 'Ventresca Lighting', 'Ventresca'],
+        },
+        {
+          key: 'IHG',
+          name: 'IHG Hotels & Resorts',
+          aliases: ['@ihg.com', 'IHG Hotels', 'IHG Hotels & Resorts', 'InterContinental Hotels Group'],
+        },
+      ]);
+      expect(initialFfeOptions.tables.vendors?.status).toBe('ready');
+      expect(initialFfeOptions.tables.vendors?.tuples).toEqual([
+        {
+          key: 'BM',
+          name: 'Berman Falk',
+          aliases: ['@bermanfalk.com', 'Berman Falk', 'BermanFalk', 'Berman'],
+        },
+        {
+          key: 'AL',
+          name: 'Ashley Lighting',
+          aliases: ['@ashleylighting.com', 'Ashley Lighting', 'Ashley'],
+        },
+        {
+          key: 'Carn',
+          name: 'Carnegie',
+          aliases: ['@carnegiefabrics.com', 'Carnegie Fabrics', 'Carnegie'],
+        },
+        {
+          key: 'Delta',
+          name: 'Delta',
+          aliases: ['@deltafabrics.com', 'Delta Fabrics', 'Delta Furniture'],
+        },
+        {
+          key: 'FDT',
+          name: 'Fil Doux Textiles',
+          aliases: ['@fildoux.com', 'Fil Doux Textiles', 'Fil Doux', 'FilDoux'],
+        },
+        {
+          key: 'LA',
+          name: 'Light Annex',
+          aliases: ['@lightannex.com', 'Light Annex', 'LightAnnex'],
+        },
+        {
+          key: 'MH',
+          name: 'Mohawk',
+          aliases: ['@mohawkgroup.com', 'Mohawk Group', 'Mohawk Fabrics', 'Mohawk'],
+        },
+      ]);
+      expect(initialFfeOptions.tables.specs?.status).toBe('ready');
+      expect(initialFfeOptions.tables.specs?.tuples).toHaveLength(33);
+      expect(initialFfeOptions.tables.specs?.tuples.every((t) => t.aliases === undefined)).toBe(true);
+
+      // Verify split Validation_* policy across all 5 FF&E Validation_* ranges
+      const ffeActionValidationName = 'Validation_Submittal_FFE_Actions';
+      const initialValSnapshots = await snapshotNamedRanges(
+        sheetsApi,
+        optSpreadsheetId,
+        [
+          ffeSpecsBinding.validationRangeName!,
+          ffeVendorsBinding.validationRangeName!,
+          ffeContactsBinding.validationRangeName!,
+          ffeStatusesBinding.validationRangeName!,
+          ffeActionValidationName,
+        ],
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const initialValValues = await readNamedRangesFormattedValues(
+        sheetsApi,
+        optSpreadsheetId,
+        initialValSnapshots,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      expect(initialValSnapshots[ffeSpecsBinding.validationRangeName!].gridRange).toMatchObject({
+        startColumnIndex: 0,
+        endColumnIndex: 1,
+      });
+      const specValItems = (initialValValues[ffeSpecsBinding.validationRangeName!] ?? []).map((r) =>
+        String(r[0] ?? '')
+      );
+      expect(specValItems).toHaveLength(44);
+      expect(specValItems).not.toContain('---');
+
+      expect(initialValSnapshots[ffeVendorsBinding.validationRangeName!].gridRange).toMatchObject({
+        startColumnIndex: 5,
+        endColumnIndex: 6,
+      });
+      const vendorValItems = (initialValValues[ffeVendorsBinding.validationRangeName!] ?? []).map(
+        (r) => String(r[0] ?? '')
+      );
+      expect(vendorValItems).toEqual([
+        'Berman Falk',
+        'Ashley Lighting',
+        'Carnegie',
+        'Delta',
+        'Fil Doux Textiles',
+        'Light Annex',
+        'Mohawk',
+      ]);
+      expect(vendorValItems).not.toContain('---');
+
+      expect(initialValSnapshots[ffeContactsBinding.validationRangeName!].gridRange).toMatchObject({
+        startColumnIndex: 13,
+        endColumnIndex: 14,
+      });
+      const contactValItems = (initialValValues[ffeContactsBinding.validationRangeName!] ?? []).map(
+        (r) => String(r[0] ?? '')
+      );
+      expect(contactValItems).toEqual(['INC', 'BW', 'VLD', 'IHG']);
+      expect(contactValItems).not.toContain('---');
+
+      expect(initialValSnapshots[ffeActionValidationName].gridRange).toMatchObject({
+        startColumnIndex: 7,
+        endColumnIndex: 8,
+      });
+      const actionValItems = (initialValValues[ffeActionValidationName] ?? []).map((r) =>
+        String(r[0] ?? '')
+      );
+      expect(actionValItems).toEqual([
+        'Received',
+        'Referred',
+        'Not Reviewed',
+        'Rejected',
+        'Revise & Resubmit',
+        'No Objections As Corrected',
+        'No Exceptions Taken',
+        '---',
+      ]);
+
+      expect(initialValSnapshots[ffeStatusesBinding.validationRangeName!].gridRange).toMatchObject({
+        startColumnIndex: 11,
+        endColumnIndex: 12,
+      });
+      const statusValItems = (initialValValues[ffeStatusesBinding.validationRangeName!] ?? []).map(
+        (r) => String(r[0] ?? '')
+      );
+      expect(statusValItems).toEqual(['Open', 'Closed', 'Waiting', 'Manager', 'Billed', '---']);
 
       const ffeFolder = await liveDriveClient.findOrCreateFolder(optSpaceFolder.id, '3 FFE');
       trackLocal(ffeFolder.id);
 
       const dummyPdfDoc = await PDFDocument.create();
-      dummyPdfDoc.addPage([612, 792]).drawText('Live Arch Options E2E Target Content');
+      dummyPdfDoc.addPage([612, 792]).drawText('Live FFE Options E2E Target Content');
       const dummyPdfBytes = Buffer.from(await dummyPdfDoc.save());
       const optFfeFile = await liveDriveClient.saveBuffer(dummyPdfBytes, {
         action: 'create',
@@ -1612,7 +1784,83 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       });
       trackLocal(optFfeFile.id);
 
-      // Custom Spec Tag + Spec Title atomic WRITE_LOG, Validation_* expansion, VLOOKUP resolution, and side-by-side _Config Submittal FF&E stability
+      // 2) Clear 3-col Specs and 4-col Vendors & Contacts to empty and verify Row 4 format cloning + Named Range expansion + side-by-side stability
+      const templateSpecsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: templateId,
+        sheetName: ffeSpecsBinding.sheetName,
+        rangeName: ffeSpecsBinding.rangeName,
+        endMarker: ffeSpecsBinding.endMarker,
+      });
+      expect(templateSpecsGrid.headerRow).toEqual(['Tag', 'Title', 'Aliases']);
+      const templateSpecsRow = templateSpecsGrid.dataRows.find((r) =>
+        r.cells.some((c) => c.formattedValue.trim().length > 0)
+      );
+      expect(templateSpecsRow).toBeDefined();
+      if (!templateSpecsRow) return;
+
+      const templateVendorsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: templateId,
+        sheetName: ffeVendorsBinding.sheetName,
+        rangeName: ffeVendorsBinding.rangeName,
+        endMarker: ffeVendorsBinding.endMarker,
+      });
+      expect(templateVendorsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      const templateVendorsRow = templateVendorsGrid.dataRows.find((r) =>
+        r.cells.some((c) => c.formattedValue.trim().length > 0)
+      );
+      expect(templateVendorsRow).toBeDefined();
+      if (!templateVendorsRow) return;
+
+      const templateContactsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: templateId,
+        sheetName: ffeContactsBinding.sheetName,
+        rangeName: ffeContactsBinding.rangeName,
+        endMarker: ffeContactsBinding.endMarker,
+      });
+      expect(templateContactsGrid.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      const templateContactsRow = templateContactsGrid.dataRows.find((r) =>
+        r.cells.some((c) => c.formattedValue.trim().length > 0)
+      );
+      expect(templateContactsRow).toBeDefined();
+      if (!templateContactsRow) return;
+
+      const clearedSpecs = await clearOptionTableToEmpty(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeSpecsBinding.sheetName,
+        rangeName: ffeSpecsBinding.rangeName,
+        validationRangeName: ffeSpecsBinding.validationRangeName,
+        endMarker: ffeSpecsBinding.endMarker,
+      });
+      const clearedVendors = await clearOptionTableToEmpty(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeVendorsBinding.sheetName,
+        rangeName: ffeVendorsBinding.rangeName,
+        validationRangeName: ffeVendorsBinding.validationRangeName,
+        endMarker: ffeVendorsBinding.endMarker,
+      });
+      const clearedContacts = await clearOptionTableToEmpty(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeContactsBinding.sheetName,
+        rangeName: ffeContactsBinding.rangeName,
+        validationRangeName: ffeContactsBinding.validationRangeName,
+        endMarker: ffeContactsBinding.endMarker,
+      });
+      expect(clearedSpecs.absTerminatorRowIndex).toBeGreaterThan(0);
+      expect(clearedVendors.absTerminatorRowIndex).toBeGreaterThan(0);
+      expect(clearedContacts.absTerminatorRowIndex).toBeGreaterThan(0);
+
+      const clearedFfeRead = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: optSpreadsheetId,
+        sourceKeys: ['specs', 'vendors', 'contacts'],
+      });
+      expect(clearedFfeRead.status).toBe('ready');
+      if (clearedFfeRead.status !== 'ready') return;
+      expect(clearedFfeRead.tables.specs?.tuples).toEqual([]);
+      expect(clearedFfeRead.tables.vendors?.tuples).toEqual([]);
+      expect(clearedFfeRead.tables.contacts?.tuples).toEqual([]);
+
+      // 3) Custom Spec Tag + Related Tag + Vendor + Contact atomic WRITE_LOG, Validation_* expansion, VLOOKUP & Calc File Name verification, and side-by-side stability
       const ffeConfigRanges = [
         ffeStatusesBinding.rangeName,
         ...(ffeStatusesBinding.validationRangeName ? [ffeStatusesBinding.validationRangeName] : []),
@@ -1638,9 +1886,10 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       );
 
       const customSpecTag = `ZZ${runId.slice(-4).toUpperCase()}`;
+      const customRelatedTag = `ZR${runId.slice(-4).toUpperCase()}`;
       const customSpecTitle = `CUSTOM LIVE LOUNGE ${runId.slice(-4).toUpperCase()}`;
       const customVendor = `Custom Live Millwork ${runId.slice(-4).toUpperCase()}`;
-      const customFfeContact = `T363F_${runId.slice(-4).toUpperCase()}`;
+      const customFfeContact = `T391F_${runId.slice(-4).toUpperCase()}`;
 
       const optFfeService = await documentServiceFactory({
         selectedLogId: optSpreadsheetId,
@@ -1653,20 +1902,21 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
           data: {
             status: 'Open',
             specTag: customSpecTag,
+            relatedTag: customRelatedTag,
             revision: '0',
             specTitle: customSpecTitle,
             vendor: customVendor,
             date: '260401',
             contact: customFfeContact,
-            action: 'REC',
-            notes: 'Ticket 363 custom FF&E option write-back',
+            action: 'RR',
+            notes: 'Ticket 391 custom FF&E option write-back',
           },
         },
         'onSubmit'
       );
       expect(ffeSubmit.success).toBe(true);
       if (!ffeSubmit.success) return;
-      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'DUPLICATE_FILE', 'INSERT_PAGES', 'WRITE_LOG']);
+      expect(ffeSubmit.activities.map((a) => a.type)).toEqual(['MOVE_FILE', 'WRITE_LOG']);
 
       const ffeSnapshotsAfter = await snapshotNamedRanges(
         sheetsApi,
@@ -1681,17 +1931,21 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         DEFAULT_LIVE_RETRY_OPTIONS
       );
 
-      for (const expandedRange of [
-        ffeSpecsBinding.rangeName,
-        ffeVendorsBinding.rangeName,
-        ffeContactsBinding.rangeName,
-      ]) {
+      expect(ffeSnapshotsAfter[ffeSpecsBinding.rangeName].gridRange.endRowIndex).toBe(
+        (ffeSnapshotsBefore[ffeSpecsBinding.rangeName].gridRange.endRowIndex ?? 0) + 2
+      );
+      for (const expandedRange of [ffeVendorsBinding.rangeName, ffeContactsBinding.rangeName]) {
         expect(ffeSnapshotsAfter[expandedRange].gridRange.endRowIndex).toBe(
           (ffeSnapshotsBefore[expandedRange].gridRange.endRowIndex ?? 0) + 1
         );
       }
 
-      for (const binding of [ffeSpecsBinding, ffeVendorsBinding, ffeContactsBinding]) {
+      const expectedExpansions = [
+        { binding: ffeSpecsBinding, delta: 2 },
+        { binding: ffeVendorsBinding, delta: 1 },
+        { binding: ffeContactsBinding, delta: 1 },
+      ];
+      for (const { binding, delta } of expectedExpansions) {
         if (!binding.validationRangeName) continue;
         const rowsBefore = ffeValuesBefore[binding.rangeName] ?? [];
         const termRel = rowsBefore.findIndex((r) =>
@@ -1701,12 +1955,7 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         const absTerminatorBefore =
           (ffeSnapshotsBefore[binding.rangeName].gridRange.startRowIndex ?? 0) + termRel;
         expect(ffeSnapshotsAfter[binding.validationRangeName].gridRange.endRowIndex).toBe(
-          absTerminatorBefore + 1
-        );
-        expect(
-          ffeSnapshotsAfter[binding.validationRangeName].gridRange.endRowIndex
-        ).toBeGreaterThan(
-          ffeSnapshotsBefore[binding.validationRangeName].gridRange.endRowIndex ?? 0
+          absTerminatorBefore + delta
         );
       }
 
@@ -1725,16 +1974,70 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
         })
       ).toEqual([]);
 
+      // Verify empty-table Row 4 format cloning on 3-column Specs and 4-column Vendors & Contacts
+      const copiedSpecsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeSpecsBinding.sheetName,
+        rangeName: ffeSpecsBinding.rangeName,
+        endMarker: ffeSpecsBinding.endMarker,
+      });
+      const specsTagIdx = copiedSpecsGrid.headerRow.indexOf('Tag');
+      const insertedSpecRow = copiedSpecsGrid.dataRows.find(
+        (r) => r.cells[specsTagIdx]?.formattedValue.trim() === customSpecTag
+      );
+      expect(insertedSpecRow?.cells.map((c) => c.userEnteredFormat)).toEqual(
+        templateSpecsRow.cells.map((c) => c.userEnteredFormat)
+      );
+
+      const copiedVendorsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeVendorsBinding.sheetName,
+        rangeName: ffeVendorsBinding.rangeName,
+        endMarker: ffeVendorsBinding.endMarker,
+      });
+      const vendorsKeyIdx = copiedVendorsGrid.headerRow.indexOf('Key');
+      const insertedVendorRow = copiedVendorsGrid.dataRows.find(
+        (r) => r.cells[vendorsKeyIdx]?.formattedValue.trim() === customVendor
+      );
+      expect(insertedVendorRow?.cells.map((c) => c.userEnteredFormat)).toEqual(
+        templateVendorsRow.cells.map((c) => c.userEnteredFormat)
+      );
+
+      const copiedContactsGrid = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: optSpreadsheetId,
+        sheetName: ffeContactsBinding.sheetName,
+        rangeName: ffeContactsBinding.rangeName,
+        endMarker: ffeContactsBinding.endMarker,
+      });
+      const contactsKeyIdx = copiedContactsGrid.headerRow.indexOf('Key');
+      const insertedContactRow = copiedContactsGrid.dataRows.find(
+        (r) => r.cells[contactsKeyIdx]?.formattedValue.trim() === customFfeContact
+      );
+      expect(insertedContactRow?.cells.map((c) => c.userEnteredFormat)).toEqual(
+        templateContactsRow.cells.map((c) => c.userEnteredFormat)
+      );
+
       const ffeTableAfter = await sheetsClient.readTable({ target: optFfeTarget });
       expect(ffeTableAfter.formulaColumns).toEqual(['Spec Title']);
       expect(ffeTableAfter.rows).toHaveLength(1);
       expect(ffeTableAfter.rows[0].values).toMatchObject({
         'Spec Tag': customSpecTag,
+        'Related Tag': customRelatedTag,
         'Spec Title': customSpecTitle,
         Vendor: customVendor,
         Contact: customFfeContact,
       });
       expect(findSheetErrorTokens(ffeTableAfter.rows[0].values)).toEqual([]);
+
+      // Verify Submittal FF&E!L6 (Calc File Name) evaluates shifted Actions lookup cleanly (_RR)
+      const calcFileNameRes = await sheetsApi.spreadsheets.values.get({
+        spreadsheetId: optSpreadsheetId,
+        range: `'${ffeLogSchema.target.sheetName}'!L6`,
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(calcFileNameRes.data.values?.[0]?.[0]).toBe(
+        `${customSpecTag}-0 ${customVendor} - 260401 ${customFfeContact}_RR`
+      );
 
       const updatedFfeOptions = await logWiring.documentLogService.readOptionTables!({
         documentTypeKey: 'submittal-ffe',
@@ -1744,6 +2047,9 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       if (updatedFfeOptions.status !== 'ready') return;
       expect(updatedFfeOptions.tables.specs?.tuples).toContainEqual(
         expect.objectContaining({ key: customSpecTag, name: customSpecTitle })
+      );
+      expect(updatedFfeOptions.tables.specs?.tuples).toContainEqual(
+        expect.objectContaining({ key: customRelatedTag, name: '' })
       );
       expect(updatedFfeOptions.tables.vendors?.tuples).toContainEqual(
         expect.objectContaining({ key: customVendor, name: customVendor })
@@ -1761,10 +2067,14 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       expect(ffeLogRead.entries[0].valid).toBe(true);
       expect(ffeLogRead.entries[0].document.data).toMatchObject({
         specTag: { key: customSpecTag, name: customSpecTitle },
+        relatedTag: { key: customRelatedTag, name: '' },
         specTitle: customSpecTitle,
         vendor: { key: customVendor, name: customVendor },
         contact: { key: customFfeContact, name: customFfeContact },
       });
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, optSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
     } finally {
       for (const id of [...localCleanupIds].reverse()) {
         try {
@@ -1775,4 +2085,302 @@ describe.skipIf(!TEST_FOLDER_ID)('Live DocumentLog E2E Verification (Copy-and-Tr
       }
     }
   }, 180_000);
+
+  it('resolves submittal-ffe Vendors, Contacts, and duplicate-row Specs via SourceParser Pass 2 using seeded, concatenated, and RFC 4180 CSV Tier 2 Aliases alongside additive Tier 3 @domain fallback on a copied DocumentLog', async () => {
+    const liveDriveClient = requireDriveClient();
+    const templateId = sampleFixture.metadata.templateSpreadsheetId;
+    const ffeLogSchema = logWiring.logSchemaRegistry.getDocumentLogSchema('submittal-ffe');
+    expect(ffeLogSchema).toBeDefined();
+    if (!ffeLogSchema) {
+      return;
+    }
+
+    const ffeSpecsBinding = ffeLogSchema.optionBindings?.specs;
+    const ffeVendorsBinding = ffeLogSchema.optionBindings?.vendors;
+    const ffeContactsBinding = ffeLogSchema.optionBindings?.contacts;
+    expect(ffeSpecsBinding).toBeDefined();
+    expect(ffeVendorsBinding).toBeDefined();
+    expect(ffeContactsBinding).toBeDefined();
+    if (!ffeSpecsBinding || !ffeVendorsBinding || !ffeContactsBinding) {
+      return;
+    }
+
+    const runId = `sp-ffe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localCleanupIds: string[] = [];
+    const trackLocal = (id: string | undefined): void => {
+      if (!id || id.trim().length === 0) return;
+      if (id === TEST_FOLDER_ID || id === templateId) return;
+      if (!localCleanupIds.includes(id)) localCleanupIds.push(id);
+    };
+
+    try {
+      const spSpaceName = `Harborview FFE SourceParser Live ${runId}`;
+      const spSpaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID!, spSpaceName);
+      trackLocal(spSpaceFolder.id);
+
+      const spSpace = {
+        id: `live-sp-ffe-space-${runId}`,
+        typeId: 'proposals',
+        name: spSpaceName,
+        abstractStorageId: spSpaceFolder.id,
+      };
+
+      const spCopy = await logWiring.documentLogService.copyLog(spSpace);
+      const spSpreadsheetId = spCopy.candidate.id;
+      const spAdminId = spCopy.candidate.parents?.[0];
+      if (spAdminId && spAdminId !== spSpaceFolder.id) {
+        trackLocal(spAdminId);
+      }
+      trackLocal(spSpreadsheetId);
+
+      // 1) Seeded Tier 2 Vendors & Contacts Aliases match out of the box on untouched copied template
+      const seededParser = sourceParserWiring.createSourceParser({});
+      const seededFfeMatch = await seededParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-seeded-${runId}`,
+            subject: 'CG104-0 Bed Spec Submittal',
+            from: 'Vendor <sales@fildoux.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(seededFfeMatch.fields.specTag).toBe('CG104');
+      expect(seededFfeMatch.fields.specTitle).toBe('BED - KING');
+      expect(seededFfeMatch.fields.vendor).toBe('FDT');
+
+      const seededContactMatch = await seededParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-seeded-contact-${runId}`,
+            subject: 'AC102-0 Coat Hook',
+            from: 'Buyer <buyer@benjaminwest.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(seededContactMatch.fields.contact).toBe('BW');
+      expect(seededContactMatch.fields.specTag).toBe('AC102');
+      expect(seededContactMatch.fields.specTitle).toBe('HOOK');
+
+      // 2) Customize Tier 2 Aliases on copied DocumentLog:
+      //    - Duplicate Spec Tag rows (AC102) receive distinct Aliases strings concatenated & deduplicated
+      //    - BM & BW receive RFC 4180 CSV with commas + escaped "" quotes and omit @domain (verifying additive Tier 3 retention)
+      //    - LA receives @ashleylighting.com (verifying Tier 2 token override over Tier 3 AL)
+      const rangeNames = [
+        ffeSpecsBinding.rangeName,
+        ffeVendorsBinding.rangeName,
+        ffeContactsBinding.rangeName,
+      ];
+      const snapshots = await snapshotNamedRanges(
+        sheetsApi,
+        spSpreadsheetId,
+        rangeNames,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const gridValues = await readNamedRangesFormattedValues(
+        sheetsApi,
+        spSpreadsheetId,
+        snapshots,
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+
+      const cellA1ForRowKey = (
+        rangeName: string,
+        keyHeader: string,
+        keyValue: string,
+        occurrence = 0
+      ): string => {
+        const snap = snapshots[rangeName];
+        const rows = gridValues[rangeName] ?? [];
+        const header = rows[0] ?? [];
+        const keyCol = header.findIndex((c) => String(c).trim() === keyHeader);
+        const aliasesCol = header.findIndex((c) => String(c).trim() === 'Aliases');
+        expect(keyCol).toBeGreaterThanOrEqual(0);
+        expect(aliasesCol).toBeGreaterThanOrEqual(0);
+        let seen = 0;
+        const rowOffset = rows.findIndex((r, idx) => {
+          if (idx === 0 || String(r[keyCol] ?? '').trim() !== keyValue) {
+            return false;
+          }
+          if (seen === occurrence) {
+            return true;
+          }
+          seen++;
+          return false;
+        });
+        expect(rowOffset).toBeGreaterThan(0);
+        const startRow = (snap.gridRange.startRowIndex ?? 0) + 1;
+        const colLetter = String.fromCharCode(65 + (snap.gridRange.startColumnIndex ?? 0) + aliasesCol);
+        return `'${snap.sheetTitle}'!${colLetter}${startRow + rowOffset}`;
+      };
+
+      await sheetsApi.spreadsheets.values.batchUpdate({
+        spreadsheetId: spSpreadsheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            {
+              range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 0),
+              values: [['XY999, "Hook, ""Solid"" Brass"']],
+            },
+            {
+              range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 1),
+              values: [['xy999, ZZ888, "Hook, ""Solid"" Brass"']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'BM'),
+              values: [['"Berman, ""Custom"" Falk", BM-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'AL'),
+              values: [['AL-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'LA'),
+              values: [['@ashleylighting.com, LA-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeContactsBinding.rangeName, 'Key', 'BW'),
+              values: [['"West, ""NYC"" Procurement", BW-Custom']],
+            },
+          ],
+        },
+      });
+
+      const updatedOptions = await logWiring.documentLogService.readOptionTables!({
+        documentTypeKey: 'submittal-ffe',
+        selectedLogId: spSpreadsheetId,
+        sourceKeys: ['specs'],
+      });
+      expect(updatedOptions.status).toBe('ready');
+      if (updatedOptions.status !== 'ready') return;
+      const ac102Tuple = updatedOptions.tables.specs?.tuples.find((t) => t.key === 'AC102');
+      expect(ac102Tuple).toEqual({
+        key: 'AC102',
+        name: 'HOOK',
+        aliases: ['XY999', 'Hook, "Solid" Brass', 'ZZ888'],
+      });
+
+      // Fresh WorkspaceExecutionContext so per-request LookupOptions cache reads updated Aliases
+      const customParser = sourceParserWiring.createSourceParser({});
+
+      const duplicateSpecAndCsvMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-dup-csv-${runId}`,
+            subject: 'ZZ888-0 Berman, "Custom" Falk Submittal',
+            from: 'West, "NYC" Procurement <noreply@relay.example.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(duplicateSpecAndCsvMatch.fields.specTag).toBe('AC102');
+      expect(duplicateSpecAndCsvMatch.fields.specTitle).toBe('HOOK');
+      expect(duplicateSpecAndCsvMatch.fields.vendor).toBe('BM');
+      expect(duplicateSpecAndCsvMatch.fields.contact).toBe('BW');
+
+      const additiveTier3VendorMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-tier3-vendor-${runId}`,
+            subject: 'CG104-0 Lounge Bed',
+            from: 'Sales <sales@bermanfalk.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(additiveTier3VendorMatch.fields.vendor).toBe('BM');
+
+      const additiveTier3ContactMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-tier3-contact-${runId}`,
+            subject: 'CG104-0 Lounge Bed',
+            from: 'Buyer <buyer@benjaminwest.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(additiveTier3ContactMatch.fields.contact).toBe('BW');
+
+      const tier2OverrideVendorMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-tier2-override-${runId}`,
+            subject: 'CG104-0 Lounge Bed',
+            from: 'Sales <sales@ashleylighting.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(tier2OverrideVendorMatch.fields.vendor).toBe('LA');
+
+      const tier3NonCollidingVendorMatch = await customParser.extractFields({
+        documentTypeKey: 'submittal-ffe',
+        spaceId: spSpace.abstractStorageId,
+        selectedLogId: spSpreadsheetId,
+        context: {
+          isDriveUrl: false,
+          email: {
+            id: `msg-ffe-tier3-al-${runId}`,
+            subject: 'CG104-0 Lounge Bed',
+            from: 'Ashley Lighting <noreply@other.example.com>',
+            to: 'PM <pm@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX'],
+          },
+        },
+      });
+      expect(tier3NonCollidingVendorMatch.fields.vendor).toBe('AL');
+
+      expect(
+        await findSpreadsheetErrorTokens(sheetsApi, spSpreadsheetId, DEFAULT_LIVE_RETRY_OPTIONS)
+      ).toEqual([]);
+    } finally {
+      for (const id of [...localCleanupIds].reverse()) {
+        try {
+          await liveDriveClient.trash(id);
+        } catch {
+          // Best-effort cleanup of every created artifact
+        }
+      }
+    }
+  }, 120_000);
 });
