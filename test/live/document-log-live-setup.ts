@@ -1,135 +1,15 @@
-import * as path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 // nosemgrep: adapter-leakage-warning
 import type { sheets_v4 } from 'googleapis';
-import { createDocumentLogWiring, type DocumentLogWiring } from '../../src/app/document-log.wiring';
-import { createDocumentSpaceFeatureWiring } from '../../src/app/document-space.wiring';
-import {
-  createDocumentFeatureWiring,
-  createDocumentServiceFactory,
-} from '../../src/app/document.wiring';
-import { createLookupOptionsWiring } from '../../src/app/lookup-options.wiring';
-import { createSourceParserWiring, type SourceParserWiring } from '../../src/app/source-parser.wiring';
-import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wiring';
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
-import type { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
-import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
-import type { GoogleSheetsClient } from '../../src/infrastructure/sheets';
-import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
   LiveTestHarness,
-  buildPositiveTableTarget,
-  cleanupScratchSpace,
-  createCleanupTracker,
-  expectAliasesHeaderNote,
   type CleanupTracker,
+  type LiveAppWiring,
 } from './live-test-harness';
 
 export const sampleFixture = LiveTestHarness.sheets.loadDocumentLogSampleFixture();
 export const TEST_FOLDER_ID = LiveTestHarness.auth.getDocumentLogTestFolderId();
-
-export {
-  buildPositiveTableTarget,
-  cleanupScratchSpace,
-  createCleanupTracker,
-  expectAliasesHeaderNote,
-  type CleanupTracker,
-};
-
-export interface DocumentLogLiveWiring {
-  driveClient: GoogleDriveClient;
-  sheetsApi: sheets_v4.Sheets;
-  sheetsClient: GoogleSheetsClient;
-  logWiring: DocumentLogWiring;
-  sourceParserWiring: SourceParserWiring;
-  documentServiceFactory: DocumentServiceFactory;
-}
-
-export async function initializeDocumentLogLiveWiring(): Promise<DocumentLogLiveWiring> {
-  if (!TEST_FOLDER_ID) {
-    throw new Error('DOCUMENT_LOG_TEST_FOLDER_ID is required for live DocumentLog E2E tests.');
-  }
-
-  const auth = LiveTestHarness.auth.resolveLiveGoogleAuth();
-  const driveClient = LiveTestHarness.clients.createLiveDriveClient(auth);
-  const { sheetsApi, sheetsClient } = LiveTestHarness.clients.createLiveSheetsClient(auth);
-
-  const manifestProvider = new AppManifestProvider({
-    manifestPath: path.resolve(__dirname, '../../assets/manifest.json'),
-  });
-  const handlebars = new HandlebarsAdapter();
-  const { documentSchemaRegistry, compiledSchemaRegistry } = createDocumentFeatureWiring({
-    manifestProvider,
-    templateEvaluator: handlebars,
-  });
-  await compiledSchemaRegistry.initialize();
-
-  const logWiring = createDocumentLogWiring({
-    manifestProvider,
-    driveClient,
-    sheetsClient,
-    configProvider: manifestProvider,
-    templateEvaluator: handlebars,
-  });
-  await logWiring.logSchemaRegistry.initialize();
-
-  const lookupOptionsWiring = createLookupOptionsWiring({
-    manifestProvider,
-    documentSchemaRegistry,
-    driveClient,
-    configProvider: manifestProvider,
-    getDocumentLogService: (ctx) => logWiring.getPerRequestService(ctx),
-    ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
-  });
-
-  const spaceWiring = createDocumentSpaceFeatureWiring({
-    rawManifestProvider: manifestProvider,
-    driveClient,
-  });
-  await spaceWiring.documentSpaceService.initialize();
-
-  const sourceParserWiring = createSourceParserWiring({
-    spaceTypesProvider: spaceWiring.documentSpaceService,
-    manifestProvider,
-    driveClient,
-    configProvider: manifestProvider,
-    templateEvaluator: handlebars,
-    getCanonicalOptionsProvider: (ctx) => lookupOptionsWiring.createCanonicalOptionsProvider(ctx),
-  });
-  await sourceParserWiring.parseSchemaRegistry.initialize();
-
-  const documentServiceFactory = createDocumentServiceFactory({
-    manifestProvider,
-    documentSchemaRegistry,
-    templateEvaluator: handlebars,
-    compiledSchemaRegistry,
-    configProvider: manifestProvider,
-    driveClient,
-    documentLogService: logWiring.documentLogService,
-    ensureDocumentLogInitialized: () => logWiring.logSchemaRegistry.initialize(),
-    getDynamicValidator: (requestContext) =>
-      lookupOptionsWiring.createDynamicValidator(requestContext),
-    createAdditionalActivityHandlers: (context, requestContext) => {
-      const effectiveCtx = requestContext ?? context;
-      const sharedLookup = lookupOptionsWiring.getPerRequestLookupOptions(effectiveCtx);
-      return [
-        logWiring.createPerRequestActivityHandler(effectiveCtx, {
-          ...(context.selectedLogId !== undefined ? { selectedLogId: context.selectedLogId } : {}),
-          onWriteLogSuccess: () => sharedLookup.invalidate(),
-        }),
-      ];
-    },
-  });
-
-  return {
-    driveClient,
-    sheetsApi,
-    sheetsClient,
-    logWiring,
-    sourceParserWiring,
-    documentServiceFactory,
-  };
-}
 
 export interface ScratchSpaceProvisioning {
   spaceName: string;
@@ -140,20 +20,23 @@ export interface ScratchSpaceProvisioning {
   adminFolderId: string | undefined;
 }
 
+/**
+ * Provisions an isolated scratch DocumentSpace folder and DocumentLog copy under `TEST_FOLDER_ID`,
+ * registering the top-level folder, `"1 Admin"` subfolder, and spreadsheet with `tracker`.
+ */
 export async function provisionDocumentLogScratchSpace(params: {
-  driveClient: GoogleDriveClient;
-  logWiring: DocumentLogWiring;
+  wiring: Pick<LiveAppWiring, 'driveClient' | 'logWiring'>;
   spaceName: string;
   spaceId: string;
-  trackCleanupId: (id: string | undefined) => void;
+  tracker: CleanupTracker;
 }): Promise<ScratchSpaceProvisioning> {
   if (!TEST_FOLDER_ID) {
     throw new Error('DOCUMENT_LOG_TEST_FOLDER_ID is required for live DocumentLog E2E tests.');
   }
 
-  const { driveClient, logWiring, spaceName, spaceId, trackCleanupId } = params;
-  const spaceFolder = await driveClient.findOrCreateFolder(TEST_FOLDER_ID, spaceName);
-  trackCleanupId(spaceFolder.id);
+  const { wiring, spaceName, spaceId, tracker } = params;
+  const spaceFolder = await wiring.driveClient.findOrCreateFolder(TEST_FOLDER_ID, spaceName);
+  tracker.trackFolder(spaceFolder.id);
 
   const space = {
     id: spaceId,
@@ -162,7 +45,7 @@ export async function provisionDocumentLogScratchSpace(params: {
     abstractStorageId: spaceFolder.id,
   };
 
-  const copyResult = await logWiring.documentLogService.copyLog(space);
+  const copyResult = await wiring.logWiring.documentLogService.copyLog(space);
   const spreadsheetId = copyResult.candidate.id;
   let adminFolderId: string | undefined;
   const copiedParentId = copyResult.candidate.parents?.[0];
@@ -170,14 +53,14 @@ export async function provisionDocumentLogScratchSpace(params: {
     adminFolderId = copiedParentId;
   } else {
     try {
-      const resolvedAdmin = await driveClient.resolveFolderPath(spaceFolder.id, ['1 Admin']);
+      const resolvedAdmin = await wiring.driveClient.resolveFolderPath(spaceFolder.id, ['1 Admin']);
       adminFolderId = resolvedAdmin.id;
     } catch {
-      // Verified in test assertions; afterAll also performs best-effort cleanup
+      // Verified in test assertions; cleanupScratchSpace also performs best-effort discovery
     }
   }
-  trackCleanupId(adminFolderId);
-  trackCleanupId(spreadsheetId);
+  tracker.trackFolder(adminFolderId, spaceFolder.id);
+  tracker.trackSpreadsheet(spreadsheetId, adminFolderId ?? spaceFolder.id);
 
   return {
     spaceName,
@@ -189,14 +72,17 @@ export async function provisionDocumentLogScratchSpace(params: {
   };
 }
 
+/**
+ * Uploads a single-page PDF fixture into `targetFolderId` and registers it for cleanup.
+ */
 export async function uploadDummyPdf(params: {
-  driveClient: GoogleDriveClient;
+  driveClient: LiveAppWiring['driveClient'];
   targetFolderId: string;
   fileName: string;
   textContent: string;
-  trackCleanupId: (id: string | undefined) => void;
+  tracker: CleanupTracker;
 }): Promise<{ id: string; name: string }> {
-  const { driveClient, targetFolderId, fileName, textContent, trackCleanupId } = params;
+  const { driveClient, targetFolderId, fileName, textContent, tracker } = params;
   const dummyPdfDoc = await PDFDocument.create();
   dummyPdfDoc.addPage([612, 792]).drawText(textContent);
   const dummyPdfBytes = Buffer.from(await dummyPdfDoc.save());
@@ -207,6 +93,77 @@ export async function uploadDummyPdf(params: {
     targetFolderId,
     mimeType: 'application/pdf',
   });
-  trackCleanupId(uploaded.id);
+  tracker.track(uploaded.id, { kind: 'file', parentFolderId: targetFolderId });
   return { id: uploaded.id, name: fileName };
+}
+
+/**
+ * Extracts cell data for a 0-based absolute row index from a `Spreadsheet` returned with `GridData`.
+ */
+export function getRowCellsFromSpreadsheetGrid(
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  sheetTitle: string,
+  absRowIndex: number
+): sheets_v4.Schema$CellData[] {
+  const sheet = (spreadsheet.sheets ?? []).find(
+    (s) => s.properties?.title?.toLowerCase() === sheetTitle.toLowerCase()
+  );
+  for (const gridData of sheet?.data ?? []) {
+    const baseRow = gridData.startRow ?? 0;
+    const rowData = gridData.rowData ?? [];
+    if (absRowIndex >= baseRow && absRowIndex < baseRow + rowData.length) {
+      return rowData[absRowIndex - baseRow]?.values ?? [];
+    }
+  }
+  return [];
+}
+
+/**
+ * Scans all `GridData` sheets in an already-fetched `Schema$Spreadsheet` for Sheets error tokens
+ * (`#REF!`, `#ERROR!`, `#N/A`, `#VALUE!`, `#NAME?`, `#DIV/0!`) without issuing additional API reads.
+ */
+export function findGridErrorTokens(spreadsheet: sheets_v4.Schema$Spreadsheet): Array<{
+  sheetTitle: string;
+  rowNumber: number;
+  columnIndex: number;
+  value: string;
+  tokens: string[];
+}> {
+  const findings: Array<{
+    sheetTitle: string;
+    rowNumber: number;
+    columnIndex: number;
+    value: string;
+    tokens: string[];
+  }> = [];
+
+  for (const sheet of spreadsheet.sheets ?? []) {
+    const sheetTitle = sheet.properties?.title ?? '';
+    for (const gridData of sheet.data ?? []) {
+      const baseRow = gridData.startRow ?? 0;
+      const baseCol = gridData.startColumn ?? 0;
+      (gridData.rowData ?? []).forEach((row, rowOffset) => {
+        (row.values ?? []).forEach((cell, colOffset) => {
+          const val = cell.formattedValue;
+          if (typeof val !== 'string' || val.length === 0) {
+            return;
+          }
+          const tokens = LiveTestHarness.sheets.SHEET_ERROR_TOKENS.filter((token) =>
+            val.includes(token)
+          );
+          if (tokens.length > 0) {
+            findings.push({
+              sheetTitle,
+              rowNumber: baseRow + rowOffset + 1,
+              columnIndex: baseCol + colOffset,
+              value: val,
+              tokens,
+            });
+          }
+        });
+      });
+    }
+  }
+
+  return findings;
 }
