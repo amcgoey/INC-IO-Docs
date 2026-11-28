@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { google, type gmail_v1 } from 'googleapis';
+import * as googleGmail from '@googleapis/gmail';
+import type { gmail_v1 } from '@googleapis/gmail';
 import { OAuth2Client } from 'google-auth-library';
 import { GoogleGmailClient, parseMessageDetails } from './gmail-client';
 import { GoogleGmailApiError, GoogleGmailNotFoundError } from './errors';
@@ -285,7 +286,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: ephemeralMockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(ephemeralGmail);
 
       const client = new GoogleGmailClient({ gmail: defaultGmail });
       const result = await client.getMessage('msg-auth', { auth: 'ya29.override-auth' });
@@ -314,7 +315,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: ephemeralMockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(ephemeralGmail);
 
       const client = new GoogleGmailClient({ gmail: defaultGmail });
       const result = await client.getMessage('msg-token', { accessToken: 'ya29.override-token' });
@@ -337,7 +338,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
 
       const client = new GoogleGmailClient({ auth: 'ya29.constructor-token' });
       const result = await client.getMessage('test-msg');
@@ -358,7 +359,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
 
       const client = new GoogleGmailClient({ auth: oauth2Client });
       const result = await client.getMessage('test-msg');
@@ -378,7 +379,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
 
       const client = new GoogleGmailClient();
       const result = await client.getMessage('test-msg');
@@ -440,7 +441,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { attachments: { get: ephemeralMockGet } } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(ephemeralGmail);
 
       const client = new GoogleGmailClient({ gmail: defaultGmail });
       const result = await client.getAttachment('msg-1', 'att-1', { auth: 'ya29.override-auth' });
@@ -470,7 +471,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { attachments: { get: ephemeralMockGet } } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(ephemeralGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(ephemeralGmail);
 
       const client = new GoogleGmailClient({ gmail: defaultGmail });
       const result = await client.getAttachment('msg-2', 'att-2', { accessToken: 'ya29.override-token' });
@@ -1847,7 +1848,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
 
       const client = new GoogleGmailClient();
 
@@ -1872,7 +1873,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       const promise1 = client.getMessage('msg-concurrent', { auth: 'token-abc' });
@@ -1908,7 +1909,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       await client.getMessage('msg-shared-id', { auth: 'token-user-1' });
@@ -1931,7 +1932,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       const oauthClient1 = new OAuth2Client();
@@ -1964,7 +1965,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       const res1 = await client.getMessage('msg-alpha', { auth: 'token-same' });
@@ -1989,7 +1990,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       await client.getMessage('msg-mapped', { auth: 'token-mapped' });
@@ -2013,7 +2014,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient({
         cacheOptions: {
           ttlMs: 60_000,
@@ -2059,7 +2060,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       // Attempt 1 fails
@@ -2090,7 +2091,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient({
         cacheOptions: {
           maxEntries: 2,
@@ -2133,7 +2134,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       await client.getMessage('  msg-trim  ', { auth: 'tok' });
@@ -2156,7 +2157,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient({ auth: 'ya29.ctor-token' });
 
       await client.getMessage('msg-ctor-auth');
@@ -2179,7 +2180,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       expect(client.getCacheSize()).toBe(0);
@@ -2208,7 +2209,7 @@ describe('GoogleGmailClient', () => {
         users: { messages: { get: mockGet } },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmail);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmail);
       const client = new GoogleGmailClient();
 
       await client.getMessage('msg-skip-cache', { auth: 'tok' });

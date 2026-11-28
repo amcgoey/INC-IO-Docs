@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { docs_v1 } from 'googleapis';
+import type { docs_v1 } from '@googleapis/docs';
 import { createHttpServer } from '../infrastructure/http';
 import { GoogleDocsClient } from '../infrastructure/docs';
 import { getDocumentInfoWidgetName } from '../features/schema-driven-ui/blocks/document-info';

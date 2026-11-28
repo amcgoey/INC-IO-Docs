@@ -1,4 +1,4 @@
-import { google, type docs_v1 } from 'googleapis';
+import { docs, type docs_v1 } from '@googleapis/docs';
 import { OAuth2Client } from 'google-auth-library';
 import type {
   DocsOperationOptions,
@@ -35,7 +35,7 @@ export class GoogleDocsClient {
     } else if (options.auth !== undefined) {
       this.defaultDocs = this.resolveDocsClient(options.auth);
     } else {
-      this.defaultDocs = google.docs({ version: 'v1' });
+      this.defaultDocs = docs({ version: 'v1' });
     }
   }
 
@@ -48,7 +48,7 @@ export class GoogleDocsClient {
       auth = credential;
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return google.docs({ version: 'v1', auth: auth as any });
+    return docs({ version: 'v1', auth: auth as any });
   }
 
   extractFormData(document: unknown): GoogleDocsFormExtractResult {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 // nosemgrep: adapter-leakage-warning
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import type { PositiveTableTarget } from '../../src/infrastructure/sheets';
 import {
   SHEET_ERROR_TOKENS,

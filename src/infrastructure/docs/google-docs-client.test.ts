@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import nock from 'nock';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { OAuth2Client } from 'google-auth-library';
-import type { docs_v1 } from 'googleapis';
+import type { docs_v1 } from '@googleapis/docs';
 import { GoogleDocsClient } from './google-docs-client';
 import {
   GoogleDocsApiError,

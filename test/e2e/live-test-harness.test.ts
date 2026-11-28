@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // nosemgrep: adapter-leakage-warning
-import type { drive_v3, sheets_v4 } from 'googleapis';
+import type { drive_v3 } from '@googleapis/drive';
+// nosemgrep: adapter-leakage-warning
+import type { sheets_v4 } from '@googleapis/sheets';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import { GoogleSheetsClient } from '../../src/infrastructure/sheets';
 import { LiveTestHarness } from '../live/live-test-harness';

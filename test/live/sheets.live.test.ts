@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 // nosemgrep: adapter-leakage-warning
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import type { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import {
   GoogleSheetsClient,

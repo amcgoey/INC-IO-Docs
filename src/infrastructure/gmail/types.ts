@@ -1,6 +1,6 @@
 import { Type, type Static } from '@sinclair/typebox';
 import type { OAuth2Client } from 'google-auth-library';
-import type { gmail_v1 } from 'googleapis';
+import type { gmail_v1 } from '@googleapis/gmail';
 
 export interface GmailRetryOptions {
   maxRetries?: number | undefined;

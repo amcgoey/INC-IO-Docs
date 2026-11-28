@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 // nosemgrep: adapter-leakage-warning
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
 import {
   LiveTestHarness,

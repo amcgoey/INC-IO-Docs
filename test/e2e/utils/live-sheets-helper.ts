@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 // nosemgrep: adapter-leakage-warning
-import { google, type sheets_v4 } from 'googleapis';
+import { sheets, type sheets_v4 } from '@googleapis/sheets';
 import {
   buildColumnIndexMap,
   cellValueToCellData,
@@ -166,9 +166,9 @@ export function partialHydrationRowToCellInputs(
  * Creates an authenticated `sheets_v4.Sheets` client for live integration tests.
  */
 export function createLiveSheetsApi(auth: OAuth2Client | GoogleAuth): sheets_v4.Sheets {
-  return google.sheets({
+  return sheets({
     version: 'v4',
-    auth: auth as NonNullable<Parameters<typeof google.sheets>[0]['auth']>,
+    auth: auth as NonNullable<sheets_v4.Options['auth']>,
   });
 }
 

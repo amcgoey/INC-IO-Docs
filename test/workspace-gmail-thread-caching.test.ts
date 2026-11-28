@@ -4,7 +4,9 @@ import { Value } from '@sinclair/typebox/value';
 import { createApp } from '../src/app/server';
 import { GoogleGmailClient } from '../src/infrastructure/gmail/gmail-client';
 // nosemgrep: adapter-leakage-warning
-import { google, type gmail_v1 } from 'googleapis';
+import * as googleGmail from '@googleapis/gmail';
+// nosemgrep: adapter-leakage-warning
+import type { gmail_v1 } from '@googleapis/gmail';
 import {
   GoogleWorkspaceActionResponseSchema,
   type GoogleWorkspaceActionResponse,
@@ -126,7 +128,7 @@ describe('Workspace Gmail Thread Switching & Caching Integration', () => {
         },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmailApi);
 
       const memoizedGmailClient = new GoogleGmailClient({
         gmail: mockGmailApi,
@@ -279,7 +281,7 @@ describe('Workspace Gmail Thread Switching & Caching Integration', () => {
         },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmailApi);
 
       const memoizedGmailClient = new GoogleGmailClient({
         gmail: mockGmailApi,
@@ -1008,7 +1010,7 @@ describe('Workspace Gmail Thread Switching & Caching Integration', () => {
         },
       } as unknown as gmail_v1.Gmail;
 
-      const gmailSpy = vi.spyOn(google, 'gmail').mockReturnValue(mockGmailApi);
+      const gmailSpy = vi.spyOn(googleGmail, 'gmail').mockReturnValue(mockGmailApi);
 
       const realGmailClient = new GoogleGmailClient({
         gmail: mockGmailApi,
