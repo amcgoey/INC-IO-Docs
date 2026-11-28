@@ -178,7 +178,7 @@ npm run test:all
 
 1. **`npm run lint`**: Executes ESLint (`npm run lint:eslint`) and Semgrep (`npm run lint:semgrep` against `semgrep.yml`) to enforce hexagonal architecture boundaries (ensuring `domain.ts` and `ports.ts` never import from `adapters/`, and `src/infrastructure/` never imports from `src/features/`).
 2. **`npm run typecheck`**: Runs `tsc --noEmit` across the root TypeScript project and `npm --prefix infra/pulumi run typecheck` across the Pulumi infrastructure module.
-3. **`npm run test:all`**: Chains `npm test` (offline unit, integration, offline E2E, schema validation, branding byte-drift validation, deployment manifest validation, and documentation contract validation) and `npm run test:infra` (bootstrap script tests in `test/infra/` and Pulumi unit tests in `infra/pulumi/`), excluding `test/live/` so CI remains strictly offline.
+3. **`npm run test:all`**: Runs the unified Vitest projects configuration (`vitest.all.config.mts`) combining the `infra` (`test/infra/` and `test/infra-workflow.test.ts`) and `app` (offline unit, integration, offline E2E, schema validation, branding byte-drift validation, deployment manifest validation, and documentation contract validation) projects in one process pool (scheduling `infra` first to overlap with `app`), followed by Pulumi unit tests (`infra/pulumi/`), keeping `test/live/` isolated so CI remains strictly offline.
 
 ### Automated Cloud Run & `Workspace Addon` Deployment (`develop` → `dev`, `main` → `prod`)
 

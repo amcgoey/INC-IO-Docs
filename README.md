@@ -234,9 +234,9 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 | `npm run dev` | Start the local Fastify server (`src/app/server.ts`) via `tsx`. |
 | `npm run build` | Compile TypeScript source files into `dist/` using `tsconfig.build.json`. |
 | `npm start` | Run the compiled production server (`node dist/src/app/server.js`). |
-| `npm test` | Run fast offline unit, integration, offline E2E (`test/e2e/`), and validation tests (excludes `test/infra/` and `test/live/`). |
-| `npm run test:infra` | Run bootstrap infrastructure tests (`test/infra/`) and Pulumi unit tests (`infra/pulumi/`). |
-| `npm run test:all` | Run the full offline CI gate (`npm test` followed by `npm run test:infra`). |
+| `npm test` | Run fast offline unit, integration, offline E2E (`test/e2e/`), and validation tests via `vitest.config.mts` (excludes `test/infra/`, `test/infra-workflow.test.ts`, and `test/live/`). |
+| `npm run test:infra` | Run infrastructure bootstrap (`test/infra/`) and workflow (`test/infra-workflow.test.ts`) suites via `vitest.infra.config.mts`, plus Pulumi unit tests (`infra/pulumi/`). |
+| `npm run test:all` | Run the full offline CI gate: unified `infra` and `app` Vitest projects in one process pool (`vitest.all.config.mts`, scheduling `infra` first to overlap with `app`) plus Pulumi unit tests (`infra/pulumi/`). |
 | `npm run test:live` | Sequentially run all five opt-in live Google API tracer-bullet suites (`test/live/*.live.test.ts`). |
 | `npm run test:live:<scope>` | Run a single scoped live suite (`sheets`, `arch`, `ffe`, `cover-sheet`, or `space`) within the per-suite Sheets read budget. |
 | `npm run typecheck` | Run strict TypeScript typechecking across both the root project and `infra/pulumi`. |

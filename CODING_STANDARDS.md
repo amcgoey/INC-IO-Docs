@@ -20,7 +20,7 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
 - `src/app/`: The wiring layer. This is the only place where infrastructure modules are injected into feature adapters.
   - **Modular Wiring**: Do not wire feature dependencies in a monolithic `index.ts` or use a global DI framework. You must create per-feature composition roots (e.g., `src/app/document.wiring.ts`). 
   - The main entrypoint simply boots infrastructure and passes it into these feature factories, containing the blast radius of structural refactors to isolated files.
-- `test/`: Cross-feature integration, offline E2E, contract validation, infrastructure bootstrap (`test/infra/`), and live Google (`test/live/`) suites. Unit tests live alongside their subjects in `src/**/*.test.ts`.
+- `test/`: Cross-feature integration, offline E2E, contract validation, infrastructure (`test/infra/`, `test/infra-workflow.test.ts`), and live Google (`test/live/`) suites. Unit tests live alongside their subjects in `src/**/*.test.ts`.
 
 ## Rules
 1. **Dependency Inversion**: Domain and Ports must never import from Adapters. Adapters depend on Ports.
@@ -51,14 +51,14 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
 Use `Vitest` across four isolated test tiers (see `package.json` for script definitions and [ADR 0025](docs/adr/0025-test-tier-isolation-live-tracer-bullets-and-retry-seams.md) for rationale):
 
 - **Tiers & Runner Isolation**:
-  - **Offline App & Integration (`test`)**: Fast, deterministic unit, integration, contract validation, and offline E2E suites. Excludes `test/live/` and `test/infra/` so local `.env` credentials remain inert and workers make zero live network calls.
-  - **Infrastructure (`test:infra`)**: Bootstrap script (`test/infra/`) and Pulumi (`infra/pulumi/`) suites.
-  - **Full Offline CI Gate (`test:all`)**: Chains `test` and `test:infra`.
+  - **Offline App & Integration (`test`)**: Fast, deterministic unit, integration, contract validation, and offline E2E suites configured in `vitest.config.mts` (isolating `test/live/`, `test/infra/`, and `test/infra-workflow.test.ts` so local `.env` credentials remain inert and workers make zero live network calls).
+  - **Infrastructure (`test:infra`)**: Bootstrap script (`test/infra/`) and infrastructure workflow (`test/infra-workflow.test.ts`) suites configured in `vitest.infra.config.mts`, plus Pulumi (`infra/pulumi/`) suites.
+  - **Full Offline CI Gate (`test:all`)**: Unified Vitest projects configuration (`vitest.all.config.mts`) running the `infra` and `app` projects in one Vitest process pool (scheduling `infra` first to overlap with `app`), followed by Pulumi (`infra/pulumi/`) suites.
   - **Sequential Live Google API (`test:live`, `test:live:<scope>`)**: Opt-in sequential suites targeting real Google Workspace APIs through `LiveTestHarness`.
 - **Directory Placement**:
   - `src/**/*.test.ts`: Co-located unit tests mocking driven ports.
-  - `test/*.test.ts`, `test/e2e/`, `test/validation/`: Cross-feature integration, offline E2E, and contract validation suites testing real adapters against `nock` or `MultiSpreadsheetSim`.
-  - `test/infra/`: Infrastructure bootstrap script suites.
+  - `test/*.test.ts` (other than `test/infra-workflow.test.ts`), `test/e2e/`, `test/validation/`: Cross-feature integration, offline E2E, and contract validation suites testing real adapters against `nock` or `MultiSpreadsheetSim`.
+  - `test/infra/` and `test/infra-workflow.test.ts`: Infrastructure bootstrap and workflow suites (alongside `infra/pulumi/` for Pulumi unit tests).
   - `test/live/*.live.test.ts`: Live Google tracer-bullet suites.
 - **Live Tracer Bullets vs. Offline Seams**:
   - Cover combinatorial matrices, edge cases, `DocumentSpaceType` logic, and error mapping in offline seam tests (`nock` and `MultiSpreadsheetSim`).

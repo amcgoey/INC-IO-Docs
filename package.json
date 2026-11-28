@@ -5,7 +5,7 @@
   "scripts": {
     "test": "vitest run",
     "test:infra": "vitest run --config vitest.infra.config.mts && npm --prefix infra/pulumi test",
-    "test:all": "npm test && npm run test:infra",
+    "test:all": "vitest run --config vitest.all.config.mts && npm --prefix infra/pulumi test",
     "test:live": "vitest run --config vitest.live.config.mts",
     "test:live:sheets": "vitest run --config vitest.live.config.mts test/live/sheets.live.test.ts",
     "test:live:arch": "vitest run --config vitest.live.config.mts test/live/document-log-arch.live.test.ts",

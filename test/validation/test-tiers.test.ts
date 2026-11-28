@@ -21,7 +21,7 @@ function listVitestFiles(configFile?: string, extraArgs: string[] = []): string[
 
   return output
     .split(/\r?\n/)
-    .map((line) => line.trim().replace(/\\/g, '/'))
+    .map((line) => line.trim().replace(/^\[[^\]]+\]\s*/, '').replace(/\\/g, '/'))
     .filter((line) => line.length > 0);
 }
 
@@ -37,6 +37,8 @@ describe('Four-Tier Test Suite Partitioning & Live Suite Consolidation', () => {
     expect(scripts['test:infra']).toContain('vitest.infra.config.mts');
     expect(scripts['test:infra']).toContain('infra/pulumi');
     expect(scripts['test:all']).toBeDefined();
+    expect(scripts['test:all']).toContain('vitest.all.config.mts');
+    expect(scripts['test:all']).toContain('infra/pulumi');
     expect(scripts['test:live']).toBeDefined();
     expect(scripts['test:live']).toContain('vitest.live.config.mts');
     expect(scripts['test:live:sheets']).toContain('test/live/sheets.live.test.ts');
@@ -46,23 +48,38 @@ describe('Four-Tier Test Suite Partitioning & Live Suite Consolidation', () => {
     expect(scripts['test:live:space']).toContain('test/live/document-space.live.test.ts');
   });
 
-  it('excludes live Google suites and bootstrap tests from the default offline test runner while keeping offline E2E helpers active', () => {
+  it('excludes live Google suites, bootstrap tests, and infra-workflow tests from the default offline test runner while keeping offline E2E helpers active', () => {
     const offlineFiles = listVitestFiles();
 
     expect(offlineFiles).toContain('test/e2e/workspace-addon-e2e.test.ts');
     expect(offlineFiles).toContain('test/e2e/live-google-auth.test.ts');
     expect(offlineFiles).toContain('test/e2e/live-sheets-helper.test.ts');
-    expect(offlineFiles).toContain('test/infra-workflow.test.ts');
 
+    expect(offlineFiles).not.toContain('test/infra-workflow.test.ts');
     expect(offlineFiles.some((file) => file.startsWith('test/live/'))).toBe(false);
     expect(offlineFiles.some((file) => file.startsWith('test/infra/'))).toBe(false);
   }, 30_000);
 
-  it('resolves bootstrap infrastructure tests via vitest.infra.config.mts', () => {
+  it('resolves bootstrap and infra-workflow tests via vitest.infra.config.mts', () => {
     expect(fs.existsSync(path.join(ROOT_DIR, 'vitest.infra.config.mts'))).toBe(true);
     const infraFiles = listVitestFiles('vitest.infra.config.mts');
 
-    expect(infraFiles).toEqual(['test/infra/bootstrap.test.ts']);
+    expect(infraFiles.sort()).toEqual([
+      'test/infra-workflow.test.ts',
+      'test/infra/bootstrap.test.ts',
+    ]);
+  }, 30_000);
+
+  it('unifies offline app and infrastructure Vitest projects under vitest.all.config.mts without live suites', () => {
+    const allConfigPath = path.join(ROOT_DIR, 'vitest.all.config.mts');
+    expect(fs.existsSync(allConfigPath)).toBe(true);
+
+    const offlineFiles = listVitestFiles('vitest.config.mts');
+    const infraFiles = listVitestFiles('vitest.infra.config.mts');
+    const allFiles = listVitestFiles('vitest.all.config.mts');
+
+    expect(allFiles.sort()).toEqual([...offlineFiles, ...infraFiles].sort());
+    expect(allFiles.some((file) => file.startsWith('test/live/'))).toBe(false);
   }, 30_000);
 
   it('consolidates all five live Google suites under test/live/*.live.test.ts with sequential config and 120,000 ms timeouts', async () => {
