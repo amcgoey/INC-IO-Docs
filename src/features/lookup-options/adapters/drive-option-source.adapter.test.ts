@@ -144,4 +144,55 @@ describe('DriveOptionSourceAdapter', () => {
     });
     expect(listFolders).toHaveBeenCalledTimes(2);
   });
+
+  it('propagates AbortSignal to DriveFolderListClient and halts traversal/pagination immediately when aborted', async () => {
+    const controller = new AbortController();
+    const listFolders = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return {
+        folders: [{ id: 'a-1', name: '1 Admin' }],
+        nextPageToken: 'page-2',
+      };
+    });
+
+    const adapter = new DriveOptionSourceAdapter(createMockDriveClient({ listFolders }));
+
+    await expect(
+      adapter.listFoldersAtPath({
+        spaceStorageId: 'space-1',
+        relativePath: '1 Admin/Communication',
+        signal: controller.signal,
+      })
+    ).rejects.toThrow(/abort/i);
+
+    expect(listFolders).toHaveBeenCalledTimes(1);
+    expect(listFolders).toHaveBeenCalledWith(
+      { parentFolderId: 'space-1', pageSize: 100 },
+      { signal: controller.signal }
+    );
+
+    const controller2 = new AbortController();
+    const listFoldersVal = vi.fn().mockImplementation(async () => {
+      controller2.abort();
+      return {
+        folders: [{ id: 'f-1', name: 'Acme' }],
+        nextPageToken: 'page-2',
+      };
+    });
+
+    const adapter2 = new DriveOptionSourceAdapter(createMockDriveClient({ listFolders: listFoldersVal }));
+    await expect(
+      adapter2.validateFolderExistence({
+        spaceStorageId: 'space-1',
+        value: 'Acme',
+        signal: controller2.signal,
+      })
+    ).rejects.toThrow(/abort/i);
+
+    expect(listFoldersVal).toHaveBeenCalledTimes(1);
+    expect(listFoldersVal).toHaveBeenCalledWith(
+      { parentFolderId: 'space-1', name: 'Acme', pageSize: 100 },
+      { signal: controller2.signal }
+    );
+  });
 });

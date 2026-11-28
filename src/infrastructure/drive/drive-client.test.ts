@@ -3678,6 +3678,74 @@ describe('GoogleDriveClient', () => {
       expect(GoogleDriveClient.escapeDriveQuery("folder\\'name")).toBe("folder\\\\\\'name");
     });
   });
+
+  describe('per-call AbortSignal propagation (Ticket #414)', () => {
+    it('aborts listFolders retry backoff immediately when per-call DriveOperationOptions.signal aborts', async () => {
+      const controller = new AbortController();
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce({ status: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({ data: { files: [{ id: 'f-1', name: 'ShouldNotRun' }] } });
+
+      const promise = retryClient.listFolders(
+        { parentFolderId: 'parent-1' },
+        { signal: controller.signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(/abort/i);
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
+    });
+
+    it('aborts searchFiles and resolveFolderPath immediately when per-call signal aborts', async () => {
+      const searchController = new AbortController();
+      const retryClient = new GoogleDriveClient({
+        drive: mockDrive,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce({ status: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({ data: { files: [] } });
+
+      const searchPromise = retryClient.searchFiles(
+        { targetName: 'Document Log' },
+        { signal: searchController.signal }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      searchController.abort();
+
+      await expect(searchPromise).rejects.toThrow(/abort/i);
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
+
+      const resolveController = new AbortController();
+      (mockDrive.files.list as ReturnType<typeof vi.fn>).mockReset();
+      (mockDrive.files.list as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(async () => {
+          resolveController.abort();
+          return { data: { files: [{ id: 'f-admin', name: '1 Admin' }] } };
+        })
+        .mockResolvedValueOnce({ data: { files: [{ id: 'f-comm', name: 'Communication' }] } });
+
+      await expect(
+        retryClient.resolveFolderPath('root-1', ['1 Admin', 'Communication'], {
+          signal: resolveController.signal,
+        })
+      ).rejects.toThrow(/abort/i);
+      expect(mockDrive.files.list).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 

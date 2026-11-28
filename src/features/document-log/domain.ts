@@ -5,6 +5,7 @@ import {
   LogStorageInaccessibleError,
   type CopyDocumentLogResult,
   type DocumentLogEntry,
+  type DocumentLogOperationOptions,
   type DocumentLogOptionBinding,
   type DocumentLogOptionTableSourceResult,
   type DocumentLogPort,
@@ -137,20 +138,47 @@ function filterCandidatesByConfig(
 }
 
 /**
- * Creates a per-resolveLog-call memoized metadata lookup that treats unreadable ancestors as null.
+ * Throws the AbortSignal's reason (or an AbortError) when aborted.
+ */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  if (signal.reason !== undefined) {
+    throw signal.reason;
+  }
+  const err = new Error('Operation aborted');
+  err.name = 'AbortError';
+  throw err;
+}
+
+/**
+ * Creates a per-resolveLog-call memoized metadata lookup that treats unreadable ancestors as null,
+ * while rethrowing when the caller's AbortSignal has aborted.
  */
 function createPerCallGetFileMemo(
-  getFile: (fileId: string) => Promise<LogDiscoveryFileMetadata>
+  getFile: (
+    fileId: string,
+    options?: DocumentLogOperationOptions
+  ) => Promise<LogDiscoveryFileMetadata>,
+  signal?: AbortSignal
 ): (fileId: string) => Promise<LogDiscoveryFileMetadata | null> {
   const cache = new Map<string, Promise<LogDiscoveryFileMetadata | null>>();
+  const forwardOptions = signal !== undefined ? { signal } : undefined;
   return (fileId: string): Promise<LogDiscoveryFileMetadata | null> => {
+    throwIfAborted(signal);
     const existing = cache.get(fileId);
     if (existing) {
       return existing;
     }
     const pending = Promise.resolve()
-      .then(() => getFile(fileId))
-      .catch(() => null);
+      .then(() => (forwardOptions !== undefined ? getFile(fileId, forwardOptions) : getFile(fileId)))
+      .catch((error) => {
+        if (signal?.aborted) {
+          throw error;
+        }
+        return null;
+      });
     cache.set(fileId, pending);
     return pending;
   };
@@ -701,8 +729,10 @@ export class DocumentLogService implements DocumentLogPort {
   }
 
   private async resolveDiscoveryScope(
-    space: DocumentLogSpace
+    space: DocumentLogSpace,
+    signal?: AbortSignal
   ): Promise<{ searchSharedDriveId: string | undefined; useFolderDescendantWalk: boolean }> {
+    throwIfAborted(signal);
     const fetchMethod = this.schemaRegistry.getSpaceFetchMethod?.(space.typeId);
 
     if (fetchMethod === 'shared_drives') {
@@ -712,13 +742,19 @@ export class DocumentLogService implements DocumentLogPort {
       };
     }
 
+    const forwardOptions = signal !== undefined ? { signal } : undefined;
+
     if (fetchMethod === 'folders') {
       if (!this.logDiscovery.getFile) {
         throw new DocumentLogConfigurationError(
           'Folder-backed DocumentLog discovery requires LogDiscoveryPort.getFile to be implemented.'
         );
       }
-      const containerMeta = await this.logDiscovery.getFile(space.abstractStorageId);
+      const containerMeta =
+        forwardOptions !== undefined
+          ? await this.logDiscovery.getFile(space.abstractStorageId, forwardOptions)
+          : await this.logDiscovery.getFile(space.abstractStorageId);
+      throwIfAborted(signal);
       return {
         searchSharedDriveId: containerMeta.driveId,
         useFolderDescendantWalk: true,
@@ -732,7 +768,11 @@ export class DocumentLogService implements DocumentLogPort {
       };
     }
 
-    const containerMeta = await this.logDiscovery.getFile(space.abstractStorageId);
+    const containerMeta =
+      forwardOptions !== undefined
+        ? await this.logDiscovery.getFile(space.abstractStorageId, forwardOptions)
+        : await this.logDiscovery.getFile(space.abstractStorageId);
+    throwIfAborted(signal);
     const isFolderContainer =
       (containerMeta.driveId !== undefined && containerMeta.driveId !== space.abstractStorageId) ||
       (containerMeta.driveId === undefined && containerMeta.mimeType === GOOGLE_FOLDER_MIME_TYPE);
@@ -745,17 +785,25 @@ export class DocumentLogService implements DocumentLogPort {
 
   private async resolvePreferredFolderId(
     rootFolderId: string,
-    preferredFolderPath: string
+    preferredFolderPath: string,
+    signal?: AbortSignal
   ): Promise<string | undefined> {
+    throwIfAborted(signal);
     const pathSegments = splitFolderPath(preferredFolderPath);
     if (!this.logDiscovery.resolveFolderPath || pathSegments.length === 0) {
       return undefined;
     }
 
     try {
-      const { id } = await this.logDiscovery.resolveFolderPath(rootFolderId, pathSegments);
+      const { id } =
+        signal !== undefined
+          ? await this.logDiscovery.resolveFolderPath(rootFolderId, pathSegments, { signal })
+          : await this.logDiscovery.resolveFolderPath(rootFolderId, pathSegments);
       return id;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
       return undefined;
     }
   }
@@ -764,9 +812,14 @@ export class DocumentLogService implements DocumentLogPort {
     return `${space.typeId.trim()}::${space.abstractStorageId.trim()}`;
   }
 
-  async resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult> {
+  async resolveLog(
+    space: DocumentLogSpace,
+    options?: DocumentLogOperationOptions
+  ): Promise<LogResolutionResult> {
+    const { signal } = options ?? {};
+    throwIfAborted(signal);
     if (!this.resolveLogMemo) {
-      return this.executeResolveLog(space);
+      return this.executeResolveLog(space, signal);
     }
 
     const memoKey = this.getResolveLogMemoKey(space);
@@ -775,7 +828,7 @@ export class DocumentLogService implements DocumentLogPort {
       return existing;
     }
 
-    const pending = this.executeResolveLog(space).catch((error) => {
+    const pending = this.executeResolveLog(space, signal).catch((error) => {
       this.resolveLogMemo?.delete(memoKey);
       throw error;
     });
@@ -783,7 +836,11 @@ export class DocumentLogService implements DocumentLogPort {
     return pending;
   }
 
-  private async executeResolveLog(space: DocumentLogSpace): Promise<LogResolutionResult> {
+  private async executeResolveLog(
+    space: DocumentLogSpace,
+    signal?: AbortSignal
+  ): Promise<LogResolutionResult> {
+    throwIfAborted(signal);
     const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(space.typeId);
     if (!discoveryConfig) {
       throw new DocumentLogConfigurationError(
@@ -796,14 +853,23 @@ export class DocumentLogService implements DocumentLogPort {
       );
     }
 
-    const { searchSharedDriveId, useFolderDescendantWalk } = await this.resolveDiscoveryScope(space);
+    const { searchSharedDriveId, useFolderDescendantWalk } = await this.resolveDiscoveryScope(
+      space,
+      signal
+    );
+    throwIfAborted(signal);
 
-    const rawMatches = await this.logDiscovery.searchSpreadsheets({
+    const searchQuery = {
       targetName: discoveryConfig.fileNameContains,
       ...(searchSharedDriveId !== undefined ? { sharedDriveId: searchSharedDriveId } : {}),
       mimeTypes: [GOOGLE_SPREADSHEET_MIME_TYPE],
       exactMatch: false,
-    });
+    };
+    const rawMatches =
+      signal !== undefined
+        ? await this.logDiscovery.searchSpreadsheets(searchQuery, { signal })
+        : await this.logDiscovery.searchSpreadsheets(searchQuery);
+    throwIfAborted(signal);
 
     let filtered = filterCandidatesByConfig(
       rawMatches,
@@ -814,7 +880,7 @@ export class DocumentLogService implements DocumentLogPort {
 
     let getFileMemo: ((fileId: string) => Promise<LogDiscoveryFileMetadata | null>) | undefined;
     if (useFolderDescendantWalk && filtered.length > 0) {
-      getFileMemo = createPerCallGetFileMemo(this.logDiscovery.getFile!);
+      getFileMemo = createPerCallGetFileMemo(this.logDiscovery.getFile!, signal);
       const checked = await Promise.all(
         filtered.map(async (candidate) => ({
           candidate,
@@ -825,6 +891,7 @@ export class DocumentLogService implements DocumentLogPort {
           ),
         }))
       );
+      throwIfAborted(signal);
       filtered = checked.filter((entry) => entry.isDescendant).map((entry) => entry.candidate);
     }
 
@@ -846,8 +913,10 @@ export class DocumentLogService implements DocumentLogPort {
 
     const preferredFolderId = await this.resolvePreferredFolderId(
       space.abstractStorageId,
-      discoveryConfig.preferredFolderPath
+      discoveryConfig.preferredFolderPath,
+      signal
     );
+    throwIfAborted(signal);
 
     const expectedCopyName = this.templateEvaluator.evaluate(discoveryConfig.copyNameTemplate, {
       DocumentSpace: space,
@@ -860,7 +929,7 @@ export class DocumentLogService implements DocumentLogPort {
 
     const candidatesWithParents = this.logDiscovery.getFile
       ? await (async () => {
-          const memo = getFileMemo ?? createPerCallGetFileMemo(this.logDiscovery.getFile!);
+          const memo = getFileMemo ?? createPerCallGetFileMemo(this.logDiscovery.getFile!, signal);
           return Promise.all(
             ranked.map(async (candidate): Promise<LogResolutionCandidate> => {
               const parentId = candidate.parents?.[0]?.trim();
@@ -881,6 +950,7 @@ export class DocumentLogService implements DocumentLogPort {
         })()
       : ranked;
 
+    throwIfAborted(signal);
     return {
       status: 'ambiguous',
       candidates: candidatesWithParents,
@@ -1158,7 +1228,12 @@ export class DocumentLogService implements DocumentLogPort {
    * Reads all requested `_Config` option tables, using `selectedLogId` directly against Google Sheets
    * with zero Drive discovery and falling back once to `resolveLog(space)` on `LogStorageInaccessibleError`.
    */
-  async readOptionTables(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult> {
+  async readOptionTables(
+    request: ReadOptionTablesRequest,
+    options?: DocumentLogOperationOptions
+  ): Promise<ReadOptionTablesResult> {
+    const { signal } = options ?? {};
+    throwIfAborted(signal);
     const { logSchema } = this.requireSchemasForDocumentType(request.documentTypeKey);
 
     const trimmedSelectedId = request.selectedLogId?.trim();
@@ -1189,7 +1264,11 @@ export class DocumentLogService implements DocumentLogPort {
         : undefined;
 
     if (!hasSelectedLogId) {
-      const resolution = await this.resolveLog(normalizedSpace!);
+      const resolution =
+        signal !== undefined
+          ? await this.resolveLog(normalizedSpace!, { signal })
+          : await this.resolveLog(normalizedSpace!);
+      throwIfAborted(signal);
       if (resolution.status === 'missing') {
         return {
           status: 'missing_log',
@@ -1206,6 +1285,7 @@ export class DocumentLogService implements DocumentLogPort {
         spreadsheetId,
         logSchema,
         requestedKeys,
+        signal,
       });
     }
 
@@ -1221,6 +1301,7 @@ export class DocumentLogService implements DocumentLogPort {
           documentTypeKey: request.documentTypeKey,
           logSchema,
           requestedKeys,
+          signal,
         });
       }
     }
@@ -1231,8 +1312,10 @@ export class DocumentLogService implements DocumentLogPort {
         spreadsheetId: trimmedSelectedId,
         logSchema,
         requestedKeys,
+        signal,
       });
     } catch (error) {
+      throwIfAborted(signal);
       if (!(error instanceof LogStorageInaccessibleError)) {
         throw error;
       }
@@ -1250,7 +1333,8 @@ export class DocumentLogService implements DocumentLogPort {
         fallbackPromise = this.resolveStaleSelectedLogFallback(
           trimmedSelectedId,
           normalizedSpace,
-          error
+          error,
+          signal
         ).catch((resolveError) => {
           this.staleSelectedLogFallbackMemo.delete(fallbackMemoKey);
           throw resolveError;
@@ -1258,11 +1342,14 @@ export class DocumentLogService implements DocumentLogPort {
         this.staleSelectedLogFallbackMemo.set(fallbackMemoKey, fallbackPromise);
       }
 
+      const fallback = await fallbackPromise;
+      throwIfAborted(signal);
       return this.applyStaleSelectedLogFallback({
-        fallback: await fallbackPromise,
+        fallback,
         documentTypeKey: request.documentTypeKey,
         logSchema,
         requestedKeys,
+        signal,
       });
     }
   }
@@ -1272,6 +1359,7 @@ export class DocumentLogService implements DocumentLogPort {
     spreadsheetId: string;
     logSchema: DocumentLogSchema;
     requestedKeys: readonly string[];
+    signal?: AbortSignal | undefined;
   }): Promise<ReadOptionTablesResult> {
     const { tableResults } = await this.loadOptionTableEntries({
       ...params,
@@ -1287,9 +1375,15 @@ export class DocumentLogService implements DocumentLogPort {
   private async resolveStaleSelectedLogFallback(
     staleSpreadsheetId: string,
     space: DocumentLogSpace,
-    inaccessibleError: LogStorageInaccessibleError
+    inaccessibleError: LogStorageInaccessibleError,
+    signal?: AbortSignal
   ): Promise<StaleSelectedLogFallback> {
-    const resolution = await this.resolveLog(space);
+    throwIfAborted(signal);
+    const resolution =
+      signal !== undefined
+        ? await this.resolveLog(space, { signal })
+        : await this.resolveLog(space);
+    throwIfAborted(signal);
     if (resolution.status === 'missing') {
       return {
         status: 'missing_log',
@@ -1317,8 +1411,10 @@ export class DocumentLogService implements DocumentLogPort {
     documentTypeKey: string;
     logSchema: DocumentLogSchema;
     requestedKeys: readonly string[];
+    signal?: AbortSignal | undefined;
   }): Promise<ReadOptionTablesResult> {
-    const { fallback, documentTypeKey, logSchema, requestedKeys } = params;
+    const { fallback, documentTypeKey, logSchema, requestedKeys, signal } = params;
+    throwIfAborted(signal);
     if (fallback.status === 'missing_log') {
       return {
         status: 'missing_log',
@@ -1334,6 +1430,7 @@ export class DocumentLogService implements DocumentLogPort {
       spreadsheetId: fallback.spreadsheetId,
       logSchema,
       requestedKeys,
+      signal,
     });
   }
 
@@ -1343,12 +1440,20 @@ export class DocumentLogService implements DocumentLogPort {
     logSchema: DocumentLogSchema;
     requestedKeys: readonly string[];
     requireReadNamedRanges: boolean;
+    signal?: AbortSignal | undefined;
   }): Promise<{
     tuplesBySource: Record<string, readonly LogTargetDocumentOptionTuple[]>;
     tableResults: Record<string, DocumentLogOptionTableSourceResult>;
   }> {
-    const { documentTypeKey, spreadsheetId, logSchema, requestedKeys, requireReadNamedRanges } =
-      params;
+    const {
+      documentTypeKey,
+      spreadsheetId,
+      logSchema,
+      requestedKeys,
+      requireReadNamedRanges,
+      signal,
+    } = params;
+    throwIfAborted(signal);
     const optionBindings = logSchema.optionBindings ?? {};
     const uniqueKeys = Array.from(new Set(requestedKeys));
     if (uniqueKeys.length === 0) {
@@ -1394,10 +1499,14 @@ export class DocumentLogService implements DocumentLogPort {
           );
         }
       } else {
-        const batchPromise = this.logStorage.readNamedRanges({
+        const readRequest = {
           spreadsheetId,
           targets: missingTargets,
-        });
+        };
+        const batchPromise =
+          signal !== undefined
+            ? this.logStorage.readNamedRanges(readRequest, { signal })
+            : this.logStorage.readNamedRanges(readRequest);
 
         for (const target of missingTargets) {
           const binding = optionBindings[target.key]!;
