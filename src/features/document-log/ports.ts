@@ -401,6 +401,23 @@ export class DocumentLogConfigurationError extends DocumentLogError {
   }
 }
 
+export interface LogStorageInaccessibleErrorOptions extends ErrorOptions {
+  spreadsheetId?: string | undefined;
+  statusCode?: number | undefined;
+}
+
+export class LogStorageInaccessibleError extends DocumentLogError {
+  readonly spreadsheetId?: string | undefined;
+  readonly statusCode?: number | undefined;
+
+  constructor(message: string, options?: LogStorageInaccessibleErrorOptions) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'LogStorageInaccessibleError';
+    this.spreadsheetId = options?.spreadsheetId;
+    this.statusCode = options?.statusCode;
+  }
+}
+
 export class DocumentLogMissingError extends DocumentLogError {
   readonly spaceName: string;
   readonly expectedFolderPath: string;

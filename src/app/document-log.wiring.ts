@@ -4,6 +4,7 @@ import {
   DocumentLogError,
   DocumentLogService,
   LogSchemaRegistryAdapter,
+  LogStorageInaccessibleError,
   type DocumentLogPort,
   type LogDiscoveryPort,
   type LogSchemaRegistryPort,
@@ -27,6 +28,10 @@ import {
   type SheetsConfigProvider,
 } from '../infrastructure/sheets';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import {
+  extractHttpStatusCode,
+  isRateLimitOrQuotaError,
+} from '../infrastructure/google/retry';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { UiProcessDocumentLogPort } from '../features/ui-process-manager';
 import type { UiContextQueryPort } from '../features/schema-driven-ui/ports';
@@ -249,6 +254,41 @@ function sanitizeSheetsErrorMessage(error: unknown): string {
   return sanitized.length > 0 ? sanitized : 'Unable to read Document Log storage.';
 }
 
+function extractSheetsErrorStatusCode(error: unknown): number | undefined {
+  if (error instanceof GoogleSheetsApiError && error.statusCode !== undefined) {
+    return error.statusCode;
+  }
+  const directStatus = extractHttpStatusCode(error);
+  if (directStatus !== undefined) {
+    return directStatus;
+  }
+  if (error && typeof error === 'object' && 'cause' in error) {
+    return extractHttpStatusCode((error as { cause?: unknown }).cause);
+  }
+  return undefined;
+}
+
+function mapSheetsStorageError(error: unknown, spreadsheetId?: string): never {
+  const statusCode = extractSheetsErrorStatusCode(error);
+  if (statusCode === 404 || (statusCode === 403 && !isRateLimitOrQuotaError(error))) {
+    throw new LogStorageInaccessibleError(sanitizeSheetsErrorMessage(error), {
+      cause: error,
+      ...(spreadsheetId !== undefined ? { spreadsheetId } : {}),
+      statusCode,
+    });
+  }
+  if (
+    error instanceof GoogleSheetsApiError ||
+    (error instanceof Error &&
+      (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
+        SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
+    (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
+  ) {
+    throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
+  }
+  throw error;
+}
+
 function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort {
   return {
     insertRow: async (request) => {
@@ -298,16 +338,7 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
           ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
         });
       } catch (error) {
-        if (
-          error instanceof GoogleSheetsApiError ||
-          (error instanceof Error &&
-            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
-              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
-          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
-        ) {
-          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
-        }
-        throw error;
+        mapSheetsStorageError(error, request.target.spreadsheetId);
       }
     },
     readNamedRanges: async (request) => {
@@ -320,16 +351,7 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
           targets: request.targets,
         });
       } catch (error) {
-        if (
-          error instanceof GoogleSheetsApiError ||
-          (error instanceof Error &&
-            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
-              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
-          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
-        ) {
-          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
-        }
-        throw error;
+        mapSheetsStorageError(error, request.spreadsheetId);
       }
     },
   };

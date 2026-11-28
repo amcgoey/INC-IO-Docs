@@ -525,6 +525,10 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       { id: candidate0, name: `${SPACE_NAME} Document Log` },
       { id: candidate1, name: `${SPACE_NAME} Document Log Copy` },
     ]);
+    nock('https://sheets.googleapis.com')
+      .get('/v4/spreadsheets/stale-nonexistent-log-id')
+      .query(true)
+      .reply(404, { error: { code: 404, message: 'Requested entity was not found.' } });
     mockSpreadsheetReadsForConfig(candidate0, {
       statusesRows: [['Status'], ['Cand0Status'], ['---']],
       actionsRows: [['Key', 'Name', 'Suffix', 'Order'], ['REC', 'Candidate Zero Action', '', '1'], ['---', '', '', '']],

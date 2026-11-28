@@ -567,6 +567,94 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
         errorMessage: 'Multiple DocumentLog spreadsheets found.',
       });
     });
+
+    it('forwards selectedLogId to readOptionTables and surfaces missing_log when space is omitted', async () => {
+      const readOptionTables = vi.fn().mockResolvedValue({
+        status: 'missing_log',
+        expectedFolderPath: '1 Admin',
+        tables: {},
+      });
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: { readOptionTables } }
+      );
+      const ctx = {
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-stale-omitted',
+      };
+
+      const resolved = await service.resolveOptions(ctx, ['statuses']);
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+      expect(readOptionTables).toHaveBeenCalledWith({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-stale-omitted',
+        sourceKeys: ['statuses', 'actions'],
+      });
+      expect(resolved.statuses).toEqual({
+        status: 'missing_log',
+        tuples: [],
+        items: [],
+        targetPath: '1 Admin',
+      });
+
+      const validated = await service.validateFields(ctx, [
+        { queryId: 'q-status', fieldKey: 'status', sourceKey: 'statuses', value: 'Open' },
+      ]);
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+      expect(validated['q-status']).toEqual({
+        isValid: false,
+        status: 'missing_log',
+        targetPath: '1 Admin',
+      });
+    });
+
+    it('surfaces status error on resolveOptions and validateFields and keeps LinkedFields unlocked when readOptionTables rejects', async () => {
+      const linkedSchema: LookupDocumentSchema = {
+        fields: [
+          {
+            key: 'status',
+            options: { source: 'statuses', key: 'key', name: 'name' },
+          },
+          {
+            key: 'statusLabel',
+            linkedField: { sourceField: 'status', sourceProperty: 'name' },
+          },
+        ],
+        optionSources: {
+          statuses: { provider: 'document_log', properties: ['key', 'name'] },
+        },
+      };
+
+      const readOptionTables = vi.fn().mockRejectedValue(new Error('Not found'));
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-linked': linkedSchema }),
+        { documentLogOptionSource: { readOptionTables } }
+      );
+      const ctx = {
+        space: { id: 'sp-1', abstractStorageId: 'drive-1' },
+        documentTypeKey: 'submittal-linked',
+        selectedLogId: 'log-inaccessible',
+      };
+
+      const resolved = await service.resolveOptions(ctx, ['statuses']);
+      expect(resolved.statuses).toEqual({
+        status: 'error',
+        tuples: [],
+        items: [],
+      });
+
+      const validated = await service.validateFields(ctx, [
+        { queryId: 'q-status', fieldKey: 'status', sourceKey: 'statuses', value: 'Open' },
+      ]);
+      expect(validated['q-status']).toEqual({
+        isValid: false,
+        status: 'error',
+      });
+
+      await expect(service.deriveLockedFields(ctx, { status: 'Open' })).resolves.toEqual({});
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('deriveLockedFields (non-blank-only LinkedField locking)', () => {
