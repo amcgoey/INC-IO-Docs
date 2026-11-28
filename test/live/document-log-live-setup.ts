@@ -1,5 +1,4 @@
 import * as path from 'node:path';
-import { expect } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 // nosemgrep: adapter-leakage-warning
 import type { sheets_v4 } from 'googleapis';
@@ -13,61 +12,29 @@ import { createLookupOptionsWiring } from '../../src/app/lookup-options.wiring';
 import { createSourceParserWiring, type SourceParserWiring } from '../../src/app/source-parser.wiring';
 import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wiring';
 import type { CopyDocumentLogResult } from '../../src/features/document-log';
-import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
+import type { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
-import { GoogleSheetsClient, type PositiveTableTarget } from '../../src/infrastructure/sheets';
+import type { GoogleSheetsClient } from '../../src/infrastructure/sheets';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
 import {
-  getDocumentLogTestFolderId,
-  resolveLiveGoogleAuth,
-} from '../e2e/utils/live-google-auth';
-import {
-  DEFAULT_LIVE_RETRY_OPTIONS,
-  createLiveSheetsApi,
-  loadDocumentLogSampleFixture,
-} from '../e2e/utils/live-sheets-helper';
+  LiveTestHarness,
+  buildPositiveTableTarget,
+  cleanupScratchSpace,
+  createCleanupTracker,
+  expectAliasesHeaderNote,
+  type CleanupTracker,
+} from './live-test-harness';
 
-export const sampleFixture = loadDocumentLogSampleFixture();
-export const TEST_FOLDER_ID = getDocumentLogTestFolderId();
+export const sampleFixture = LiveTestHarness.sheets.loadDocumentLogSampleFixture();
+export const TEST_FOLDER_ID = LiveTestHarness.auth.getDocumentLogTestFolderId();
 
-export function expectAliasesHeaderNote(note: string | undefined): void {
-  expect(note?.trim().length).toBeGreaterThan(0);
-  expect(note).toMatch(/""/);
-  expect(note).toMatch(/case-?sensitiv/i);
-}
-
-export interface CleanupTracker {
-  track: (id: string | undefined) => void;
-  trashAll: (driveClient: GoogleDriveClient) => Promise<void>;
-}
-
-export function createCleanupTracker(): CleanupTracker {
-  const cleanupIds: string[] = [];
-
-  const track = (id: string | undefined): void => {
-    if (!id || id.trim().length === 0) {
-      return;
-    }
-    if (id === TEST_FOLDER_ID || id === sampleFixture.metadata.templateSpreadsheetId) {
-      return;
-    }
-    if (!cleanupIds.includes(id)) {
-      cleanupIds.push(id);
-    }
-  };
-
-  const trashAll = async (driveClient: GoogleDriveClient): Promise<void> => {
-    for (const id of [...cleanupIds].reverse()) {
-      try {
-        await driveClient.trash(id);
-      } catch {
-        // Best-effort cleanup of every created artifact
-      }
-    }
-  };
-
-  return { track, trashAll };
-}
+export {
+  buildPositiveTableTarget,
+  cleanupScratchSpace,
+  createCleanupTracker,
+  expectAliasesHeaderNote,
+  type CleanupTracker,
+};
 
 export interface DocumentLogLiveWiring {
   driveClient: GoogleDriveClient;
@@ -83,16 +50,9 @@ export async function initializeDocumentLogLiveWiring(): Promise<DocumentLogLive
     throw new Error('DOCUMENT_LOG_TEST_FOLDER_ID is required for live DocumentLog E2E tests.');
   }
 
-  const auth = resolveLiveGoogleAuth();
-  const driveClient = new GoogleDriveClient({
-    auth,
-    retryOptions: DEFAULT_LIVE_RETRY_OPTIONS,
-  });
-  const sheetsApi = createLiveSheetsApi(auth);
-  const sheetsClient = new GoogleSheetsClient({
-    sheets: sheetsApi,
-    retryOptions: DEFAULT_LIVE_RETRY_OPTIONS,
-  });
+  const auth = LiveTestHarness.auth.resolveLiveGoogleAuth();
+  const driveClient = LiveTestHarness.clients.createLiveDriveClient(auth);
+  const { sheetsApi, sheetsClient } = LiveTestHarness.clients.createLiveSheetsClient(auth);
 
   const manifestProvider = new AppManifestProvider({
     manifestPath: path.resolve(__dirname, '../../assets/manifest.json'),
@@ -229,27 +189,6 @@ export async function provisionDocumentLogScratchSpace(params: {
   };
 }
 
-export async function cleanupScratchSpace(params: {
-  driveClient: GoogleDriveClient | undefined;
-  spaceFolderId: string | undefined;
-  adminFolderId: string | undefined;
-  tracker: CleanupTracker;
-}): Promise<void> {
-  const { driveClient, spaceFolderId, adminFolderId, tracker } = params;
-  if (!driveClient) {
-    return;
-  }
-  if (spaceFolderId && !adminFolderId) {
-    try {
-      const adminFolder = await driveClient.resolveFolderPath(spaceFolderId, ['1 Admin']);
-      tracker.track(adminFolder.id);
-    } catch {
-      // Best-effort discovery if copyLog failed after creating 1 Admin
-    }
-  }
-  await tracker.trashAll(driveClient);
-}
-
 export async function uploadDummyPdf(params: {
   driveClient: GoogleDriveClient;
   targetFolderId: string;
@@ -270,22 +209,4 @@ export async function uploadDummyPdf(params: {
   });
   trackCleanupId(uploaded.id);
   return { id: uploaded.id, name: fileName };
-}
-
-export function buildPositiveTableTarget(
-  spreadsheetId: string,
-  config: {
-    sheetName: string;
-    rangeName: string;
-    extentMarker?: string;
-    groupDividerMarker?: string;
-  }
-): PositiveTableTarget {
-  return {
-    spreadsheetId,
-    sheetName: config.sheetName,
-    rangeName: config.rangeName,
-    extentMarker: config.extentMarker ?? '<--->',
-    groupDividerMarker: config.groupDividerMarker ?? '---',
-  };
 }

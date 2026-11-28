@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_LIVE_RETRY_OPTIONS,
   appendRawPositiveTableRows,
+  batchUpdateSpreadsheetValues,
   clearOptionTableToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
@@ -23,6 +24,8 @@ import {
   partialHydrationRowToCellInputs,
   readNamedRangesFormattedValues,
   readOptionTableGridFormats,
+  readSpreadsheetMetadata,
+  readSpreadsheetValues,
   snapshotNamedRanges,
 } from '../e2e/utils/live-sheets-helper';
 import {
@@ -114,11 +117,13 @@ describe.skipIf(!TEST_FOLDER_ID)(
 
     it('executes full DocumentService.processDocument() (MOVE_FILE -> WRITE_LOG) for submittal-ffe', async () => {
       const liveDriveClient = requireDriveClient();
-      const spreadsheetMeta = await sheetsApi.spreadsheets.get({
-        spreadsheetId: copiedSpreadsheetId,
-        fields: 'sheets(properties(sheetId,title))',
-      });
-      const ffeSheetId = spreadsheetMeta.data.sheets?.find(
+      const spreadsheetMeta = await readSpreadsheetMetadata(
+        sheetsApi,
+        copiedSpreadsheetId,
+        'sheets(properties(sheetId,title))',
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const ffeSheetId = spreadsheetMeta.sheets?.find(
         (s) => s.properties?.title === sampleFixture.submittalFfe.sheetName
       )?.properties?.sheetId;
       expect(typeof ffeSheetId).toBe('number');
@@ -449,12 +454,14 @@ describe.skipIf(!TEST_FOLDER_ID)(
         ).toEqual([]);
 
         // Verify Submittal FF&E cross-tab formulas reference shifted Actions columns (H4:I) and VLOOKUP col 2 (Title)
-        const ffeFormulaRowRes = await sheetsApi.spreadsheets.values.get({
-          spreadsheetId: optSpreadsheetId,
-          range: `'${ffeLogSchema.target.sheetName}'!A4:O4`,
-          valueRenderOption: 'FORMULA',
-        });
-        const ffeFormulaRow = (ffeFormulaRowRes.data.values?.[0] as string[] | undefined) ?? [];
+        const ffeFormulaRows = await readSpreadsheetValues(
+          sheetsApi,
+          optSpreadsheetId,
+          `'${ffeLogSchema.target.sheetName}'!A4:O4`,
+          'FORMULA',
+          DEFAULT_LIVE_RETRY_OPTIONS
+        );
+        const ffeFormulaRow = (ffeFormulaRows[0] as string[] | undefined) ?? [];
         expect(ffeFormulaRow[4]).toBe(
           '=ARRAYFORMULA(IFERROR(VLOOKUP(B4:B,Options_Submittal_FFE_Specs,2,FALSE)))'
         );
@@ -912,12 +919,14 @@ describe.skipIf(!TEST_FOLDER_ID)(
         expect(findSheetErrorTokens(ffeTableAfter.rows[0].values)).toEqual([]);
 
         // Verify Submittal FF&E!L6 (Calc File Name) evaluates shifted Actions lookup cleanly (_RR)
-        const calcFileNameRes = await sheetsApi.spreadsheets.values.get({
-          spreadsheetId: optSpreadsheetId,
-          range: `'${ffeLogSchema.target.sheetName}'!L6`,
-          valueRenderOption: 'FORMATTED_VALUE',
-        });
-        expect(calcFileNameRes.data.values?.[0]?.[0]).toBe(
+        const calcFileNameValues = await readSpreadsheetValues(
+          sheetsApi,
+          optSpreadsheetId,
+          `'${ffeLogSchema.target.sheetName}'!L6`,
+          'FORMATTED_VALUE',
+          DEFAULT_LIVE_RETRY_OPTIONS
+        );
+        expect(calcFileNameValues[0]?.[0]).toBe(
           `${customSpecTag}-0 ${customVendor} - 260401 ${customFfeContact}_RR`
         );
 
@@ -1088,38 +1097,38 @@ describe.skipIf(!TEST_FOLDER_ID)(
           return `'${snap.sheetTitle}'!${colLetter}${startRow + rowOffset}`;
         };
 
-        await sheetsApi.spreadsheets.values.batchUpdate({
-          spreadsheetId: spSpreadsheetId,
-          requestBody: {
-            valueInputOption: 'RAW',
-            data: [
-              {
-                range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 0),
-                values: [['XY999, "Hook, ""Solid"" Brass"']],
-              },
-              {
-                range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 1),
-                values: [['xy999, ZZ888, "Hook, ""Solid"" Brass"']],
-              },
-              {
-                range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'BM'),
-                values: [['"Berman, ""Custom"" Falk", BM-Custom']],
-              },
-              {
-                range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'AL'),
-                values: [['AL-Custom']],
-              },
-              {
-                range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'LA'),
-                values: [['@ashleylighting.com, LA-Custom']],
-              },
-              {
-                range: cellA1ForRowKey(ffeContactsBinding.rangeName, 'Key', 'BW'),
-                values: [['"West, ""NYC"" Procurement", BW-Custom']],
-              },
-            ],
-          },
-        });
+        await batchUpdateSpreadsheetValues(
+          sheetsApi,
+          spSpreadsheetId,
+          [
+            {
+              range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 0),
+              values: [['XY999, "Hook, ""Solid"" Brass"']],
+            },
+            {
+              range: cellA1ForRowKey(ffeSpecsBinding.rangeName, 'Tag', 'AC102', 1),
+              values: [['xy999, ZZ888, "Hook, ""Solid"" Brass"']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'BM'),
+              values: [['"Berman, ""Custom"" Falk", BM-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'AL'),
+              values: [['AL-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeVendorsBinding.rangeName, 'Key', 'LA'),
+              values: [['@ashleylighting.com, LA-Custom']],
+            },
+            {
+              range: cellA1ForRowKey(ffeContactsBinding.rangeName, 'Key', 'BW'),
+              values: [['"West, ""NYC"" Procurement", BW-Custom']],
+            },
+          ],
+          'RAW',
+          DEFAULT_LIVE_RETRY_OPTIONS
+        );
 
         const updatedOptions = await logWiring.documentLogService.readOptionTables!({
           documentTypeKey: 'submittal-ffe',

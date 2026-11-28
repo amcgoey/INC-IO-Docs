@@ -71,6 +71,27 @@ export function getSubmittalCoverSheetTemplateId(): string | undefined {
 }
 
 /**
+ * Returns `true` when explicit live Google credentials (access token, OAuth refresh triad,
+ * or `GOOGLE_APPLICATION_CREDENTIALS`) are configured in env or `.env`.
+ */
+export function hasLiveGoogleCredentials(): boolean {
+  loadEnvIfPresent();
+
+  if (process.env.GOOGLE_ACCESS_TOKEN?.trim()) {
+    return true;
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+  const clientKey = process.env.GOOGLE_CLIENT_SECRET?.trim();
+  const refreshCred = process.env.GOOGLE_REFRESH_TOKEN?.trim();
+  if (clientId && clientKey && refreshCred) {
+    return true;
+  }
+
+  return Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim());
+}
+
+/**
  * Resolves Google API credentials for live E2E tests in priority order:
  * 1. `GOOGLE_ACCESS_TOKEN`
  * 2. `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `GOOGLE_REFRESH_TOKEN`

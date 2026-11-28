@@ -8,30 +8,19 @@ import {
 } from '../../src/app/document.wiring';
 import { createLookupOptionsWiring } from '../../src/app/lookup-options.wiring';
 import type { DocumentServiceFactory } from '../../src/app/ui-process-manager.wiring';
-import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
+import type { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import { AppManifestProvider } from '../../src/infrastructure/manifest/app-manifest-provider';
 import { PdfProcessor } from '../../src/infrastructure/pdf/pdf-processor';
-import { GoogleSheetsClient } from '../../src/infrastructure/sheets';
 import { HandlebarsAdapter } from '../../src/infrastructure/template-engine/handlebars-adapter';
-import {
-  getDocumentLogTestFolderId,
-  getSubmittalCoverSheetTemplateId,
-  resolveLiveGoogleAuth,
-} from '../e2e/utils/live-google-auth';
-import {
-  DEFAULT_LIVE_RETRY_OPTIONS,
-  createLiveSheetsApi,
-  loadDocumentLogSampleFixture,
-} from '../e2e/utils/live-sheets-helper';
+import { LiveTestHarness } from './live-test-harness';
 
-const sampleFixture = loadDocumentLogSampleFixture();
-const TEST_FOLDER_ID = getDocumentLogTestFolderId();
-const COVER_SHEET_TEMPLATE_ID = getSubmittalCoverSheetTemplateId();
+const TEST_FOLDER_ID = LiveTestHarness.auth.getDocumentLogTestFolderId();
+const COVER_SHEET_TEMPLATE_ID = LiveTestHarness.auth.getSubmittalCoverSheetTemplateId();
 
 describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
   'Live Submittal Cover-Sheet & createSiblingPdf E2E Verification (Copy-and-Trash)',
   () => {
-    const cleanupIds: string[] = [];
+    const cleanupTracker = LiveTestHarness.cleanup.createCleanupTracker();
     let driveClient: GoogleDriveClient | undefined;
     let pdfProcessor: PdfProcessor;
     let logWiring: DocumentLogWiring;
@@ -47,19 +36,7 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
     let ffeTextFileName: string;
 
     const trackCleanupId = (id: string | undefined): void => {
-      if (!id || id.trim().length === 0) {
-        return;
-      }
-      if (
-        id === TEST_FOLDER_ID ||
-        id === COVER_SHEET_TEMPLATE_ID ||
-        id === sampleFixture.metadata.templateSpreadsheetId
-      ) {
-        return;
-      }
-      if (!cleanupIds.includes(id)) {
-        cleanupIds.push(id);
-      }
+      cleanupTracker.track(id);
     };
 
     const requireDriveClient = (): GoogleDriveClient => {
@@ -76,17 +53,10 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
         );
       }
 
-      const auth = resolveLiveGoogleAuth();
-      const liveDriveClient = new GoogleDriveClient({
-        auth,
-        retryOptions: DEFAULT_LIVE_RETRY_OPTIONS,
-      });
+      const auth = LiveTestHarness.auth.resolveLiveGoogleAuth();
+      const liveDriveClient = LiveTestHarness.clients.createLiveDriveClient(auth);
       driveClient = liveDriveClient;
-      const sheetsApi = createLiveSheetsApi(auth);
-      const sheetsClient = new GoogleSheetsClient({
-        sheets: sheetsApi,
-        retryOptions: DEFAULT_LIVE_RETRY_OPTIONS,
-      });
+      const { sheetsClient } = LiveTestHarness.clients.createLiveSheetsClient(auth);
 
       const manifestProvider = new AppManifestProvider({
         manifestPath: path.resolve(__dirname, '../../assets/manifest.json'),
@@ -152,7 +122,7 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
 
       const spaceFolder = await liveDriveClient.findOrCreateFolder(TEST_FOLDER_ID, spaceName);
       spaceFolderId = spaceFolder.id;
-      trackCleanupId(spaceFolder.id);
+      cleanupTracker.trackFolder(spaceFolder.id);
       space = {
         id: `live-cover-space-${runId}`,
         typeId: 'proposals',
@@ -166,8 +136,8 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
       if (copiedParentId && copiedParentId !== spaceFolder.id) {
         adminFolderId = copiedParentId;
       }
-      trackCleanupId(adminFolderId);
-      trackCleanupId(copiedSpreadsheetId);
+      cleanupTracker.trackFolder(adminFolderId, spaceFolder.id);
+      cleanupTracker.trackSpreadsheet(copiedSpreadsheetId, adminFolderId ?? spaceFolder.id);
 
       const constructionFolder = await liveDriveClient.findOrCreateFolder(
         spaceFolder.id,
@@ -210,25 +180,12 @@ describe.skipIf(!TEST_FOLDER_ID || !COVER_SHEET_TEMPLATE_ID)(
     }, 90_000);
 
     afterAll(async () => {
-      if (!driveClient) {
-        return;
-      }
-      if (spaceFolderId && !adminFolderId) {
-        try {
-          const adminFolder = await driveClient.resolveFolderPath(spaceFolderId, ['1 Admin']);
-          adminFolderId = adminFolder.id;
-          trackCleanupId(adminFolder.id);
-        } catch {
-          // Best-effort discovery
-        }
-      }
-      for (const id of [...cleanupIds].reverse()) {
-        try {
-          await driveClient.trash(id);
-        } catch {
-          // Best-effort cleanup of every created artifact
-        }
-      }
+      await LiveTestHarness.cleanup.cleanupScratchSpace({
+        driveClient,
+        spaceFolderId,
+        adminFolderId,
+        tracker: cleanupTracker,
+      });
     }, 90_000);
 
     it('grafts live editable cover sheet on submittal-arch SubmittalReceived without flattening and binds WRITE_LOG to moveOriginal', async () => {
