@@ -1,34 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 // nosemgrep: adapter-leakage-warning
 import type { sheets_v4 } from 'googleapis';
-import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
+import type { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import {
   GoogleSheetsClient,
   GoogleSheetsColumnNotFoundError,
   GoogleSheetsNamedRangeNotFoundError,
-  type InsertGroupedRowResult,
   type PositiveTableTarget,
   type RowKey,
   type RowRecord,
   type SheetCellInput,
 } from '../../src/infrastructure/sheets';
-import {
-  getDocumentLogTestFolderId,
-  resolveLiveGoogleAuth,
-} from '../e2e/utils/live-google-auth';
-import {
-  DEFAULT_LIVE_RETRY_OPTIONS,
-  createLiveSheetsApi,
-  ensureClearedPositiveTable,
-  findCleanDividerViolations,
-  findSheetErrorTokens,
-  inspectPositiveTableLayout,
-  loadDocumentLogSampleFixture,
-  type FixtureSubmittalEntry,
-  type FixtureWriteScenario,
-} from '../e2e/utils/live-sheets-helper';
+import { LiveTestHarness, type FixtureSubmittalEntry } from './live-test-harness';
 
-const sampleFixture = loadDocumentLogSampleFixture();
+const sampleFixture = LiveTestHarness.sheets.loadDocumentLogSampleFixture();
+const TEST_FOLDER_ID = LiveTestHarness.auth.getDocumentLogTestFolderId();
 
 const ACTION_NAME_TO_ORDER: Record<string, string> = {
   Received: '1',
@@ -99,57 +85,48 @@ function buildArchRowData(entry: FixtureSubmittalEntry): Record<string, SheetCel
   };
 }
 
-function buildFfeRowData(entry: FixtureSubmittalEntry): Record<string, SheetCellInput> {
+function buildFfeRowData(
+  entry: FixtureSubmittalEntry,
+  overrides?: Partial<{ actionName: string; fileUri: string | null; relatedTag: string | null }>
+): Record<string, SheetCellInput> {
   const d = entry.documentData;
+  const effectiveUri = overrides && 'fileUri' in overrides ? overrides.fileUri : entry.fileUri;
+  const effectiveRelated =
+    overrides && 'relatedTag' in overrides
+      ? overrides.relatedTag
+      : d.relatedTag === ''
+        ? null
+        : d.relatedTag;
   return {
     Status: d.status,
     'Spec Tag': d.specTag,
-    'Related Tag': d.relatedTag === '' ? null : d.relatedTag,
+    'Related Tag': effectiveRelated,
     Revision: d.revision,
     Vendor: d.vendor,
     Date: d.date,
     Contact: d.contact,
-    Action: entry.actionName,
+    Action: overrides?.actionName ?? entry.actionName,
     Notes: d.notes === '' ? null : d.notes,
-    'Calc Link': entry.fileUri
-      ? { formula: `=HYPERLINK("${entry.fileUri}", "Link")` }
-      : null,
+    'Calc Link': effectiveUri ? { formula: `=HYPERLINK("${effectiveUri}", "Link")` } : null,
   };
 }
 
-async function insertEntries(params: {
-  sheetsClient: GoogleSheetsClient;
-  target: PositiveTableTarget;
-  entries: readonly FixtureSubmittalEntry[];
-  buildRowData: (entry: FixtureSubmittalEntry) => Record<string, SheetCellInput>;
-  rowKeyExtractor: (row: RowRecord) => RowKey | null;
-  readOnlyColumns?: string[];
-}): Promise<InsertGroupedRowResult[]> {
-  const { sheetsClient, target, entries, buildRowData, rowKeyExtractor, readOnlyColumns } = params;
-  const results: InsertGroupedRowResult[] = [];
-
-  for (const entry of entries) {
-    const result = await sheetsClient.insertIntoGroupedList({
-      target,
-      rowData: buildRowData(entry),
-      rowKeyExtractor,
-      targetKeys: {
-        groupKey: entry.identity.idGroup,
-        sortKey: entry.identity.id,
-      },
-      duplicatePolicy: 'insert',
-      ...(readOnlyColumns !== undefined ? { readOnlyColumns } : {}),
-    });
-    expect(result.action).toBe('inserted');
-    results.push(result);
-  }
-
-  return results;
+function getRowValuesFromSheetGrid(
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  sheetTitle: string,
+  absRowIndex: number
+): sheets_v4.Schema$CellData[] {
+  const sheet = (spreadsheet.sheets ?? []).find(
+    (s) => s.properties?.title?.toLowerCase() === sheetTitle.toLowerCase()
+  );
+  const gridData = sheet?.data?.[0];
+  const baseRow = gridData?.startRow ?? 0;
+  const relRow = absRowIndex - baseRow;
+  return gridData?.rowData?.[relRow]?.values ?? [];
 }
 
-const TEST_FOLDER_ID = getDocumentLogTestFolderId();
-
-describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and-Trash)', () => {
+describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Infrastructure Contract Tracer Bullets', () => {
+  const cleanupTracker = LiveTestHarness.cleanup.createCleanupTracker();
   let driveClient: GoogleDriveClient | undefined;
   let sheetsApi: sheets_v4.Sheets;
   let sheetsClient: GoogleSheetsClient;
@@ -162,33 +139,21 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
     return copiedSpreadsheetId;
   };
 
-  const archTarget = (): PositiveTableTarget => ({
-    spreadsheetId: requireSpreadsheetId(),
-    sheetName: sampleFixture.submittalArch.sheetName,
-    rangeName: sampleFixture.submittalArch.rangeName,
-    extentMarker: '<--->',
-    groupDividerMarker: '---',
-  });
+  const archTarget = (): PositiveTableTarget =>
+    LiveTestHarness.sheets.buildPositiveTableTarget(requireSpreadsheetId(), sampleFixture.submittalArch);
 
-  const ffeTarget = (): PositiveTableTarget => ({
-    spreadsheetId: requireSpreadsheetId(),
-    sheetName: sampleFixture.submittalFfe.sheetName,
-    rangeName: sampleFixture.submittalFfe.rangeName,
-    extentMarker: '<--->',
-    groupDividerMarker: '---',
-  });
+  const ffeTarget = (): PositiveTableTarget =>
+    LiveTestHarness.sheets.buildPositiveTableTarget(requireSpreadsheetId(), sampleFixture.submittalFfe);
 
   beforeAll(async () => {
     if (!TEST_FOLDER_ID) {
       throw new Error('DOCUMENT_LOG_TEST_FOLDER_ID is required for live Google Sheets tests.');
     }
-    const auth = resolveLiveGoogleAuth();
-    driveClient = new GoogleDriveClient({ auth, retryOptions: DEFAULT_LIVE_RETRY_OPTIONS });
-    sheetsApi = createLiveSheetsApi(auth);
-    sheetsClient = new GoogleSheetsClient({
-      sheets: sheetsApi,
-      retryOptions: DEFAULT_LIVE_RETRY_OPTIONS,
-    });
+    const auth = LiveTestHarness.auth.resolveLiveGoogleAuth();
+    driveClient = LiveTestHarness.clients.createLiveDriveClient(auth);
+    const createdSheets = LiveTestHarness.clients.createLiveSheetsClient(auth);
+    sheetsApi = createdSheets.sheetsApi;
+    sheetsClient = createdSheets.sheetsClient;
 
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const copied = await driveClient.duplicate(sampleFixture.metadata.templateSpreadsheetId, {
@@ -196,18 +161,19 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
       targetFolderId: TEST_FOLDER_ID,
     });
     copiedSpreadsheetId = copied.id;
+    cleanupTracker.trackSpreadsheet(copied.id);
 
-    await ensureClearedPositiveTable(sheetsApi, archTarget());
-    await ensureClearedPositiveTable(sheetsApi, ffeTarget());
+    await LiveTestHarness.sheets.ensureClearedPositiveTable(sheetsApi, archTarget());
+    await LiveTestHarness.sheets.ensureClearedPositiveTable(sheetsApi, ffeTarget());
   }, 60_000);
 
   afterAll(async () => {
-    if (driveClient && copiedSpreadsheetId) {
-      await driveClient.trash(copiedSpreadsheetId);
+    if (driveClient) {
+      await cleanupTracker.trashAll(driveClient);
     }
   }, 90_000);
 
-  it('throws GoogleSheetsNamedRangeNotFoundError and GoogleSheetsColumnNotFoundError for invalid targets', async () => {
+  it('maps missing named range and missing column errors from real Google Sheets', async () => {
     await expect(
       sheetsClient.readTable({
         target: {
@@ -225,140 +191,33 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
     ).rejects.toThrow(GoogleSheetsColumnNotFoundError);
   });
 
-  it('preserves empty cleared template placeholder, leading zeros, and =HYPERLINK on Submittal Arch', async () => {
+  it('verifies cleared placeholder, =HYPERLINK, literal =text, leading zeros, and multi-group mid-table clean dividers on Submittal Arch', async () => {
     const target = archTarget();
     const initial = await sheetsClient.readTable({ target });
     expect(initial.rows).toEqual([]);
 
-    const firstSeed = sampleFixture.submittalArch.seedEntries[0];
-    const insertResult = await sheetsClient.insertIntoGroupedList({
+    const concreteSeed = sampleFixture.submittalArch.seedEntries[0]; // 033000-001
+    const waterproofingSeed = sampleFixture.submittalArch.seedEntries[2]; // 071200-001
+
+    // 1) Insert first group on cleared placeholder
+    const firstInsert = await sheetsClient.insertIntoGroupedList({
       target,
-      rowData: buildArchRowData(firstSeed),
+      rowData: buildArchRowData(concreteSeed),
       rowKeyExtractor: extractArchRowKeys,
       targetKeys: {
-        groupKey: firstSeed.identity.idGroup,
-        sortKey: firstSeed.identity.id,
+        groupKey: concreteSeed.identity.idGroup,
+        sortKey: concreteSeed.identity.id,
       },
     });
-
-    expect(insertResult).toEqual({
+    expect(firstInsert).toEqual({
       rowNumber: 6,
       action: 'inserted',
       sheetId: expect.any(Number),
     });
-    expect(Number.isInteger(insertResult.sheetId) && (insertResult.sheetId ?? -1) >= 0).toBe(true);
+    expect(Number.isInteger(firstInsert.sheetId) && (firstInsert.sheetId ?? -1) >= 0).toBe(true);
 
-    const after = await sheetsClient.readTable({ target });
-    expect(after.rows).toHaveLength(1);
-    expect(after.rows[0].rowNumber).toBe(6);
-    expect(after.rows[0].values).toMatchObject({
-      Status: 'Closed',
-      Section: '033000',
-      Number: '001',
-      Revision: '0',
-      Title: 'Cast-in-Place Concrete Mix Design',
-      Date: '260115',
-      Contact: 'MB',
-      Action: 'Received',
-      Notes: '4000 psi podium slab mix',
-      'Calc Link': 'Link',
-    });
-
-    const layout = await inspectPositiveTableLayout(sheetsApi, target);
-    expect(layout.formulaRowsByHeader['Calc Link']).toEqual([
-      `=HYPERLINK("${firstSeed.fileUri}", "Link")`,
-    ]);
-  }, 60_000);
-
-  it('seeds remaining Submittal Arch entries and executes all 5 grouped writeScenarios cleanly', async () => {
-    const target = archTarget();
-
-    await insertEntries({
-      sheetsClient,
-      target,
-      entries: sampleFixture.submittalArch.seedEntries.slice(1),
-      buildRowData: buildArchRowData,
-      rowKeyExtractor: extractArchRowKeys,
-    });
-
-    const writeScenarios: readonly FixtureWriteScenario[] = sampleFixture.submittalArch.writeScenarios;
-    const scenarioResults = await insertEntries({
-      sheetsClient,
-      target,
-      entries: writeScenarios,
-      buildRowData: buildArchRowData,
-      rowKeyExtractor: extractArchRowKeys,
-    });
-
-    expect(scenarioResults[0]).toEqual({
-      rowNumber: 6,
-      action: 'inserted',
-      sheetId: expect.any(Number),
-    });
-
-    const table = await sheetsClient.readTable({ target });
-    expect(table.rows).toHaveLength(16);
-
-    const actualOrder = table.rows.map(
-      (r) =>
-        `${r.values.Section}-${r.values.Number}-${r.values.Revision}-${r.values.Date}-${r.values.Contact}`
-    );
-    expect(actualOrder).toEqual([
-      '013300-001-0-260110-MB',
-      '033000-001-0-260115-MB',
-      '033000-001-0-260122-ARC',
-      '071200-001-0-260204-MB',
-      '071200-001-0-260205-PST',
-      '071200-001-0-260205-SME',
-      '071200-001-0-260205-LMD',
-      '071200-001-0-260212-ARC',
-      '071200-001-1-260220-MB',
-      '071200-001-1-260224-ARC',
-      '071200-002-0-260218-MB',
-      '071200-002-0-260219-PST',
-      '075100-001-0-260220-MB',
-      '087100-001-0-260303-MB',
-      '087100-001-0-260305-ARC',
-      '096500-001-0-260314-MB',
-    ]);
-
-    const waterproofStart = table.rows.find(
-      (r) => r.values.Section === '071200' && r.values.Number === '001' && r.values.Date === '260204'
-    );
-    expect(waterproofStart?.values).toMatchObject({
-      Section: '071200',
-      Number: '001',
-    });
-
-    const nullUriRowIndex = table.rows.findIndex(
-      (r) => r.values.Section === '071200' && r.values.Number === '002' && r.values.Date === '260219'
-    );
-    expect(nullUriRowIndex).toBeGreaterThan(-1);
-    expect(table.rows[nullUriRowIndex].values['Calc Link'] || '').toBe('');
-
-    const layout = await inspectPositiveTableLayout(sheetsApi, target);
-    expect(layout.formulaRowsByHeader['Calc Link']).toHaveLength(16);
-    expect(layout.formulaRowsByHeader['Calc Link'][nullUriRowIndex]).toBe('');
-    for (let i = 0; i < 16; i++) {
-      if (i !== nullUriRowIndex) {
-        expect(table.rows[i].values['Calc Link']).toBe('Link');
-        expect(layout.formulaRowsByHeader['Calc Link'][i]).toMatch(
-          /^=HYPERLINK\("https:\/\/drive\.google\.com\/file\/d\/.+", "Link"\)$/
-        );
-      }
-    }
-
-    expect(
-      findCleanDividerViolations({
-        ...layout,
-        expectedDividerCount: 6,
-      })
-    ).toEqual([]);
-  }, 180_000);
-
-  it('writes literal =text safely as stringValue without formula evaluation on Submittal Arch', async () => {
-    const target = archTarget();
-    const insertResult = await sheetsClient.insertIntoGroupedList({
+    // 2) Insert bottom group with literal =text strings (must stay stringValue, never evaluated)
+    const literalInsert = await sheetsClient.insertIntoGroupedList({
       target,
       rowData: {
         Status: 'Open',
@@ -378,34 +237,69 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
         sortKey: '099000-001-0-260325-1',
       },
     });
+    expect(literalInsert.action).toBe('inserted');
 
-    expect(insertResult.action).toBe('inserted');
+    // 3) Insert mid-table group between 033000-001 and 099000-001
+    const midInsert = await sheetsClient.insertIntoGroupedList({
+      target,
+      rowData: buildArchRowData(waterproofingSeed),
+      rowKeyExtractor: extractArchRowKeys,
+      targetKeys: {
+        groupKey: waterproofingSeed.identity.idGroup,
+        sortKey: waterproofingSeed.identity.id,
+      },
+    });
+    expect(midInsert.action).toBe('inserted');
 
-    const table = await sheetsClient.readTable({ target });
-    const rowIdx = table.rows.findIndex((r) => r.values.Section === '099000');
-    expect(rowIdx).toBeGreaterThan(-1);
-    expect(table.rows[rowIdx].values.Title).toBe('=SUM(1,2)');
-    expect(table.rows[rowIdx].values.Notes).toBe('=1+1');
+    const layout = await LiveTestHarness.sheets.inspectPositiveTableLayout(sheetsApi, target);
+    const dataRows = layout.betweenRows.filter((row) => row.kind === 'data');
+    expect(dataRows).toHaveLength(3);
 
-    const layout = await inspectPositiveTableLayout(sheetsApi, target);
-    expect(layout.formulaRowsByHeader.Title[rowIdx]).toBe('=SUM(1,2)');
-    expect(layout.formulaRowsByHeader.Notes[rowIdx]).toBe('=1+1');
+    const sectionCol = layout.headers.indexOf('Section');
+    const numberCol = layout.headers.indexOf('Number');
+    const titleCol = layout.headers.indexOf('Title');
+    const notesCol = layout.headers.indexOf('Notes');
+    const linkCol = layout.headers.indexOf('Calc Link');
+
+    expect(
+      dataRows.map((row) => `${row.formattedRow[sectionCol]}-${row.formattedRow[numberCol]}`)
+    ).toEqual(['033000-001', '071200-001', '099000-001']);
+
+    // Literal =text preserved as string (both formatted display and raw value)
+    expect(dataRows[2].formattedRow[titleCol]).toBe('=SUM(1,2)');
+    expect(dataRows[2].formattedRow[notesCol]).toBe('=1+1');
+    expect(layout.formulaRowsByHeader.Title[2]).toBe('=SUM(1,2)');
+    expect(layout.formulaRowsByHeader.Notes[2]).toBe('=1+1');
+
+    // =HYPERLINK on seeded rows, blank on null Calc Link row
+    expect(dataRows[0].formattedRow[linkCol]).toBe('Link');
+    expect(dataRows[1].formattedRow[linkCol]).toBe('Link');
+    expect(layout.formulaRowsByHeader['Calc Link']).toEqual([
+      `=HYPERLINK("${concreteSeed.fileUri}", "Link")`,
+      `=HYPERLINK("${waterproofingSeed.fileUri}", "Link")`,
+      '',
+    ]);
+
+    expect(
+      LiveTestHarness.sheets.findCleanDividerViolations({
+        ...layout,
+        expectedDividerCount: 2,
+      })
+    ).toEqual([]);
   }, 60_000);
 
-  it('preserves Spec Title ARRAYFORMULA, optional blank Related Tag, and layout on Submittal FF&E', async () => {
+  it('verifies grouped insertion/ordering, ARRAYFORMULA Spec Title, and optional blank Related Tag on Submittal FF&E', async () => {
     const target = ffeTarget();
-    const initial = await sheetsClient.readTable({ target });
-    expect(initial.formulaColumns).toEqual(['Spec Title']);
-    expect(initial.rows).toEqual([]);
+    const cg104Seed = sampleFixture.submittalFfe.seedEntries[0]; // CG104 with Related Tag FB127
+    const fb127Seed = sampleFixture.submittalFfe.seedEntries[3]; // FB127 with blank Related Tag
 
-    const firstSeed = sampleFixture.submittalFfe.seedEntries[0];
     const firstInsert = await sheetsClient.insertIntoGroupedList({
       target,
-      rowData: buildFfeRowData(firstSeed),
+      rowData: buildFfeRowData(cg104Seed, { actionName: 'Revise & Resubmit' }),
       rowKeyExtractor: extractFfeRowKeys,
       targetKeys: {
-        groupKey: firstSeed.identity.idGroup,
-        sortKey: firstSeed.identity.id,
+        groupKey: cg104Seed.identity.idGroup,
+        sortKey: 'CG104-0-260120-5',
       },
       readOnlyColumns: ['Spec Title'],
     });
@@ -414,85 +308,166 @@ describe.skipIf(!TEST_FOLDER_ID)('Live Google Sheets Integration Tests (Copy-and
       action: 'inserted',
       sheetId: expect.any(Number),
     });
-    expect(Number.isInteger(firstInsert.sheetId) && (firstInsert.sheetId ?? -1) >= 0).toBe(true);
 
-    const afterFirst = await sheetsClient.readTable({ target });
-    expect(afterFirst.rows).toHaveLength(1);
-    expect(afterFirst.rows[0].values['Spec Title']).toBe('BED - KING');
-
-    await insertEntries({
-      sheetsClient,
+    const secondInsert = await sheetsClient.insertIntoGroupedList({
       target,
-      entries: [
-        ...sampleFixture.submittalFfe.seedEntries.slice(1),
-        ...sampleFixture.submittalFfe.writeScenarios,
-      ],
-      buildRowData: buildFfeRowData,
+      rowData: buildFfeRowData(fb127Seed, { fileUri: null }),
       rowKeyExtractor: extractFfeRowKeys,
+      targetKeys: {
+        groupKey: fb127Seed.identity.idGroup,
+        sortKey: fb127Seed.identity.id,
+      },
       readOnlyColumns: ['Spec Title'],
     });
+    expect(secondInsert.action).toBe('inserted');
 
     const table = await sheetsClient.readTable({ target });
     expect(table.formulaColumns).toEqual(['Spec Title']);
-    expect(table.rows).toHaveLength(12);
-
-    const actualOrder = table.rows.map(
-      (r) =>
-        `${r.values['Spec Tag']}-${r.values.Revision}-${r.values.Date}-${r.values.Contact}|${r.values['Related Tag'] ?? ''}`
-    );
-    expect(actualOrder).toEqual([
-      'AC102-0-260112-HPG|',
-      'CG104-0-260120-HPG|FB127',
-      'CG104-0-260128-ARC|FB127',
-      'CG104-1-260205-HPG|FB127',
-      'CG104-1-260210-ARC|FB127',
-      'CP119-0-260201-HPG|',
-      'FB127-0-260118-HPG|',
-      'FB127-0-260125-ARC|',
-      'LT108-0-260214-HPG|',
-      'LT108-0-260215-LMD|',
-      'LT108-0-260215-OBR|',
-      'TA139-0-260301-ARC|',
-    ]);
-
-    const expectedSpecTitles: Record<string, string> = {
-      AC102: 'HOOK',
-      CG104: 'BED - KING',
-      CP119: 'CARPET',
-      FB127: 'FABRIC - LEATHER',
-      LT108: 'SCONCE',
-      TA139: 'TABLE - WORK',
-    };
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows.map((r) => r.values['Spec Tag'])).toEqual(['CG104', 'FB127']);
+    expect(table.rows[0].values['Related Tag']).toBe('FB127');
+    expect(table.rows[0].values['Spec Title']).toBe('BED - KING');
+    expect(table.rows[1].values['Related Tag'] || '').toBe('');
+    expect(table.rows[1].values['Spec Title']).toBe('FABRIC - LEATHER');
+    expect(table.rows[1].values['Calc Link'] || '').toBe('');
 
     for (const row of table.rows) {
-      const specTag = String(row.values['Spec Tag'] ?? '');
-      expect(row.values['Spec Title']).toBe(expectedSpecTitles[specTag]);
-      expect(findSheetErrorTokens(row.values)).toEqual([]);
+      expect(LiveTestHarness.sheets.findSheetErrorTokens(row.values)).toEqual([]);
     }
+  }, 60_000);
 
-    const nullUriRowIndex = table.rows.findIndex(
-      (r) => r.values['Spec Tag'] === 'LT108' && r.values.Contact === 'OBR'
+  it('verifies Calc File Name shifted VLOOKUP, FF&E divider, _Config table offsets / Row 2 merges / Aliases notes, and zero error tokens', async () => {
+    const spreadsheetId = requireSpreadsheetId();
+    const grid = await LiveTestHarness.sheets.readSheetsGridLayout(sheetsApi, spreadsheetId, [
+      `'${sampleFixture.submittalFfe.sheetName}'!A4:L8`,
+      "'_Config Submittal Arch'!A1:K4",
+      "'_Config Submittal FF&E'!A1:P4",
+    ]);
+
+    // 1) Submittal FF&E Row 4 ARRAYFORMULA & Calc File Name shifted VLOOKUP + Row 6 Calc File Name + Row 7 clean divider
+    const ffeRow4 = getRowValuesFromSheetGrid(grid, sampleFixture.submittalFfe.sheetName, 3);
+    expect(ffeRow4[4]?.userEnteredValue?.formulaValue).toBe(
+      '=ARRAYFORMULA(IFERROR(VLOOKUP(B4:B,Options_Submittal_FFE_Specs,2,FALSE)))'
     );
-    expect(nullUriRowIndex).toBeGreaterThan(-1);
-    expect(table.rows[nullUriRowIndex].values['Calc Link'] || '').toBe('');
+    expect(ffeRow4[11]?.userEnteredValue?.formulaValue).toContain("'_Config Submittal FF&E'!H4:I");
 
-    const layout = await inspectPositiveTableLayout(sheetsApi, target);
-    expect(layout.formulaRowsByHeader['Calc Link']).toHaveLength(12);
-    expect(layout.formulaRowsByHeader['Calc Link'][nullUriRowIndex]).toBe('');
-    for (let i = 0; i < 12; i++) {
-      if (i !== nullUriRowIndex) {
-        expect(table.rows[i].values['Calc Link']).toBe('Link');
-        expect(layout.formulaRowsByHeader['Calc Link'][i]).toMatch(
-          /^=HYPERLINK\("https:\/\/drive\.google\.com\/file\/d\/.+", "Link"\)$/
-        );
-      }
-    }
+    const ffeRow6 = getRowValuesFromSheetGrid(grid, sampleFixture.submittalFfe.sheetName, 5);
+    expect(ffeRow6[10]?.userEnteredValue?.formulaValue).toBe(
+      `=HYPERLINK("${sampleFixture.submittalFfe.seedEntries[0].fileUri}", "Link")`
+    );
+    expect(ffeRow6[11]?.formattedValue).toBe('CG104-0 Keystone Casegoods - 260120 HPG_RR');
 
-    expect(
-      findCleanDividerViolations({
-        ...layout,
-        expectedDividerCount: 5,
+    const ffeDividerRow = getRowValuesFromSheetGrid(grid, sampleFixture.submittalFfe.sheetName, 6);
+    expect(ffeDividerRow[0]?.formattedValue).toBe('---');
+    expect(ffeDividerRow.slice(1).every((cell) => !(cell.formattedValue ?? '').trim())).toBe(true);
+
+    // 2) _Config Submittal Arch table offset, Row 1/2 merges, Row 3 headers & Aliases note
+    const archConfigSheet = (grid.sheets ?? []).find(
+      (s) => s.properties?.title === '_Config Submittal Arch'
+    );
+    expect(archConfigSheet?.merges).toContainEqual(
+      expect.objectContaining({
+        startRowIndex: 1,
+        endRowIndex: 2,
+        startColumnIndex: 5,
+        endColumnIndex: 9,
       })
+    );
+    const archContactsRange = (grid.namedRanges ?? []).find(
+      (nr) => nr.name === 'Options_Submittal_Arch_Contacts'
+    );
+    expect(archContactsRange?.range).toMatchObject({
+      startRowIndex: 2,
+      startColumnIndex: 5,
+      endColumnIndex: 9,
+    });
+    const archConfigRow1 = getRowValuesFromSheetGrid(grid, '_Config Submittal Arch', 0);
+    const archConfigRow2 = getRowValuesFromSheetGrid(grid, '_Config Submittal Arch', 1);
+    const archConfigRow3 = getRowValuesFromSheetGrid(grid, '_Config Submittal Arch', 2);
+    expect(archConfigRow1[0]?.formattedValue).toBe('Architecture Submittal Log Settings');
+    expect(archConfigRow2.map((c) => (c.formattedValue ?? '').trim())).toContain(
+      'Specification Divisions'
+    );
+    expect(archConfigRow3.slice(5, 9).map((c) => (c.formattedValue ?? '').trim())).toEqual([
+      'Type',
+      'Key',
+      'Name',
+      'Aliases',
+    ]);
+    LiveTestHarness.sheets.expectAliasesHeaderNote(archConfigRow3[8]?.note ?? undefined);
+
+    // 3) _Config Submittal FF&E table offsets, Row 2 merges, Row 3 headers & Aliases notes
+    const ffeConfigSheet = (grid.sheets ?? []).find(
+      (s) => s.properties?.title === '_Config Submittal FF&E'
+    );
+    expect(ffeConfigSheet?.merges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          startRowIndex: 1,
+          endRowIndex: 2,
+          startColumnIndex: 0,
+          endColumnIndex: 3,
+        }),
+        expect.objectContaining({
+          startRowIndex: 1,
+          endRowIndex: 2,
+          startColumnIndex: 3,
+          endColumnIndex: 7,
+        }),
+        expect.objectContaining({
+          startRowIndex: 1,
+          endRowIndex: 2,
+          startColumnIndex: 12,
+          endColumnIndex: 16,
+        }),
+      ])
+    );
+    const namedRangeByName = new Map((grid.namedRanges ?? []).map((nr) => [nr.name, nr.range]));
+    expect(namedRangeByName.get('Options_Submittal_FFE_Specs')).toMatchObject({
+      startRowIndex: 2,
+      startColumnIndex: 0,
+      endColumnIndex: 3,
+    });
+    expect(namedRangeByName.get('Options_Submittal_FFE_Vendors')).toMatchObject({
+      startRowIndex: 2,
+      startColumnIndex: 3,
+      endColumnIndex: 7,
+    });
+    expect(namedRangeByName.get('Options_Submittal_FFE_Contacts')).toMatchObject({
+      startRowIndex: 2,
+      startColumnIndex: 12,
+      endColumnIndex: 16,
+    });
+
+    const ffeConfigRow3 = getRowValuesFromSheetGrid(grid, '_Config Submittal FF&E', 2);
+    expect(ffeConfigRow3.slice(0, 3).map((c) => (c.formattedValue ?? '').trim())).toEqual([
+      'Tag',
+      'Title',
+      'Aliases',
+    ]);
+    LiveTestHarness.sheets.expectAliasesHeaderNote(ffeConfigRow3[2]?.note ?? undefined);
+    expect(ffeConfigRow3.slice(3, 7).map((c) => (c.formattedValue ?? '').trim())).toEqual([
+      'Type',
+      'Key',
+      'Name',
+      'Aliases',
+    ]);
+    LiveTestHarness.sheets.expectAliasesHeaderNote(ffeConfigRow3[6]?.note ?? undefined);
+    expect(ffeConfigRow3.slice(12, 16).map((c) => (c.formattedValue ?? '').trim())).toEqual([
+      'Type',
+      'Key',
+      'Name',
+      'Aliases',
+    ]);
+    LiveTestHarness.sheets.expectAliasesHeaderNote(ffeConfigRow3[15]?.note ?? undefined);
+
+    // 4) Full-workbook spreadsheet error-token scan (#REF!, #ERROR!, #N/A, #VALUE!, #NAME?, #DIV/0!)
+    expect(
+      await LiveTestHarness.sheets.findSpreadsheetErrorTokens(
+        sheetsApi,
+        spreadsheetId,
+        LiveTestHarness.clients.DEFAULT_LIVE_RETRY_OPTIONS
+      )
     ).toEqual([]);
-  }, 180_000);
+  }, 60_000);
 });

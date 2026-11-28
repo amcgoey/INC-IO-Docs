@@ -7,6 +7,7 @@ import {
   loadEnvIfPresent,
   getDocumentLogTestFolderId,
   getSubmittalCoverSheetTemplateId,
+  hasLiveGoogleCredentials,
   resolveLiveGoogleAuth,
 } from './utils/live-google-auth';
 
@@ -15,6 +16,7 @@ const TRACKED_ENV_KEYS = [
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_REFRESH_TOKEN',
+  'GOOGLE_APPLICATION_CREDENTIALS',
   'DOCUMENT_LOG_TEST_FOLDER_ID',
   'SUBMITTAL_COVER_SHEET_TEMPLATE_ID',
   'LIVE_AUTH_TEST_KEY',
@@ -192,6 +194,32 @@ describe('live-google-auth', () => {
         'https://www.googleapis.com/auth/spreadsheets',
       ]);
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hasLiveGoogleCredentials', () => {
+    it('returns false when no token, complete OAuth triad, or GOOGLE_APPLICATION_CREDENTIALS is set', () => {
+      expect(hasLiveGoogleCredentials()).toBe(false);
+
+      vi.stubEnv('GOOGLE_CLIENT_ID', 'client-only');
+      expect(hasLiveGoogleCredentials()).toBe(false);
+    });
+
+    it('returns true when GOOGLE_ACCESS_TOKEN, full OAuth refresh triad, or GOOGLE_APPLICATION_CREDENTIALS is set', () => {
+      vi.stubEnv('GOOGLE_ACCESS_TOKEN', 'ya29.access');
+      expect(hasLiveGoogleCredentials()).toBe(true);
+      delete process.env.GOOGLE_ACCESS_TOKEN;
+
+      vi.stubEnv('GOOGLE_CLIENT_ID', 'cid');
+      vi.stubEnv('GOOGLE_CLIENT_SECRET', 'csec');
+      vi.stubEnv('GOOGLE_REFRESH_TOKEN', 'cref');
+      expect(hasLiveGoogleCredentials()).toBe(true);
+      delete process.env.GOOGLE_CLIENT_ID;
+      delete process.env.GOOGLE_CLIENT_SECRET;
+      delete process.env.GOOGLE_REFRESH_TOKEN;
+
+      vi.stubEnv('GOOGLE_APPLICATION_CREDENTIALS', '/path/to/adc.json');
+      expect(hasLiveGoogleCredentials()).toBe(true);
     });
   });
 });

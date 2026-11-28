@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_LIVE_RETRY_OPTIONS,
   appendRawPositiveTableRows,
+  batchUpdateSpreadsheetValues,
   clearOptionTableToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
@@ -23,6 +24,7 @@ import {
   partialHydrationRowToCellInputs,
   readNamedRangesFormattedValues,
   readOptionTableGridFormats,
+  readSpreadsheetMetadata,
   snapshotNamedRanges,
 } from '../e2e/utils/live-sheets-helper';
 import {
@@ -164,11 +166,13 @@ describe.skipIf(!TEST_FOLDER_ID)(
 
     it('executes full DocumentService.processDocument() (MOVE_FILE -> WRITE_LOG) for submittal-arch', async () => {
       const liveDriveClient = requireDriveClient();
-      const spreadsheetMeta = await sheetsApi.spreadsheets.get({
-        spreadsheetId: copiedSpreadsheetId,
-        fields: 'sheets(properties(sheetId,title))',
-      });
-      const archSheetId = spreadsheetMeta.data.sheets?.find(
+      const spreadsheetMeta = await readSpreadsheetMetadata(
+        sheetsApi,
+        copiedSpreadsheetId,
+        'sheets(properties(sheetId,title))',
+        DEFAULT_LIVE_RETRY_OPTIONS
+      );
+      const archSheetId = spreadsheetMeta.sheets?.find(
         (s) => s.properties?.title === sampleFixture.submittalArch.sheetName
       )?.properties?.sheetId;
       expect(typeof archSheetId).toBe('number');
@@ -957,22 +961,22 @@ describe.skipIf(!TEST_FOLDER_ID)(
         const aliasesColLetter = columnIndexToLetter(
           (contactsRange.gridRange.startColumnIndex ?? 0) + aliasesColOffset
         );
-        await sheetsApi.spreadsheets.values.batchUpdate({
-          spreadsheetId: spSpreadsheetId,
-          requestBody: {
-            valueInputOption: 'RAW',
-            data: [
-              {
-                range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + pmgRowOffset}`,
-                values: [['"Pavarini, ""NYC"" Group", PMG-Custom']],
-              },
-              {
-                range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + fxcRowOffset}`,
-                values: [['@ventresca.com, FXC-Custom']],
-              },
-            ],
-          },
-        });
+        await batchUpdateSpreadsheetValues(
+          sheetsApi,
+          spSpreadsheetId,
+          [
+            {
+              range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + pmgRowOffset}`,
+              values: [['"Pavarini, ""NYC"" Group", PMG-Custom']],
+            },
+            {
+              range: `'${archContactsBinding.sheetName}'!${aliasesColLetter}${startRow + fxcRowOffset}`,
+              values: [['@ventresca.com, FXC-Custom']],
+            },
+          ],
+          'RAW',
+          DEFAULT_LIVE_RETRY_OPTIONS
+        );
 
         // Use a fresh WorkspaceExecutionContext so per-request LookupOptions cache reads updated Aliases
         const customParser = sourceParserWiring.createSourceParser({});
