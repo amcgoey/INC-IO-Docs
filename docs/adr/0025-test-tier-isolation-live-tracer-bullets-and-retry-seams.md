@@ -14,11 +14,11 @@ End-to-end verification against live Google Workspace services shares a per-user
 ### 1. Four-Tier Test Architecture & Runner Isolation
 
 - Partition verification into four conceptual tiers:
-  1. **Offline application and integration (`test`)**: fast, deterministic unit, adapter, and offline E2E suites.
-  2. **Infrastructure bootstrap and Pulumi (`test:infra`)**: Pulumi previews, infrastructure workflows, and bootstrap CLI tests.
-  3. **Full offline CI gate (`test:all`)**: combined offline application, integration, and infrastructure suites.
+  1. **Offline application and integration (`test`)**: fast, deterministic unit, adapter, validation, and offline E2E suites configured in `vitest.config.mts` (isolating `test/infra/`, `test/infra-workflow.test.ts`, and `test/live/`).
+  2. **Infrastructure bootstrap and Pulumi (`test:infra`)**: bootstrap CLI (`test/infra/`), infrastructure workflow (`test/infra-workflow.test.ts`), and Pulumi suites configured via `vitest.infra.config.mts` and `infra/pulumi`.
+  3. **Full offline CI gate (`test:all`)**: unified Vitest projects configuration (`vitest.all.config.mts`) running the `infra` and `app` projects in a single Vitest process pool (scheduling `infra` first to overlap with `app`), followed by `infra/pulumi` tests.
   4. **Sequential live Google API (`test:live` and scoped `test:live:<scope>`)**: opt-in contract suites under `test/live/*.live.test.ts`.
-- Keep offline E2E suites in `test/e2e/` (`workspace-addon-e2e.test.ts`, `live-google-auth.test.ts`, `live-sheets-helper.test.ts`) inside the offline tier, and configure offline Vitest runners to exclude `test/live/` so local `.env` credentials remain inert during offline runs and workers make zero live network calls.
+- Keep offline E2E suites in `test/e2e/` (`workspace-addon-e2e.test.ts`, `live-google-auth.test.ts`, `live-sheets-helper.test.ts`) inside the `app` offline tier, keep `test/infra-workflow.test.ts` alongside `test/infra/` in the `infra` project, and isolate `test/live/` from all offline Vitest configs so local `.env` credentials remain inert during offline runs and workers make zero live network calls.
 
 ### 2. Live Contract Tracer Bullets, Offline Seam Coverage & 60/min Quota Ceiling
 
@@ -48,6 +48,6 @@ End-to-end verification against live Google Workspace services shares a per-user
 
 ## Consequences
 
-- Offline CI (`test:all`) stays fast, deterministic, and isolated from local credentials while parallelizing safely across worker processes.
+- Offline CI (`test:all`) stays fast, deterministic, and isolated from local credentials while overlapping the `infra` and `app` projects safely across one Vitest worker pool.
 - Live verification confirms real Google Workspace contract behavior within the `60 ReadRequestsPerMinutePerUser` quota ceiling without duplicating combinatorial offline coverage.
 - Rate-limit retries, `AbortSignal` cancellation, and `selectedLogId` fallback behavior remain uniform across Google adapters, `DocumentLog`, and `LookupOptions`.
