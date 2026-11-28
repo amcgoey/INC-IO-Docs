@@ -1621,4 +1621,95 @@ describe('live-sheets-helper', () => {
       ).rejects.toThrow(/missing endMarker "---"/);
     });
   });
+
+  describe('shared rate-limit retry delegation', () => {
+    it('retries HTTP 403 quota-reason errors with ±25% jitter while ignoring non-quota 403', async () => {
+      const randomSpy = vi
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0) // 0.75x
+        .mockReturnValueOnce(0.999999); // ~1.25x
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+
+      try {
+        let getAttempts = 0;
+        const { sheetsApi, getSpreadsheet } = createMockSheetsApi({
+          formattedValues: [['Status', 'Section'], [], ['<--->'], [], ['<--->']],
+        });
+
+        getSpreadsheet.mockImplementation(async () => {
+          getAttempts++;
+          if (getAttempts === 1) {
+            throw { status: 403, errors: [{ reason: 'userRateLimitExceeded' }], message: 'Quota' };
+          }
+          if (getAttempts === 2) {
+            throw {
+              response: { status: 403, data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } } },
+              message: 'Rate limit',
+            };
+          }
+          return {
+            data: {
+              sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
+              namedRanges: [
+                {
+                  name: 'Log_Submittal_Arch',
+                  range: { sheetId: 101, startRowIndex: 2, endRowIndex: 7, startColumnIndex: 0, endColumnIndex: 2 },
+                },
+              ],
+            },
+          };
+        });
+
+        await ensureClearedPositiveTable(sheetsApi, archTarget, {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        });
+
+        expect(getSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(sleepMock).toHaveBeenCalledTimes(2);
+        expect(sleepMock.mock.calls[0]?.[0]).toBe(75);
+        expect(sleepMock.mock.calls[1]?.[0]).toBe(250);
+
+        sleepMock.mockClear();
+        getSpreadsheet.mockRejectedValueOnce({
+          status: 403,
+          errors: [{ reason: 'forbidden' }],
+          message: 'Insufficient Permission',
+        });
+
+        await expect(
+          ensureClearedPositiveTable(sheetsApi, archTarget, {
+            maxRetries: 3,
+            initialDelayMs: 100,
+            sleep: sleepMock,
+          })
+        ).rejects.toMatchObject({ status: 403 });
+        expect(sleepMock).not.toHaveBeenCalled();
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('honors AbortSignal to terminate active retry backoff immediately', async () => {
+      const controller = new AbortController();
+      const { sheetsApi, getSpreadsheet } = createMockSheetsApi({
+        formattedValues: [['Status', 'Section'], [], ['<--->'], [], ['<--->']],
+      });
+      getSpreadsheet.mockRejectedValue({ statusCode: 429, message: 'Too Many Requests' });
+
+      const promise = ensureClearedPositiveTable(sheetsApi, archTarget, {
+        maxRetries: 3,
+        initialDelayMs: 60_000,
+        signal: controller.signal,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+    });
+  });
 });

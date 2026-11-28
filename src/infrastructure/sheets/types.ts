@@ -2,6 +2,7 @@ import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import type { sheets_v4 } from 'googleapis';
 import { Type, type Static } from '@sinclair/typebox';
 import type { KeyedAsyncLock } from './keyed-lock';
+import type { GoogleApiRetryOptions } from '../google/retry';
 
 export const CellValueSchema = Type.Union([
   Type.String(),
@@ -146,12 +147,7 @@ export const WriteNamedRangeRequestSchema = Type.Intersect([
 ]);
 export type WriteNamedRangeRequest = Static<typeof WriteNamedRangeRequestSchema>;
 
-export interface SheetsRetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-  sleep?: (ms: number) => Promise<void>;
-}
+export type SheetsRetryOptions = GoogleApiRetryOptions;
 
 export interface SheetsConfigProvider {
   getSheetsConfig(): Promise<{

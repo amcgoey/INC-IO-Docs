@@ -13,6 +13,10 @@ import {
   type RowRecord,
   type SheetCellInput,
 } from '../../../src/infrastructure/sheets';
+import {
+  executeWithRateLimitRetry,
+  type GoogleApiRetryOptions,
+} from '../../../src/infrastructure/google/retry';
 
 export const DEFAULT_LIVE_RETRY_OPTIONS = {
   maxRetries: 5,
@@ -76,11 +80,7 @@ export interface DocumentLogSampleFixture {
   };
 }
 
-export interface LiveSheetsRetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-}
+export type LiveSheetsRetryOptions = GoogleApiRetryOptions;
 
 type PositiveRowKind = 'data' | 'blank' | 'divider';
 
@@ -322,47 +322,16 @@ export function findCleanDividerViolations(params: {
   return violations;
 }
 
-function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-  const err = error as {
-    statusCode?: unknown;
-    status?: unknown;
-    code?: unknown;
-    response?: { status?: unknown };
-  };
-  return (
-    err.statusCode === 429 ||
-    err.status === 429 ||
-    err.response?.status === 429 ||
-    err.code === 429 ||
-    err.code === '429'
-  );
-}
-
 async function withSheetsRetry<T>(
   operation: () => Promise<T>,
   retryOptions: LiveSheetsRetryOptions = DEFAULT_LIVE_RETRY_OPTIONS
 ): Promise<T> {
-  const maxRetries = retryOptions.maxRetries ?? DEFAULT_LIVE_RETRY_OPTIONS.maxRetries;
-  const initialDelayMs = retryOptions.initialDelayMs ?? DEFAULT_LIVE_RETRY_OPTIONS.initialDelayMs;
-  const backoffFactor = retryOptions.backoffFactor ?? DEFAULT_LIVE_RETRY_OPTIONS.backoffFactor;
-
-  let attempt = 0;
-  while (true) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (isRateLimitError(error) && attempt < maxRetries) {
-        const delayMs = initialDelayMs * Math.pow(backoffFactor, attempt);
-        attempt++;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-      throw error;
-    }
-  }
+  return executeWithRateLimitRetry(operation, {
+    ...retryOptions,
+    maxRetries: retryOptions.maxRetries ?? DEFAULT_LIVE_RETRY_OPTIONS.maxRetries,
+    initialDelayMs: retryOptions.initialDelayMs ?? DEFAULT_LIVE_RETRY_OPTIONS.initialDelayMs,
+    backoffFactor: retryOptions.backoffFactor ?? DEFAULT_LIVE_RETRY_OPTIONS.backoffFactor,
+  });
 }
 
 async function resolvePositiveNamedRange(

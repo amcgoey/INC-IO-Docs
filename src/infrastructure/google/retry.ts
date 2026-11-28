@@ -2,7 +2,82 @@ export interface GoogleApiRetryOptions {
   maxRetries?: number | undefined;
   initialDelayMs?: number | undefined;
   backoffFactor?: number | undefined;
-  sleep?: ((ms: number) => Promise<void>) | undefined;
+  sleep?: ((ms: number, signal?: AbortSignal) => Promise<void>) | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+function createAbortError(): Error {
+  const err = new Error('Operation aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function getAbortReason(signal: AbortSignal): unknown {
+  return signal.reason !== undefined ? signal.reason : createAbortError();
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw getAbortReason(signal);
+  }
+}
+
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    let onAbort: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      if (signal && onAbort) {
+        signal.removeEventListener('abort', onAbort);
+      }
+      resolve();
+    }, ms);
+
+    if (signal) {
+      onAbort = () => {
+        clearTimeout(timer);
+        if (onAbort) {
+          signal.removeEventListener('abort', onAbort);
+        }
+        reject(getAbortReason(signal));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+async function waitWithAbort(
+  ms: number,
+  sleepFn: (ms: number, signal?: AbortSignal) => Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!signal) {
+    await sleepFn(ms);
+    return;
+  }
+
+  throwIfAborted(signal);
+  if (sleepFn === defaultSleep) {
+    await defaultSleep(ms, signal);
+    return;
+  }
+
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      reject(getAbortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+
+  try {
+    await Promise.race([Promise.resolve(sleepFn(ms, signal)), abortPromise]);
+    throwIfAborted(signal);
+  } finally {
+    if (onAbort) {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
 }
 
 export function extractHttpStatusCode(error: unknown): number | undefined {
@@ -77,20 +152,22 @@ export async function executeWithRateLimitRetry<T>(
   const maxRetries = options.maxRetries ?? 3;
   const initialDelayMs = options.initialDelayMs ?? 1000;
   const backoffFactor = options.backoffFactor ?? 2;
-  const sleep =
-    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const sleep = options.sleep ?? defaultSleep;
+  const signal = options.signal;
 
   let attempt = 0;
   while (true) {
+    throwIfAborted(signal);
     try {
       return await operation();
     } catch (error) {
+      throwIfAborted(signal);
       if (isRateLimitOrQuotaError(error) && attempt < maxRetries) {
         const baseDelay = initialDelayMs * Math.pow(backoffFactor, attempt);
         const jitter = 0.75 + Math.random() * 0.5;
         const delay = Math.round(baseDelay * jitter);
         attempt++;
-        await sleep(delay);
+        await waitWithAbort(delay, sleep, signal);
         continue;
       }
       throw error;
