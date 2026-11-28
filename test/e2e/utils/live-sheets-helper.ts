@@ -322,7 +322,10 @@ export function findCleanDividerViolations(params: {
   return violations;
 }
 
-async function withSheetsRetry<T>(
+/**
+ * Wraps a raw Sheets SDK operation with unified rate-limit retry (`±25%` jitter, 429 & quota-403).
+ */
+export async function withLiveSheetsRetry<T>(
   operation: () => Promise<T>,
   retryOptions: LiveSheetsRetryOptions = DEFAULT_LIVE_RETRY_OPTIONS
 ): Promise<T> {
@@ -332,6 +335,102 @@ async function withSheetsRetry<T>(
     initialDelayMs: retryOptions.initialDelayMs ?? DEFAULT_LIVE_RETRY_OPTIONS.initialDelayMs,
     backoffFactor: retryOptions.backoffFactor ?? DEFAULT_LIVE_RETRY_OPTIONS.backoffFactor,
   });
+}
+
+async function withSheetsRetry<T>(
+  operation: () => Promise<T>,
+  retryOptions: LiveSheetsRetryOptions = DEFAULT_LIVE_RETRY_OPTIONS
+): Promise<T> {
+  return withLiveSheetsRetry(operation, retryOptions);
+}
+
+/**
+ * Reads spreadsheet metadata with unified rate-limit retry.
+ */
+export async function readSpreadsheetMetadata(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  fields = 'sheets(properties(sheetId,title))',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<sheets_v4.Schema$Spreadsheet> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields,
+      }),
+    retryOptions
+  );
+  return response.data;
+}
+
+/**
+ * Reads A1 range values with unified rate-limit retry.
+ */
+export async function readSpreadsheetValues(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  range: string,
+  valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<CellValue[][]> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.get({
+        spreadsheetId,
+        range,
+        valueRenderOption,
+      }),
+    retryOptions
+  );
+  return (response.data.values as CellValue[][] | undefined) ?? [];
+}
+
+/**
+ * Writes raw or user-entered values via `values.batchUpdate` with unified rate-limit retry.
+ */
+export async function batchUpdateSpreadsheetValues(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  data: sheets_v4.Schema$ValueRange[],
+  valueInputOption: 'RAW' | 'USER_ENTERED' = 'RAW',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<void> {
+  await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption,
+          data,
+        },
+      }),
+    retryOptions
+  );
+}
+
+/**
+ * Reads grid layout (`formattedValue`, `userEnteredValue`, `note`), sheet `merges`, and `namedRanges`
+ * for one or more A1 ranges in a single retry-backed `spreadsheets.get` call.
+ */
+export async function readSheetsGridLayout(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  ranges: readonly string[],
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<sheets_v4.Schema$Spreadsheet> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        ranges: [...ranges],
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,note)))),namedRanges',
+      }),
+    retryOptions
+  );
+  return response.data;
 }
 
 async function resolvePositiveNamedRange(

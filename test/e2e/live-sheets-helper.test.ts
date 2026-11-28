@@ -5,6 +5,7 @@ import type { PositiveTableTarget } from '../../src/infrastructure/sheets';
 import {
   SHEET_ERROR_TOKENS,
   appendRawPositiveTableRows,
+  batchUpdateSpreadsheetValues,
   clearOptionTableToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
@@ -15,7 +16,11 @@ import {
   partialHydrationRowToCellInputs,
   readNamedRangesFormattedValues,
   readOptionTableGridFormats,
+  readSheetsGridLayout,
+  readSpreadsheetMetadata,
+  readSpreadsheetValues,
   snapshotNamedRanges,
+  withLiveSheetsRetry,
 } from './utils/live-sheets-helper';
 
 function createMockSheetsApi(params: {
@@ -1710,6 +1715,97 @@ describe('live-sheets-helper', () => {
 
       await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
       expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+    });
+
+    it('wraps readSpreadsheetMetadata, readSpreadsheetValues, batchUpdateSpreadsheetValues, and readSheetsGridLayout with rate-limit retry', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryOpts = { maxRetries: 2, initialDelayMs: 10, backoffFactor: 2, sleep: sleepMock };
+
+      let metaAttempt = 0;
+      let valuesGetAttempt = 0;
+      let valuesBatchUpdateAttempt = 0;
+      let gridAttempt = 0;
+
+      const getSpreadsheet = vi.fn().mockImplementation(async (req: { includeGridData?: boolean }) => {
+        if (req.includeGridData) {
+          gridAttempt++;
+          if (gridAttempt === 1) {
+            throw { status: 429, message: 'Rate limited' };
+          }
+          return { data: { sheets: [], namedRanges: [] } };
+        }
+        metaAttempt++;
+        if (metaAttempt === 1) {
+          throw { status: 429, message: 'Rate limited' };
+        }
+        return { data: { sheets: [{ properties: { sheetId: 7, title: 'Submittal Arch' } }] } };
+      });
+
+      const valuesGet = vi.fn().mockImplementation(async () => {
+        valuesGetAttempt++;
+        if (valuesGetAttempt === 1) {
+          throw { status: 403, errors: [{ reason: 'userRateLimitExceeded' }], message: 'Quota' };
+        }
+        return { data: { values: [['CalcValue']] } };
+      });
+
+      const valuesBatchUpdate = vi.fn().mockImplementation(async () => {
+        valuesBatchUpdateAttempt++;
+        if (valuesBatchUpdateAttempt === 1) {
+          throw { statusCode: 429, message: 'Rate limited' };
+        }
+        return { data: { totalUpdatedCells: 1 } };
+      });
+
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: {
+            get: valuesGet,
+            batchUpdate: valuesBatchUpdate,
+          },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const meta = await readSpreadsheetMetadata(sheetsApi, 'sheet-123', undefined, retryOpts);
+      expect(meta.sheets?.[0]?.properties?.sheetId).toBe(7);
+
+      const values = await readSpreadsheetValues(
+        sheetsApi,
+        'sheet-123',
+        "'Submittal FF&E'!L6",
+        'FORMATTED_VALUE',
+        retryOpts
+      );
+      expect(values).toEqual([['CalcValue']]);
+
+      await batchUpdateSpreadsheetValues(
+        sheetsApi,
+        'sheet-123',
+        [{ range: "'_Config Submittal Arch'!I5", values: [['alias']] }],
+        'RAW',
+        retryOpts
+      );
+
+      const grid = await readSheetsGridLayout(
+        sheetsApi,
+        'sheet-123',
+        ["'_Config Submittal Arch'!A1:K4"],
+        retryOpts
+      );
+      expect(grid).toEqual({ sheets: [], namedRanges: [] });
+
+      let directAttempts = 0;
+      const directResult = await withLiveSheetsRetry(async () => {
+        directAttempts++;
+        if (directAttempts === 1) {
+          throw { status: 429, message: 'Retry me' };
+        }
+        return 'ok';
+      }, retryOpts);
+      expect(directResult).toBe('ok');
+      expect(directAttempts).toBe(2);
+      expect(sleepMock).toHaveBeenCalledTimes(5);
     });
   });
 });

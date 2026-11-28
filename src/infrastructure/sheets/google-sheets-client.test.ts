@@ -3785,6 +3785,95 @@ describe('GoogleSheetsClient', () => {
         TypeSystemPolicy.ExactOptionalPropertyTypes = prevPolicy;
       }
     });
+
+    it('writes literal =text strings strictly as stringValue (never formulaValue) across insertIntoGroupedList insert and upsert while preserving explicit { formula } cells', async () => {
+      const state = createSeededState([makeBlankSimRow()]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const insertResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: '=STATUS_INJECT',
+          Group: '099000-001',
+          SortKey: '099000-001-0-260325-1',
+          Helper: { formula: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")' },
+          Notes: '=SUM(1,2)',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '099000-001', sortKey: '099000-001-0-260325-1' },
+        readOnlyColumns: ['Spec Title'],
+      });
+      expect(insertResult).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
+
+      const insertRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const insertCellUpdates = insertRequests.filter((req) => req.updateCells);
+      const insertedCells = insertCellUpdates.flatMap((req) => req.updateCells?.rows?.[0]?.values ?? []);
+      expect(insertedCells).toEqual(
+        expect.arrayContaining([
+          { userEnteredValue: { stringValue: '=STATUS_INJECT' } },
+          { userEnteredValue: { formulaValue: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")' } },
+          { userEnteredValue: { stringValue: '=SUM(1,2)' } },
+        ])
+      );
+      expect(state.grid[5].cells[0]).toEqual({ kind: 'string', value: '=STATUS_INJECT' });
+      expect(state.grid[5].cells[4]).toEqual({
+        kind: 'formula',
+        value: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")',
+      });
+      expect(state.grid[5].cells[5]).toEqual({ kind: 'string', value: '=SUM(1,2)' });
+
+      // Upsert with another literal =text payload also uses stringValue (never formulaValue)
+      const upsertResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: '=1+1',
+          Group: '099000-001',
+          SortKey: '099000-001-0-260325-1',
+          Notes: '=HYPERLINK("https://evil.example", "Phish")',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '099000-001', sortKey: '099000-001-0-260325-1' },
+        duplicatePolicy: 'upsert',
+        readOnlyColumns: ['Spec Title'],
+      });
+      expect(upsertResult).toEqual({ rowNumber: 6, action: 'updated', sheetId: 10 });
+
+      const upsertRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[1][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const upsertCells = upsertRequests
+        .filter((req) => req.updateCells)
+        .flatMap((req) => req.updateCells?.rows?.[0]?.values ?? []);
+      expect(upsertCells).toEqual(
+        expect.arrayContaining([
+          { userEnteredValue: { stringValue: '=1+1' } },
+          {
+            userEnteredValue: {
+              stringValue: '=HYPERLINK("https://evil.example", "Phish")',
+            },
+          },
+        ])
+      );
+      expect(
+        upsertCells.some(
+          (c) =>
+            c.userEnteredValue?.formulaValue === '=1+1' ||
+            c.userEnteredValue?.formulaValue === '=HYPERLINK("https://evil.example", "Phish")'
+        )
+      ).toBe(false);
+
+      const table = await client.readTable({ target, linkColumns: ['Helper'] });
+      expect(table.rows).toHaveLength(1);
+      expect(table.rows[0].values).toMatchObject({
+        Status: '=1+1',
+        Group: '099000-001',
+        Notes: '=HYPERLINK("https://evil.example", "Phish")',
+      });
+      expect(table.rows[0].links).toEqual({
+        Helper: 'https://drive.google.com/file/d/safe/view',
+      });
+    });
   });
 
   describe('readNamedRangesBatch', () => {
