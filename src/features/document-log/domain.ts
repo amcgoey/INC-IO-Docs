@@ -2,6 +2,7 @@ import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
   DocumentLogMissingError,
+  LogStorageInaccessibleError,
   type CopyDocumentLogResult,
   type DocumentLogEntry,
   type DocumentLogOptionBinding,
@@ -478,6 +479,11 @@ export interface DocumentLogServiceOptions {
   memoizeResolvePerInstance?: boolean | undefined;
 }
 
+type StaleSelectedLogFallback =
+  | { status: 'missing_log'; expectedFolderPath: string }
+  | { status: 'same_id_inaccessible'; error: LogStorageInaccessibleError }
+  | { status: 'resolved'; spreadsheetId: string };
+
 /**
  * Core domain service managing live DocumentLog discovery and Document dehydration/write orchestration.
  */
@@ -486,6 +492,10 @@ export class DocumentLogService implements DocumentLogPort {
   private readonly optionTablesMemo:
     | Map<string, Promise<DocumentLogOptionTableSourceResult>>
     | undefined;
+  private readonly staleSelectedLogFallbackMemo = new Map<
+    string,
+    Promise<StaleSelectedLogFallback>
+  >();
 
   constructor(
     private readonly schemaRegistry: LogSchemaRegistryPort,
@@ -929,9 +939,21 @@ export class DocumentLogService implements DocumentLogPort {
       targetFolderId: targetFolder.id,
       newName,
     });
+    this.invalidateSpaceResolutionMemos(space);
+
+    return {
+      created: true,
+      candidate,
+      folderPath: preferredFolderPath,
+    };
+  }
+
+  private invalidateSpaceResolutionMemos(space: DocumentLogSpace): void {
+    const exactKey = this.getResolveLogMemoKey(space);
+    const storageSuffix = `::${space.abstractStorageId.trim()}`;
+
     if (this.resolveLogMemo) {
-      this.resolveLogMemo.delete(this.getResolveLogMemoKey(space));
-      const storageSuffix = `::${space.abstractStorageId.trim()}`;
+      this.resolveLogMemo.delete(exactKey);
       for (const key of this.resolveLogMemo.keys()) {
         if (key.endsWith(storageSuffix)) {
           this.resolveLogMemo.delete(key);
@@ -939,11 +961,11 @@ export class DocumentLogService implements DocumentLogPort {
       }
     }
 
-    return {
-      created: true,
-      candidate,
-      folderPath: preferredFolderPath,
-    };
+    for (const key of this.staleSelectedLogFallbackMemo.keys()) {
+      if (key.endsWith(`::${exactKey}`) || key.endsWith(storageSuffix)) {
+        this.staleSelectedLogFallbackMemo.delete(key);
+      }
+    }
   }
 
   private requireSchemasForDocumentType(documentTypeKey: string): {
@@ -1133,49 +1155,21 @@ export class DocumentLogService implements DocumentLogPort {
   }
 
   /**
-   * Reads all requested `_Config` option tables from the active `DocumentLog` spreadsheet in one
-   * batched storage read, resolving omitted or stale `selectedLogId` to `candidates[0]` when `ambiguous`.
+   * Reads all requested `_Config` option tables, using `selectedLogId` directly against Google Sheets
+   * with zero Drive discovery and falling back once to `resolveLog(space)` on `LogStorageInaccessibleError`.
    */
   async readOptionTables(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult> {
     const { logSchema } = this.requireSchemasForDocumentType(request.documentTypeKey);
 
     const trimmedSelectedId = request.selectedLogId?.trim();
+    const hasSelectedLogId = trimmedSelectedId !== undefined && trimmedSelectedId.length > 0;
     const spaceStorageId = (request.space?.abstractStorageId ?? request.space?.id ?? '').trim();
 
-    if (spaceStorageId.length === 0 && (!trimmedSelectedId || trimmedSelectedId.length === 0)) {
+    if (spaceStorageId.length === 0 && !hasSelectedLogId) {
       return {
         status: 'missing_space',
         tables: {},
       };
-    }
-
-    let spreadsheetId: string;
-    if (spaceStorageId.length > 0) {
-      const normalizedSpace: DocumentLogSpace = {
-        id: request.space?.id?.trim() || spaceStorageId,
-        typeId: request.space?.typeId?.trim() ?? '',
-        name: request.space?.name?.trim() ?? '',
-        abstractStorageId: spaceStorageId,
-      };
-      const resolution = await this.resolveLog(normalizedSpace);
-      if (resolution.status === 'missing') {
-        return {
-          status: 'missing_log',
-          expectedFolderPath: resolution.expectedFolderPath,
-          tables: {},
-        };
-      }
-      if (resolution.status === 'resolved') {
-        spreadsheetId = resolution.candidate.id.trim();
-      } else {
-        const active =
-          (trimmedSelectedId
-            ? resolution.candidates.find((c) => c.id === trimmedSelectedId)
-            : undefined) ?? resolution.candidates[0];
-        spreadsheetId = active.id.trim();
-      }
-    } else {
-      spreadsheetId = trimmedSelectedId!;
     }
 
     const optionBindings = logSchema.optionBindings ?? {};
@@ -1184,19 +1178,163 @@ export class DocumentLogService implements DocumentLogPort {
         ? Array.from(new Set(request.sourceKeys))
         : Object.keys(optionBindings);
 
+    const normalizedSpace: DocumentLogSpace | undefined =
+      spaceStorageId.length > 0
+        ? {
+            id: request.space?.id?.trim() || spaceStorageId,
+            typeId: request.space?.typeId?.trim() ?? '',
+            name: request.space?.name?.trim() ?? '',
+            abstractStorageId: spaceStorageId,
+          }
+        : undefined;
+
+    if (!hasSelectedLogId) {
+      const resolution = await this.resolveLog(normalizedSpace!);
+      if (resolution.status === 'missing') {
+        return {
+          status: 'missing_log',
+          expectedFolderPath: resolution.expectedFolderPath,
+          tables: {},
+        };
+      }
+      const spreadsheetId =
+        resolution.status === 'resolved'
+          ? resolution.candidate.id.trim()
+          : resolution.candidates[0].id.trim();
+      return this.readOptionTablesForSpreadsheet({
+        documentTypeKey: request.documentTypeKey,
+        spreadsheetId,
+        logSchema,
+        requestedKeys,
+      });
+    }
+
+    const fallbackMemoKey = normalizedSpace
+      ? `${trimmedSelectedId}::${this.getResolveLogMemoKey(normalizedSpace)}`
+      : undefined;
+
+    if (fallbackMemoKey) {
+      const memoizedFallback = this.staleSelectedLogFallbackMemo.get(fallbackMemoKey);
+      if (memoizedFallback) {
+        return this.applyStaleSelectedLogFallback({
+          fallback: await memoizedFallback,
+          documentTypeKey: request.documentTypeKey,
+          logSchema,
+          requestedKeys,
+        });
+      }
+    }
+
+    try {
+      return await this.readOptionTablesForSpreadsheet({
+        documentTypeKey: request.documentTypeKey,
+        spreadsheetId: trimmedSelectedId,
+        logSchema,
+        requestedKeys,
+      });
+    } catch (error) {
+      if (!(error instanceof LogStorageInaccessibleError)) {
+        throw error;
+      }
+      if (!normalizedSpace || !fallbackMemoKey) {
+        const discoveryConfig = this.schemaRegistry.getDiscoveryConfig(request.space?.typeId);
+        return {
+          status: 'missing_log',
+          expectedFolderPath: discoveryConfig?.preferredFolderPath ?? '',
+          tables: {},
+        };
+      }
+
+      let fallbackPromise = this.staleSelectedLogFallbackMemo.get(fallbackMemoKey);
+      if (!fallbackPromise) {
+        fallbackPromise = this.resolveStaleSelectedLogFallback(
+          trimmedSelectedId,
+          normalizedSpace,
+          error
+        ).catch((resolveError) => {
+          this.staleSelectedLogFallbackMemo.delete(fallbackMemoKey);
+          throw resolveError;
+        });
+        this.staleSelectedLogFallbackMemo.set(fallbackMemoKey, fallbackPromise);
+      }
+
+      return this.applyStaleSelectedLogFallback({
+        fallback: await fallbackPromise,
+        documentTypeKey: request.documentTypeKey,
+        logSchema,
+        requestedKeys,
+      });
+    }
+  }
+
+  private async readOptionTablesForSpreadsheet(params: {
+    documentTypeKey: string;
+    spreadsheetId: string;
+    logSchema: DocumentLogSchema;
+    requestedKeys: readonly string[];
+  }): Promise<ReadOptionTablesResult> {
     const { tableResults } = await this.loadOptionTableEntries({
-      documentTypeKey: request.documentTypeKey,
-      spreadsheetId,
-      logSchema,
-      requestedKeys,
+      ...params,
       requireReadNamedRanges: true,
     });
-
     return {
       status: 'ready',
-      spreadsheetId,
+      spreadsheetId: params.spreadsheetId,
       tables: tableResults,
     };
+  }
+
+  private async resolveStaleSelectedLogFallback(
+    staleSpreadsheetId: string,
+    space: DocumentLogSpace,
+    inaccessibleError: LogStorageInaccessibleError
+  ): Promise<StaleSelectedLogFallback> {
+    const resolution = await this.resolveLog(space);
+    if (resolution.status === 'missing') {
+      return {
+        status: 'missing_log',
+        expectedFolderPath: resolution.expectedFolderPath,
+      };
+    }
+    const fallbackId =
+      resolution.status === 'resolved'
+        ? resolution.candidate.id.trim()
+        : resolution.candidates[0].id.trim();
+    if (fallbackId === staleSpreadsheetId) {
+      return {
+        status: 'same_id_inaccessible',
+        error: inaccessibleError,
+      };
+    }
+    return {
+      status: 'resolved',
+      spreadsheetId: fallbackId,
+    };
+  }
+
+  private async applyStaleSelectedLogFallback(params: {
+    fallback: StaleSelectedLogFallback;
+    documentTypeKey: string;
+    logSchema: DocumentLogSchema;
+    requestedKeys: readonly string[];
+  }): Promise<ReadOptionTablesResult> {
+    const { fallback, documentTypeKey, logSchema, requestedKeys } = params;
+    if (fallback.status === 'missing_log') {
+      return {
+        status: 'missing_log',
+        expectedFolderPath: fallback.expectedFolderPath,
+        tables: {},
+      };
+    }
+    if (fallback.status === 'same_id_inaccessible') {
+      throw fallback.error;
+    }
+    return this.readOptionTablesForSpreadsheet({
+      documentTypeKey,
+      spreadsheetId: fallback.spreadsheetId,
+      logSchema,
+      requestedKeys,
+    });
   }
 
   private async loadOptionTableEntries(params: {
