@@ -4,6 +4,9 @@ import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApp, type AppInstance, type CompositeManifestProvider } from '../src/app/server';
 import { wireDocumentServicesAndRoutes } from '../src/app/document.wiring';
+import * as documentWiringModule from '../src/app/document.wiring';
+import * as lookupOptionsWiringModule from '../src/app/lookup-options.wiring';
+import * as workspaceAddonWiringModule from '../src/app/workspace-addon.wiring';
 import { createDocumentLogWiring } from '../src/app/document-log.wiring';
 import { createHttpServer } from '../src/infrastructure/http';
 import { CompiledSchemaRegistry } from '../src/features/document/adapters/compiled-schema-registry';
@@ -21,6 +24,10 @@ import { GoogleDocsClient, type GoogleDocsClientOptions } from '../src/infrastru
 import { GoogleSheetsClient, type GoogleSheetsClientOptions } from '../src/infrastructure/sheets';
 import { AppManifestProvider } from '../src/infrastructure/manifest/app-manifest-provider';
 import { getDocumentInfoWidgetName } from '../src/features/schema-driven-ui/blocks/document-info';
+import {
+  getDocumentSpaceWidgetName,
+  getDocumentTypeWidgetName,
+} from '../src/features/schema-driven-ui/blocks/document-type-selection';
 import { createAnonymizedSubmittalCoverSheetPdf } from './fixtures/submittal-cover-sheet.fixture';
 
 function createSubmittalOptionTablesSheetsMock(
@@ -2755,6 +2762,231 @@ describe('App integration tests', () => {
         folderSpy.mockRestore();
         resolveFolderSpy.mockRestore();
         getFileSpy.mockRestore();
+      }
+    });
+
+    it('createApp wires shared LookupOptionsWiring (getDynamicValidator, getOptionTablePort, getDocumentSpaceService, lookupTimeoutMs) into POST /documents with zero fallback reads (#415)', async () => {
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const { sheetsClient, getSpy, batchGetSpy } = createSubmittalOptionTablesSheetsMock(manifestPath);
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'arch-log-415',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+      const createLookupServiceSpy = vi.spyOn(
+        lookupOptionsWiringModule,
+        'createLookupOptionsService'
+      );
+      const createLookupWiringSpy = vi.spyOn(
+        lookupOptionsWiringModule,
+        'createLookupOptionsWiring'
+      );
+      const wireDocumentSpy = vi.spyOn(documentWiringModule, 'wireDocumentServicesAndRoutes');
+      const wireAddonSpy = vi.spyOn(workspaceAddonWiringModule, 'wireWorkspaceAddonRoutes');
+      const mockDispatcher: ActivityDispatcherPort = {
+        dispatch: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const prodApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        activityEngine: mockDispatcher,
+        sheetsClient,
+        lookupTimeoutMs: 4321,
+      });
+      await prodApp.initialize();
+
+      try {
+        expect(createLookupWiringSpy).toHaveBeenCalledTimes(1);
+        expect(createLookupWiringSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            timeoutMs: 4321,
+            getDocumentSpaceService: expect.any(Function),
+          })
+        );
+        expect(wireDocumentSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            lookupTimeoutMs: 4321,
+            getDynamicValidator: expect.any(Function),
+            getOptionTablePort: expect.any(Function),
+            getDocumentSpaceService: expect.any(Function),
+            getLookupOptions: expect.any(Function),
+          })
+        );
+        expect(wireAddonSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            lookupTimeoutMs: 4321,
+            lookupOptionsWiring: expect.any(Object),
+            createDocumentSpaceService: expect.any(Function),
+          })
+        );
+
+        const res = await prodApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-415',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-415',
+            },
+            data: {
+              status: 'Open',
+              section: '071200',
+              number: '002',
+              revision: 'A',
+              title: 'Waterproofing',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+            },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(true);
+        expect(body.data.calculated.csiDivisionFolder).toBe(
+          '07 Thermal and Moisture Protection'
+        );
+        expect(createLookupServiceSpy).not.toHaveBeenCalled();
+        expect(getSpy).toHaveBeenCalledTimes(1);
+        expect(batchGetSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        searchSpy.mockRestore();
+        createLookupServiceSpy.mockRestore();
+        createLookupWiringSpy.mockRestore();
+        wireDocumentSpy.mockRestore();
+        wireAddonSpy.mockRestore();
+      }
+    });
+
+    it('createApp forwards custom lookupTimeoutMs identically to POST /documents and Workspace Addon, canceling slow Sheets reads (#415)', async () => {
+      const manifestPath = path.resolve(__dirname, '../assets/manifest.json');
+      const sheetsGet = vi.fn().mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        return { data: { spreadsheetId: 'slow-sheet-415', sheets: [], namedRanges: [] } };
+      });
+      const delayedSheetsClient = new GoogleSheetsClient({
+        sheets: {
+          spreadsheets: {
+            get: sheetsGet,
+            batchUpdate: vi.fn(),
+            values: {
+              get: vi.fn().mockResolvedValue({ data: { values: [] } }),
+              batchGet: vi.fn(),
+              update: vi.fn(),
+            },
+          },
+        } as unknown as NonNullable<GoogleSheetsClientOptions['sheets']>,
+        configProvider: new AppManifestProvider({ manifestPath }),
+        retryOptions: { maxRetries: 0 },
+      });
+      const searchSpy = vi.spyOn(GoogleDriveClient.prototype, 'searchFiles').mockResolvedValue([
+        {
+          id: 'slow-sheet-415',
+          name: 'Active Projects Document Log',
+          mimeType: 'application/vnd.google-apps.spreadsheet',
+        },
+      ]);
+
+      const delayedApp = createApp({
+        skipSpaceValidation: true,
+        manifestPath,
+        sheetsClient: delayedSheetsClient,
+        authVerifier: {
+          verifyToken: vi.fn().mockResolvedValue({
+            isValid: true,
+            payload: { email: 'user@inc.nyc', sub: 'user-1' },
+          }),
+        },
+        storageAdapter: {
+          fetchSpaces: vi.fn().mockResolvedValue([
+            {
+              id: 'space-projects-415',
+              typeId: 'projects',
+              name: 'Active Projects',
+              abstractStorageId: 'space-projects-415',
+            },
+          ]),
+          resolveStorageLocation: vi.fn().mockResolvedValue({
+            provider: 'google_drive',
+            abstractStorageId: 'space-projects-415',
+          }),
+        },
+        lookupTimeoutMs: 25,
+      });
+      await delayedApp.initialize();
+
+      try {
+        const startedAt = Date.now();
+        const res = await delayedApp.server.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'submittal-arch',
+            space: {
+              id: 'space-projects-415',
+              name: 'Active Projects',
+              typeId: 'projects',
+              abstractStorageId: 'space-projects-415',
+            },
+            data: {
+              status: 'Open',
+              section: '071200',
+              number: '002',
+              revision: 'A',
+              title: 'Waterproofing',
+              date: '261020',
+              contact: 'PMG',
+              action: 'NOC',
+            },
+          },
+        });
+        const elapsedMs = Date.now() - startedAt;
+
+        expect(res.statusCode).toBe(400);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(false);
+        expect(JSON.stringify(body.errors ?? '')).toMatch(/timed out/i);
+        expect(elapsedMs).toBeLessThan(1000);
+        expect(sheetsGet).toHaveBeenCalledTimes(1);
+
+        const addonStartedAt = Date.now();
+        const addonRes = await delayedApp.server.inject({
+          method: 'POST',
+          url: '/workspace/action',
+          headers: { authorization: 'Bearer valid-jwt' },
+          payload: {
+            authorizationEventObject: { userOAuthToken: 'ya29.token' },
+            drive: { selectedItems: [{ id: 'file-415', title: 'Submittal.pdf' }] },
+            commonEventObject: {
+              hostApp: 'DRIVE',
+              parameters: { action: 'onFormChange' },
+              formInputs: {
+                SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+                [getDocumentSpaceWidgetName('projects')]: {
+                  stringInputs: { value: ['Active Projects'] },
+                },
+                [getDocumentTypeWidgetName('projects')]: {
+                  stringInputs: { value: ['submittal-arch'] },
+                },
+                SelectFiles: { stringInputs: { value: ['file-415'] } },
+              },
+            },
+          },
+        });
+        const addonElapsedMs = Date.now() - addonStartedAt;
+
+        expect(addonRes.statusCode).toBe(200);
+        expect(addonElapsedMs).toBeLessThan(1000);
+        expect(addonRes.payload.toLowerCase()).toContain('timed out');
+      } finally {
+        searchSpy.mockRestore();
       }
     });
   });
