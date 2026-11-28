@@ -113,9 +113,16 @@ export function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
-export function isRateLimitOrQuotaError(error: unknown): boolean {
+function isRateLimitOrQuotaErrorInternal(
+  error: unknown,
+  visited: Set<object>,
+  inheritedStatus?: number
+): boolean {
   if (!error || typeof error !== 'object') return false;
-  const status = extractHttpStatusCode(error);
+  if (visited.has(error)) return false;
+  visited.add(error);
+
+  const status = extractHttpStatusCode(error) ?? inheritedStatus;
   if (status === 429) return true;
 
   const err = error as Record<string, unknown>;
@@ -142,7 +149,15 @@ export function isRateLimitOrQuotaError(error: unknown): boolean {
     }
   }
 
+  if ('cause' in err && err.cause !== undefined) {
+    return isRateLimitOrQuotaErrorInternal(err.cause, visited, status);
+  }
+
   return false;
+}
+
+export function isRateLimitOrQuotaError(error: unknown): boolean {
+  return isRateLimitOrQuotaErrorInternal(error, new Set());
 }
 
 export async function executeWithRateLimitRetry<T>(

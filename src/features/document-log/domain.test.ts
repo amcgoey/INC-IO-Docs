@@ -7,9 +7,11 @@ import { DocumentLogService } from './domain';
 import {
   DocumentLogAmbiguousError,
   DocumentLogConfigurationError,
+  DocumentLogError,
   DocumentLogMissingError,
   DocumentLogUiContextResultSchema,
   LogResolutionCandidateSchema,
+  LogStorageInaccessibleError,
   WriteDocumentLogResultSchema,
   type DocumentLogDiscoveryConfig,
   type DocumentLogDocument,
@@ -3414,11 +3416,19 @@ describe('DocumentLogService', () => {
     });
 
     it('resolves omitted or stale selectedLogId to top-ranked candidates[0] when ambiguous, while writeLog still rejects ambiguous_log', async () => {
-      const readNamedRanges = vi.fn().mockResolvedValue({
-        statuses: {
-          status: 'found',
-          values: [['Status'], ['Open'], ['---']],
-        },
+      const readNamedRanges = vi.fn().mockImplementation(async (req: { spreadsheetId: string }) => {
+        if (req.spreadsheetId === 'deleted-log-id') {
+          throw new LogStorageInaccessibleError('Spreadsheet not found', {
+            spreadsheetId: req.spreadsheetId,
+            statusCode: 404,
+          });
+        }
+        return {
+          statuses: {
+            status: 'found',
+            values: [['Status'], ['Open'], ['---']],
+          },
+        };
       });
 
       const { service } = createService({
@@ -4045,6 +4055,362 @@ describe('DocumentLogService', () => {
       expect(tablesRes.status).toBe('ready');
       expect(readRes.entries[0].valid).toBe(true);
       expect(readNamedRanges).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('readOptionTables selectedLogId fast-path & inaccessible-storage seam (Ticket #411)', () => {
+    const bindingsSchema: DocumentLogSchema = {
+      ...logSchema,
+      optionBindings: {
+        statuses: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Statuses',
+          endMarker: '---',
+          columns: { Status: 'key' },
+        },
+      },
+    };
+
+    const sourcesSchema: LogTargetDocumentSchema = {
+      ...targetSchema,
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+      },
+    };
+
+    it('reads directly via selectedLogId with zero Drive discovery calls, including cross-space selectedLogId trust', async () => {
+      const readNamedRanges = vi.fn().mockResolvedValue({
+        statuses: { status: 'found', values: [['Status'], ['Open'], ['---']] },
+      });
+      const searchSpreadsheets = vi.fn();
+      const getFile = vi.fn();
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets, getFile },
+        storage: { readNamedRanges },
+      });
+
+      const otherSpace: DocumentLogSpace = {
+        id: 'space-b',
+        typeId: 'projects',
+        name: 'Other Project',
+        abstractStorageId: 'drive-b',
+      };
+
+      const res = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: otherSpace,
+        selectedLogId: '  log-from-space-a  ',
+      });
+
+      expect(res).toEqual({
+        status: 'ready',
+        spreadsheetId: 'log-from-space-a',
+        tables: {
+          statuses: { status: 'ready', tuples: [{ key: 'Open' }] },
+        },
+      });
+      expect(readNamedRanges).toHaveBeenCalledTimes(1);
+      expect(readNamedRanges).toHaveBeenCalledWith({
+        spreadsheetId: 'log-from-space-a',
+        targets: [
+          {
+            key: 'statuses',
+            sheetName: '_Config Submittal Arch',
+            rangeName: 'Options_Submittal_Arch_Statuses',
+          },
+        ],
+      });
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+      expect(getFile).not.toHaveBeenCalled();
+    });
+
+    it('falls back once to resolveLog(space) on LogStorageInaccessibleError, picking candidates[0] on ambiguous and returning missing_log when missing', async () => {
+      const readNamedRanges = vi.fn().mockImplementation(async (req: { spreadsheetId: string }) => {
+        if (req.spreadsheetId === 'stale-1' || req.spreadsheetId === 'stale-missing') {
+          throw new LogStorageInaccessibleError('Not found', {
+            spreadsheetId: req.spreadsheetId,
+            statusCode: 404,
+          });
+        }
+        if (req.spreadsheetId === 'fallback-also-inaccessible') {
+          throw new LogStorageInaccessibleError('Forbidden', {
+            spreadsheetId: req.spreadsheetId,
+            statusCode: 403,
+          });
+        }
+        return {
+          statuses: { status: 'found', values: [['Status'], ['Recovered'], ['---']] },
+        };
+      });
+
+      const searchSpreadsheets = vi
+        .fn()
+        // 1. Ambiguous fallback: stale-1 also appears in candidates[1], must still pick candidates[0]
+        .mockResolvedValueOnce([
+          { id: 'stale-1', name: 'Old Copy Document Log', modifiedTime: '2026-01-01T00:00:00Z' },
+          { id: 'cand-0-best', name: 'Harborview Hotel Document Log', modifiedTime: '2026-02-01T00:00:00Z' },
+        ])
+        // 2. Missing fallback
+        .mockResolvedValueOnce([])
+        // 3. Fallback spreadsheet itself inaccessible -> fail without second fallback
+        .mockResolvedValueOnce([
+          { id: 'fallback-also-inaccessible', name: 'Harborview Hotel Document Log' },
+        ]);
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readNamedRanges },
+      });
+
+      const recovered = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'stale-1',
+      });
+      expect(recovered).toEqual({
+        status: 'ready',
+        spreadsheetId: 'cand-0-best',
+        tables: { statuses: { status: 'ready', tuples: [{ key: 'Recovered' }] } },
+      });
+
+      const missingRes = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: { ...sampleSpace, abstractStorageId: 'drive-missing' },
+        selectedLogId: 'stale-missing',
+      });
+      expect(missingRes).toEqual({
+        status: 'missing_log',
+        expectedFolderPath: '1 Admin',
+        tables: {},
+      });
+
+      await expect(
+        service.readOptionTables({
+          documentTypeKey: 'submittal-arch',
+          space: { ...sampleSpace, abstractStorageId: 'drive-broken-fallback' },
+          selectedLogId: 'stale-1',
+        })
+      ).rejects.toBeInstanceOf(LogStorageInaccessibleError);
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(3);
+    });
+
+    it('propagates non-inaccessible errors without calling resolveLog(space)', async () => {
+      const searchSpreadsheets = vi.fn();
+      const readNamedRanges = vi
+        .fn()
+        .mockRejectedValueOnce(new DocumentLogError('Rate limit exceeded'))
+        .mockRejectedValueOnce(new DocumentLogConfigurationError('Bad config'))
+        .mockRejectedValueOnce(new Error('ECONNRESET'));
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readNamedRanges },
+      });
+
+      await expect(
+        service.readOptionTables({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+          selectedLogId: 'log-1',
+        })
+      ).rejects.toThrow('Rate limit exceeded');
+
+      await expect(
+        service.readOptionTables({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+          selectedLogId: 'log-1',
+        })
+      ).rejects.toBeInstanceOf(DocumentLogConfigurationError);
+
+      await expect(
+        service.readOptionTables({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+          selectedLogId: 'log-1',
+        })
+      ).rejects.toThrow('ECONNRESET');
+
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
+    });
+
+    it('guards against repeating the storage read when resolveLog(space) returns the same spreadsheet ID', async () => {
+      const readNamedRanges = vi.fn().mockRejectedValue(
+        new LogStorageInaccessibleError('Forbidden', { spreadsheetId: 'same-id', statusCode: 403 })
+      );
+      const searchSpreadsheets = vi.fn().mockResolvedValue([
+        { id: 'same-id', name: 'Harborview Hotel Document Log' },
+      ]);
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readNamedRanges },
+      });
+
+      await expect(
+        service.readOptionTables({
+          documentTypeKey: 'submittal-arch',
+          space: sampleSpace,
+          selectedLogId: 'same-id',
+        })
+      ).rejects.toBeInstanceOf(LogStorageInaccessibleError);
+
+      expect(readNamedRanges).toHaveBeenCalledTimes(1);
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+    });
+
+    it('memoizes stale selectedLogId fallback per DocumentLogService instance, shares concurrent calls, and invalidates on copyLog', async () => {
+      const readNamedRanges = vi.fn().mockImplementation(async (req: { spreadsheetId: string }) => {
+        if (req.spreadsheetId === 'stale-memo-1') {
+          throw new LogStorageInaccessibleError('Not found', {
+            spreadsheetId: 'stale-memo-1',
+            statusCode: 404,
+          });
+        }
+        return {
+          statuses: {
+            status: 'found',
+            values: [['Status'], [`From:${req.spreadsheetId}`], ['---']],
+          },
+        };
+      });
+
+      let resolveSearch!: (val: Array<{ id: string; name: string }>) => void;
+      const firstSearchPromise = new Promise<Array<{ id: string; name: string }>>((resolve) => {
+        resolveSearch = resolve;
+      });
+      const searchSpreadsheets = vi
+        .fn()
+        .mockReturnValueOnce(firstSearchPromise)
+        .mockResolvedValue([{ id: 'copied-log-2', name: 'Harborview Hotel Document Log' }]);
+
+      const ensureFolderPath = vi.fn().mockResolvedValue({ id: 'folder-admin', name: '1 Admin' });
+      const copyFile = vi.fn().mockResolvedValue({
+        id: 'copied-log-2',
+        name: 'Harborview Hotel Document Log',
+      });
+
+      const registry: LogSchemaRegistryPort = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        getDiscoveryConfig: vi.fn().mockReturnValue(discoveryConfig),
+        getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+        getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+      };
+      const discovery: LogDiscoveryPort = { searchSpreadsheets, ensureFolderPath, copyFile };
+      const storage: LogStoragePort = { insertRow: vi.fn(), readRows: vi.fn(), readNamedRanges };
+
+      // Default memoizeResolvePerInstance = false -> fallback resolution is STILL memoized per instance
+      const service = new DocumentLogService(
+        registry,
+        discovery,
+        storage,
+        new HandlebarsAdapter()
+      );
+
+      const p1 = service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'stale-memo-1',
+      });
+      const p2 = service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'stale-memo-1',
+      });
+
+      // Allow both fast-path reads to reject before resolving discovery
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveSearch([{ id: 'fallback-log-1', name: 'Harborview Hotel Document Log' }]);
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1).toMatchObject({ status: 'ready', spreadsheetId: 'fallback-log-1' });
+      expect(r2).toMatchObject({ status: 'ready', spreadsheetId: 'fallback-log-1' });
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+
+      const callsBeforeSeq = readNamedRanges.mock.calls.length;
+      const r3 = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: sampleSpace,
+        selectedLogId: 'stale-memo-1',
+      });
+      expect(r3).toMatchObject({ status: 'ready', spreadsheetId: 'fallback-log-1' });
+      // Sequential call skips both stale-memo-1 read AND resolveLog!
+      expect(searchSpreadsheets).toHaveBeenCalledTimes(1);
+      expect(readNamedRanges).toHaveBeenCalledTimes(callsBeforeSeq + 1);
+      expect(readNamedRanges).toHaveBeenLastCalledWith(
+        expect.objectContaining({ spreadsheetId: 'fallback-log-1' })
+      );
+
+      // Copy Log on a missing space invalidates fallback memo for that space
+      const missingSpace: DocumentLogSpace = {
+        id: 'sp-copy',
+        typeId: 'projects',
+        name: 'Copy Test',
+        abstractStorageId: 'drive-copy',
+      };
+      searchSpreadsheets.mockResolvedValueOnce([]); // fallback for stale-missing-copy -> missing
+      const beforeCopy = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: missingSpace,
+        selectedLogId: 'stale-memo-1',
+      });
+      expect(beforeCopy.status).toBe('missing_log');
+
+      searchSpreadsheets.mockResolvedValueOnce([]); // copyLog -> resolveLog -> missing -> copies file
+      await service.copyLog(missingSpace);
+
+      const afterCopy = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        space: missingSpace,
+        selectedLogId: 'stale-memo-1',
+      });
+      expect(afterCopy).toMatchObject({ status: 'ready', spreadsheetId: 'copied-log-2' });
+    });
+
+    it('returns missing_log with zero Drive calls when selectedLogId is inaccessible and space is omitted', async () => {
+      const readNamedRanges = vi.fn().mockRejectedValue(
+        new LogStorageInaccessibleError('Not found', { spreadsheetId: 'stale-no-space', statusCode: 404 })
+      );
+      const searchSpreadsheets = vi.fn();
+
+      const { service } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readNamedRanges },
+      });
+
+      const res = await service.readOptionTables({
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'stale-no-space',
+      });
+
+      expect(res).toEqual({
+        status: 'missing_log',
+        expectedFolderPath: '1 Admin',
+        tables: {},
+      });
+      expect(searchSpreadsheets).not.toHaveBeenCalled();
     });
   });
 

@@ -98,6 +98,46 @@ describe('google/retry', () => {
       expect(isRateLimitOrQuotaError({ code: '' })).toBe(false);
       expect(isRateLimitOrQuotaError(null)).toBe(false);
     });
+
+    it('inspects Error.cause chains when HTTP 403 or 429 is wrapped in an outer error', () => {
+      const wrappedQuotaReason = new Error('Google Sheets API error: Forbidden', {
+        cause: {
+          response: {
+            status: 403,
+            data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } },
+          },
+          message: 'Forbidden',
+        },
+      });
+      Object.assign(wrappedQuotaReason, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedQuotaReason)).toBe(true);
+
+      const wrappedInheritedStatusQuota = new Error('Google Sheets API error: Forbidden', {
+        cause: { errors: [{ reason: 'userRateLimitExceeded' }] },
+      });
+      Object.assign(wrappedInheritedStatusQuota, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedInheritedStatusQuota)).toBe(true);
+
+      const wrapped429Cause = new Error('Wrapped error', {
+        cause: { status: 429, message: 'Too Many Requests' },
+      });
+      expect(isRateLimitOrQuotaError(wrapped429Cause)).toBe(true);
+
+      const wrappedForbidden = new Error('Google Sheets API error: The caller does not have permission', {
+        cause: {
+          status: 403,
+          errors: [{ reason: 'forbidden' }],
+          message: 'The caller does not have permission',
+        },
+      });
+      Object.assign(wrappedForbidden, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedForbidden)).toBe(false);
+
+      const cyclicCause: Error & { statusCode?: number; cause?: unknown } = new Error('Cyclic');
+      cyclicCause.statusCode = 403;
+      cyclicCause.cause = cyclicCause;
+      expect(isRateLimitOrQuotaError(cyclicCause)).toBe(false);
+    });
   });
 
   describe('executeWithRateLimitRetry', () => {

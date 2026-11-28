@@ -7,6 +7,7 @@ import {
 import {
   DocumentLogAmbiguousError,
   DocumentLogError,
+  LogStorageInaccessibleError,
   type DocumentLogPort,
   type RawManifestProviderPort,
 } from '../features/document-log';
@@ -1404,6 +1405,149 @@ describe('document-log.wiring', () => {
       .catch((err: unknown) => err);
     expect(caughtD).not.toBeInstanceOf(DocumentLogError);
     expect(caughtD).toBe(networkErr);
+  });
+
+  it('maps Sheets 404 and non-quota 403 to LogStorageInaccessibleError in readNamedRanges, never quota-403, 400, 401, 429, or 5xx', async () => {
+    const baseManifest = createManifestProvider();
+    const baseDocType = (await baseManifest.readParsedSchema('./document-types/submittal-arch.json')) as Record<
+      string,
+      unknown
+    >;
+    const manifestWithOptions: RawManifestProviderPort = {
+      getRawManifest: baseManifest.getRawManifest,
+      readParsedSchema: vi.fn().mockResolvedValue({
+        ...baseDocType,
+        documentSchema: {
+          ...(baseDocType.documentSchema as Record<string, unknown>),
+          options: undefined,
+          optionSources: { statuses: { provider: 'document_log', properties: ['key'] } },
+        },
+        documentLogSchema: {
+          ...(baseDocType.documentLogSchema as Record<string, unknown>),
+          optionBindings: {
+            statuses: {
+              sheetName: '_Config Submittal Arch',
+              rangeName: 'Options_Statuses',
+              endMarker: '---',
+              columns: { Status: 'key' },
+            },
+          },
+        },
+      }),
+    };
+
+    const readNamedRangesBatch = vi.fn();
+    const mockSheetsClient: SheetsClient = {
+      readTable: vi.fn(),
+      insertIntoGroupedList: vi.fn(),
+      readNamedRange: vi.fn(),
+      readNamedRangesBatch,
+      writeNamedRange: vi.fn(),
+    };
+    const searchFiles = vi.fn().mockResolvedValue([
+      {
+        id: 'sheet-target-1',
+        name: 'Harborview Hotel Document Log',
+        parents: ['admin-folder-1'],
+        mimeType: 'application/vnd.google-apps.spreadsheet',
+      },
+    ]);
+    const mockDriveClient = { searchFiles } as unknown as GoogleDriveClient;
+
+    const wiring = createDocumentLogWiring({
+      manifestProvider: manifestWithOptions,
+      driveClient: mockDriveClient,
+      sheetsClient: mockSheetsClient,
+    });
+    await wiring.logSchemaRegistry.initialize();
+
+    const space = {
+      id: 'space-1',
+      typeId: 'projects',
+      name: 'Harborview Hotel',
+      abstractStorageId: 'drive-1',
+    };
+    const readWithSameIdSpace = (selectedLogId = 'sheet-target-1') =>
+      wiring.createDocumentLogService({}).readOptionTables!({
+        documentTypeKey: 'submittal-arch',
+        space,
+        selectedLogId,
+      });
+
+    // 404 -> LogStorageInaccessibleError (same-ID guard stops repeat read, surfaces typed error)
+    readNamedRangesBatch.mockRejectedValueOnce(
+      new GoogleSheetsApiError('Google Sheets API error: Requested entity was not found.', {
+        statusCode: 404,
+      })
+    );
+    const err404 = await readWithSameIdSpace().catch((e: unknown) => e);
+    expect(err404).toBeInstanceOf(LogStorageInaccessibleError);
+    expect(err404).toBeInstanceOf(DocumentLogError);
+    expect((err404 as LogStorageInaccessibleError).statusCode).toBe(404);
+    expect((err404 as LogStorageInaccessibleError).spreadsheetId).toBe('sheet-target-1');
+    expect(searchFiles).toHaveBeenCalledTimes(1);
+
+    // Non-quota 403 -> LogStorageInaccessibleError
+    readNamedRangesBatch.mockRejectedValueOnce(
+      new GoogleSheetsApiError('Google Sheets API error: The caller does not have permission', {
+        statusCode: 403,
+        cause: {
+          status: 403,
+          errors: [{ reason: 'forbidden' }],
+          message: 'The caller does not have permission',
+        },
+      })
+    );
+    const err403Perm = await readWithSameIdSpace().catch((e: unknown) => e);
+    expect(err403Perm).toBeInstanceOf(LogStorageInaccessibleError);
+    expect((err403Perm as LogStorageInaccessibleError).statusCode).toBe(403);
+    expect(searchFiles).toHaveBeenCalledTimes(2);
+
+    // Quota 403 via cause.errors[].reason -> DocumentLogError (NOT LogStorageInaccessibleError, 0 Drive calls)
+    readNamedRangesBatch.mockRejectedValueOnce(
+      new GoogleSheetsApiError('Google Sheets API error: Forbidden', {
+        statusCode: 403,
+        cause: {
+          response: {
+            status: 403,
+            data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } },
+          },
+          message: 'Forbidden',
+        },
+      })
+    );
+    const err403QuotaCause = await readWithSameIdSpace().catch((e: unknown) => e);
+    expect(err403QuotaCause).toBeInstanceOf(DocumentLogError);
+    expect(err403QuotaCause).not.toBeInstanceOf(LogStorageInaccessibleError);
+
+    // Quota 403 via message -> DocumentLogError (NOT LogStorageInaccessibleError, 0 Drive calls)
+    readNamedRangesBatch.mockRejectedValueOnce(
+      new GoogleSheetsApiError('Google Sheets API error: Quota exceeded for quota group', {
+        statusCode: 403,
+      })
+    );
+    const err403QuotaMsg = await readWithSameIdSpace().catch((e: unknown) => e);
+    expect(err403QuotaMsg).toBeInstanceOf(DocumentLogError);
+    expect(err403QuotaMsg).not.toBeInstanceOf(LogStorageInaccessibleError);
+
+    // 400 (range error & generic 400), 401, 429, 500, 503 -> DocumentLogError (NOT LogStorageInaccessibleError)
+    const nonInaccessibleErrors: Array<[string, Error]> = [
+      ['400-range', new GoogleSheetsNamedRangeNotFoundError('Google Sheets API error: Unable to parse range', { statusCode: 400 })],
+      ['400-bad-req', new GoogleSheetsApiError('Google Sheets API error: Invalid argument', { statusCode: 400 })],
+      ['401', new GoogleSheetsApiError('Google Sheets API error: Invalid Credentials', { statusCode: 401 })],
+      ['429', new GoogleSheetsApiError('Google Sheets API error: Too Many Requests', { statusCode: 429 })],
+      ['500', new GoogleSheetsApiError('Google Sheets API error: Internal error encountered', { statusCode: 500 })],
+      ['503', new GoogleSheetsApiError('Google Sheets API error: The service is currently unavailable', { statusCode: 503 })],
+    ];
+    for (const [label, apiErr] of nonInaccessibleErrors) {
+      readNamedRangesBatch.mockRejectedValueOnce(apiErr);
+      const caught = await readWithSameIdSpace().catch((e: unknown) => e);
+      expect(caught, `case ${label}`).toBeInstanceOf(DocumentLogError);
+      expect(caught, `case ${label}`).not.toBeInstanceOf(LogStorageInaccessibleError);
+    }
+
+    // None of the non-inaccessible errors triggered additional Drive searches
+    expect(searchFiles).toHaveBeenCalledTimes(2);
   });
 
   it('createUiProcessDocumentLogAdapter delegates requiresDocumentLog, maps resolveLog (missing/resolved/ambiguous), and maps copyLog', async () => {
