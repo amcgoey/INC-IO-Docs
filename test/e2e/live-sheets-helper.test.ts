@@ -7,6 +7,7 @@ import {
   appendRawPositiveTableRows,
   batchUpdateSpreadsheetValues,
   clearOptionTableToEmpty,
+  clearOptionTablesToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
@@ -14,6 +15,7 @@ import {
   findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   partialHydrationRowToCellInputs,
+  readMultiOptionTableGridFormats,
   readNamedRangesFormattedValues,
   readOptionTableGridFormats,
   readSheetsGridLayout,
@@ -1624,6 +1626,229 @@ describe('live-sheets-helper', () => {
           endMarker: '---',
         })
       ).rejects.toThrow(/missing endMarker "---"/);
+    });
+
+    it('clears multiple side-by-side option tables in 1 spreadsheets.get + 1 values.batchGet + 1 batchUpdate via clearOptionTablesToEmpty', async () => {
+      const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
+      const batchGet = vi.fn().mockResolvedValue({
+        data: {
+          valueRanges: [
+            {
+              values: [
+                ['Tag', 'Title', 'Aliases'],
+                ['AC102', 'HOOK', ''],
+                ['CG104', 'BED', ''],
+                ['---'],
+              ],
+            },
+            {
+              values: [
+                ['Type', 'Key', 'Name', 'Aliases'],
+                ['Vendor', 'BM', 'Berman Falk', ''],
+                ['---'],
+              ],
+            },
+          ],
+        },
+      });
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [{ properties: { sheetId: 402, title: '_Config Submittal FF&E' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-specs',
+              name: 'Options_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 3 },
+            },
+            {
+              namedRangeId: 'nr-val-specs',
+              name: 'Validation_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 3, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+            {
+              namedRangeId: 'nr-vendors',
+              name: 'Options_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 3, endColumnIndex: 7 },
+            },
+            {
+              namedRangeId: 'nr-val-vendors',
+              name: 'Validation_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 5, endColumnIndex: 6 },
+            },
+          ],
+        },
+      });
+
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: { batchGet },
+          batchUpdate,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const results = await clearOptionTablesToEmpty(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-2',
+        targets: [
+          {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            validationRangeName: 'Validation_Submittal_FFE_Specs',
+            endMarker: '---',
+          },
+          {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Vendors',
+            validationRangeName: 'Validation_Submittal_FFE_Vendors',
+            endMarker: '---',
+          },
+        ],
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(batchGet).toHaveBeenCalledTimes(1);
+      expect(batchUpdate).toHaveBeenCalledTimes(1);
+      expect(results.Options_Submittal_FFE_Specs).toEqual({
+        cleared: true,
+        blankRowIndex: 3,
+        absTerminatorRowIndex: 4,
+      });
+      expect(results.Options_Submittal_FFE_Vendors).toEqual({
+        cleared: true,
+        blankRowIndex: 3,
+        absTerminatorRowIndex: 4,
+      });
+      const requests = batchUpdate.mock.calls[0][0].requestBody.requests as sheets_v4.Schema$Request[];
+      expect(requests.some((r) => r.deleteRange?.range?.startColumnIndex === 0 && r.deleteRange?.range?.endColumnIndex === 3)).toBe(true);
+      expect(requests.filter((r) => r.updateNamedRange)).toHaveLength(2);
+    });
+
+    it('reads multiple option-table formats, namedRanges, values, and extraRanges in 1 spreadsheets.get via readMultiOptionTableGridFormats', async () => {
+      const tmplFmt = { textFormat: { fontSize: 10 } };
+      const sheetMerges: sheets_v4.Schema$GridRange[] = [
+        { sheetId: 402, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 3 },
+      ];
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [
+            {
+              properties: { sheetId: 402, title: '_Config Submittal FF&E' },
+              merges: sheetMerges,
+              data: [
+                {
+                  startRow: 0,
+                  startColumn: 0,
+                  rowData: [
+                    { values: [] },
+                    { values: [{ formattedValue: 'Specs' }] },
+                    {
+                      values: [
+                        { formattedValue: 'Tag' },
+                        { formattedValue: 'Title' },
+                        { formattedValue: 'Aliases', note: 'Aliases ""note"" case-sensitive' },
+                        { formattedValue: 'Type' },
+                        { formattedValue: 'Key' },
+                        { formattedValue: 'Name' },
+                        { formattedValue: 'Aliases', note: 'Aliases ""note"" case-sensitive' },
+                      ],
+                    },
+                    {
+                      values: [
+                        { formattedValue: 'AC102', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'HOOK', userEnteredFormat: tmplFmt },
+                        { formattedValue: '', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'Vendor', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'BM', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'Berman Falk', userEnteredFormat: tmplFmt },
+                        { formattedValue: '', userEnteredFormat: tmplFmt },
+                      ],
+                    },
+                    {
+                      values: [
+                        { formattedValue: '---' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '---' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              properties: { sheetId: 500, title: 'Submittal FF&E' },
+              data: [
+                {
+                  startRow: 3,
+                  startColumn: 0,
+                  rowData: [
+                    {
+                      values: [
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { userEnteredValue: { formulaValue: '=ARRAYFORMULA(IFERROR(VLOOKUP(B4:B,Options_Submittal_FFE_Specs,2,FALSE)))' } },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-specs',
+              name: 'Options_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 3 },
+            },
+            {
+              namedRangeId: 'nr-vendors',
+              name: 'Options_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 3, endColumnIndex: 7 },
+            },
+            {
+              namedRangeId: 'nr-statuses',
+              name: 'Options_Submittal_FFE_Statuses',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+          ],
+        },
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const result = await readMultiOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-2',
+        targets: [
+          { sheetName: '_Config Submittal FF&E', rangeName: 'Options_Submittal_FFE_Specs', endMarker: '---' },
+          { sheetName: '_Config Submittal FF&E', rangeName: 'Options_Submittal_FFE_Vendors', endMarker: '---' },
+        ],
+        snapshotRangeNames: ['Options_Submittal_FFE_Specs', 'Options_Submittal_FFE_Vendors', 'Options_Submittal_FFE_Statuses'],
+        extraRanges: ["'Submittal FF&E'!A4:E4"],
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(getSpreadsheet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-cfg-2',
+        ranges: ["'_Config Submittal FF&E'", "'Submittal FF&E'!A4:E4"],
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,userEnteredFormat,note)))),namedRanges',
+      });
+      expect(result.tables.Options_Submittal_FFE_Specs.headerRow).toEqual(['Tag', 'Title', 'Aliases']);
+      expect(result.tables.Options_Submittal_FFE_Specs.dataRows[0].cells[0].userEnteredFormat).toEqual(tmplFmt);
+      expect(result.tables.Options_Submittal_FFE_Vendors.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      expect(result.namedRanges.Options_Submittal_FFE_Statuses.gridRange.endRowIndex).toBe(4);
+      expect(result.valuesByNamedRange.Options_Submittal_FFE_Specs).toEqual([
+        ['Tag', 'Title', 'Aliases'],
+        ['AC102', 'HOOK', ''],
+        ['---', '', ''],
+      ]);
+      expect(result.spreadsheet.sheets).toHaveLength(2);
     });
   });
 
