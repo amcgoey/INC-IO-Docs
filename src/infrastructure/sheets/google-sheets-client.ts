@@ -32,41 +32,14 @@ import {
   GoogleSheetsOptionTableConfigError,
 } from './errors';
 import { KeyedAsyncLock } from './keyed-lock';
+import {
+  executeWithRateLimitRetry,
+  extractHttpStatusCode,
+  formatErrorMessage,
+  type GoogleApiRetryOptions,
+} from '../google/retry';
 
 const SHARED_SPREADSHEET_LOCK = new KeyedAsyncLock();
-
-function extractHttpStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
-  if (typeof err.statusCode === 'number') return err.statusCode;
-  if (typeof err.status === 'number') return err.status;
-  if (err.response && typeof err.response.status === 'number') return err.response.status;
-  if (typeof err.code === 'number') return err.code;
-  return undefined;
-}
-
-function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const status = extractHttpStatusCode(error);
-  if (status === 429) return true;
-  const err = error as Record<string, unknown>;
-  return err.code === '429' || err.code === 429;
-}
-
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return String(error);
-}
 
 function quoteSheetName(sheetName: string): string {
   const unquoted = sheetName.replace(/^'|'$/g, '');
@@ -1441,7 +1414,10 @@ export class GoogleSheetsClient implements SheetsClient {
     );
   }
 
-  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
     let dynamicConfig;
     if (this.configProvider) {
       try {
@@ -1450,26 +1426,19 @@ export class GoogleSheetsClient implements SheetsClient {
         dynamicConfig = undefined;
       }
     }
-    const maxRetries = dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries ?? 3;
-    const initialDelayMs = dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs ?? 1000;
-    const backoffFactor = dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor ?? 2;
-    const sleep =
-      this.retryOptions.sleep ??
-      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const effectiveSignal = signal ?? this.retryOptions.signal;
+    const mergedOptions: GoogleApiRetryOptions = {
+      ...this.retryOptions,
+      maxRetries: dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries,
+      initialDelayMs: dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs,
+      backoffFactor: dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor,
+      ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
+    };
 
-    let attempt = 0;
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (isRateLimitError(error) && attempt < maxRetries) {
-          const delay = initialDelayMs * Math.pow(backoffFactor, attempt);
-          attempt++;
-          await sleep(delay);
-          continue;
-        }
-        this.wrapApiError(error);
-      }
+    try {
+      return await executeWithRateLimitRetry(operation, mergedOptions);
+    } catch (error) {
+      this.wrapApiError(error);
     }
   }
 
