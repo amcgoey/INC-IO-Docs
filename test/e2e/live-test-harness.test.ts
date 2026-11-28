@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// nosemgrep: adapter-leakage-warning
+import type { drive_v3, sheets_v4 } from 'googleapis';
 import { GoogleDriveClient } from '../../src/infrastructure/drive/drive-client';
 import { GoogleSheetsClient } from '../../src/infrastructure/sheets';
 import { LiveTestHarness } from '../live/live-test-harness';
@@ -51,6 +53,7 @@ describe('LiveTestHarness (modular core facade)', () => {
 
     const harnessFiles = [
       path.resolve(__dirname, '../live/live-test-harness.ts'),
+      path.resolve(__dirname, '../live/harness/api-counter.ts'),
       path.resolve(__dirname, '../live/harness/auth-clients.ts'),
       path.resolve(__dirname, '../live/harness/cleanup.ts'),
       path.resolve(__dirname, '../live/harness/sheets-helpers.ts'),
@@ -150,6 +153,149 @@ describe('LiveTestHarness (modular core facade)', () => {
       ]);
       expect(loggerMock).toHaveBeenCalledTimes(2);
       expect(trashMock).toHaveBeenCalledWith('spreadsheet-ok');
+    });
+  });
+
+  describe('Sheets/Drive API call-count instrumentation (LiveTestHarness.clients)', () => {
+    it('counts Sheets and Drive reads/writes, preserves SDK `this` binding, and supports measure() deltas and reset()', async () => {
+      const tracker = LiveTestHarness.clients.createApiCallTracker();
+
+      class FakeValuesResource {
+        private readonly prefix = 'ok';
+        async get(params: { range: string }) {
+          return { data: { range: `${this.prefix}:${params.range}`, values: [] } };
+        }
+        async batchGet() {
+          return { data: { valueRanges: [] } };
+        }
+        async update() {
+          return { data: { updatedCells: 1 } };
+        }
+      }
+
+      class FakeSpreadsheetsResource {
+        readonly values = new FakeValuesResource();
+        private readonly sheetTitle = 'Submittal Arch';
+        async get() {
+          return { data: { sheets: [{ properties: { title: this.sheetTitle } }] } };
+        }
+        async batchUpdate() {
+          return { data: {} };
+        }
+      }
+
+      class FakeDriveFilesResource {
+        private readonly tag = 'drive-ok';
+        async get() {
+          return { data: { id: 'file-1', name: this.tag } };
+        }
+        async list() {
+          return { data: { files: [] } };
+        }
+        async create() {
+          return { data: { id: 'created-1', name: 'Created' } };
+        }
+      }
+
+      const rawSheets = {} as sheets_v4.Sheets;
+      const spreadsheetsResource = new FakeSpreadsheetsResource();
+      Object.defineProperty(spreadsheetsResource, 'values', {
+        value: new FakeValuesResource(),
+        writable: false,
+        configurable: false,
+      });
+      Object.defineProperty(rawSheets, 'spreadsheets', {
+        value: spreadsheetsResource,
+        writable: false,
+        configurable: false,
+      });
+
+      const rawDrive = {} as drive_v3.Drive;
+      Object.defineProperty(rawDrive, 'files', {
+        value: new FakeDriveFilesResource(),
+        writable: false,
+        configurable: false,
+      });
+      Object.defineProperty(rawDrive, 'drives', {
+        value: { list: vi.fn().mockResolvedValue({ data: { drives: [] } }) },
+        writable: false,
+        configurable: false,
+      });
+
+      const sheetsApi = tracker.instrumentSheetsApi(rawSheets);
+      const driveApi = tracker.instrumentDriveApi(rawDrive);
+
+      const meta = await sheetsApi.spreadsheets.get({ spreadsheetId: 's1' });
+      expect(meta.data.sheets?.[0]?.properties?.title).toBe('Submittal Arch');
+      const val = await sheetsApi.spreadsheets.values.get({ spreadsheetId: 's1', range: 'A1' });
+      expect(val.data.range).toBe('ok:A1');
+
+      const delta = await tracker.measure(async () => {
+        await sheetsApi.spreadsheets.values.batchGet({ spreadsheetId: 's1', ranges: ['A1'] });
+        await sheetsApi.spreadsheets.batchUpdate({ spreadsheetId: 's1', requestBody: {} });
+        const fileRes = await driveApi.files.get({ fileId: 'file-1' });
+        expect(fileRes.data.name).toBe('drive-ok');
+        await driveApi.files.create({ requestBody: { name: 'new' } });
+        await driveApi.drives.list({});
+      });
+
+      expect(delta.counts.sheets).toEqual({
+        reads: 1,
+        writes: 1,
+        total: 2,
+        byMethod: {
+          'spreadsheets.values.batchGet': 1,
+          'spreadsheets.batchUpdate': 1,
+        },
+      });
+      expect(delta.counts.drive).toEqual({
+        reads: 2,
+        writes: 1,
+        total: 3,
+        byMethod: {
+          'files.get': 1,
+          'files.create': 1,
+          'drives.list': 1,
+        },
+      });
+      expect(delta.counts.total).toBe(5);
+
+      const cumulative = tracker.getCounts();
+      expect(cumulative.sheets.reads).toBe(3);
+      expect(cumulative.sheets.writes).toBe(1);
+      expect(cumulative.drive.reads).toBe(2);
+      expect(cumulative.drive.writes).toBe(1);
+      expect(cumulative.total).toBe(7);
+
+      tracker.reset();
+      expect(tracker.getCounts()).toEqual({
+        sheets: { reads: 0, writes: 0, total: 0, byMethod: {} },
+        drive: { reads: 0, writes: 0, total: 0, byMethod: {} },
+        total: 0,
+      });
+    });
+
+    it('creates instrumented Drive and Sheets clients sharing a tracker via LiveTestHarness.clients', async () => {
+      vi.stubEnv('GOOGLE_ACCESS_TOKEN', 'ya29.test-access-cred');
+
+      const auth = LiveTestHarness.auth.resolveLiveGoogleAuth();
+      const tracker = LiveTestHarness.clients.createApiCallTracker();
+      const { driveApi, driveClient } = LiveTestHarness.clients.createInstrumentedLiveDriveClient(
+        auth,
+        undefined,
+        tracker
+      );
+      const { sheetsApi, sheetsClient } = LiveTestHarness.clients.createInstrumentedLiveSheetsClient(
+        auth,
+        undefined,
+        tracker
+      );
+
+      expect(driveClient).toBeInstanceOf(GoogleDriveClient);
+      expect(sheetsClient).toBeInstanceOf(GoogleSheetsClient);
+      expect(driveApi).toBeDefined();
+      expect(sheetsApi).toBeDefined();
+      expect(tracker.getCounts().total).toBe(0);
     });
   });
 });
