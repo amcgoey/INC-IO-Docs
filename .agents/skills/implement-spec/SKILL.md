@@ -31,6 +31,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
    - delegates routine or tightly specified portions of the implementation to `coder` subagents (`TypeName: "coder"`) while owning architecture, integration, and verification;
    - calls the Skill tool with `tdd` to build the ticket;
+   - verifies offline with `npm run typecheck`, `npm run lint`, and `npm test` (plus `npm run test:infra` when touching `infra/`), and runs only the relevant scoped `npm run test:live:<scope>` suite (see `package.json`) when modifying Google API seams so parallel worktrees respect the shared Sheets quota;
    - merges the integration branch tip into its own branch before reporting done
 
 5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**.
@@ -38,13 +39,13 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
 
 7. **Review & Convergence Loop** (maximum 8 iterations):
-   a. Call the Skill tool with `code-review` on the integration branch.
+   a. When any ticket modified Google API seams or workflows, run the serialized full `npm run test:live` suite once on the integration branch before or alongside code review; call the Skill tool with `code-review` on the integration branch.
    b. Use a **review planner agent** to evaluate the review findings against the spec and tickets:
       - Classify findings into **Fix** (hard violations, missing requirements) vs **Keep** (low-leverage smells, diminishing returns).
       - Check for convergence: if an inconsistent spec makes a defect unfixable, stop the loop and record the conflict.
       - Write the fix plan and post a summary comment to the spec.
    c. If no **Fix** items remain or iteration limit is reached, proceed to step 8.
-   d. Otherwise, dispatch an **implementer subagent** to resolve the fix plan, merge to the integration branch, and repeat from 7a (filtering out previously kept items during triage).
+   d. Otherwise, dispatch an **implementer subagent** to resolve the fix plan, merge to the integration branch, re-run `npm run test:live` if any review fix touched Google API seams, and repeat from 7a (filtering out previously kept items during triage).
 
 8. If a draft PR exists, mark it ready for review. Otherwise, resolve each ticket the way the issue tracker closes work, and report the integration branch. Present any kept or unresolved defects to the user for final sign-off.
 

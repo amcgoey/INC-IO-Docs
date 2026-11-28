@@ -8,7 +8,9 @@ Implement the work described by the user in the spec or tickets.
 
 Use /tdd where possible, at pre-agreed seams.
 
-Run `npm run typecheck` and `npm run lint` regularly, and single test files regularly. Run the full test suite once at the end to guarantee a clean baseline.
+Run `npm run typecheck`, `npm run lint`, and targeted offline test files during development. Finish with `npm run test:all` (or `npm test` for app-only changes) for a clean offline baseline.
+
+For tickets modifying Google API seams (Drive, Sheets, Docs, `DocumentLog`, `LookupOptions`, `DocumentSpaceType`, or PDF cover-sheet adapters), run only the matching scoped `npm run test:live:<scope>` suite during ticket work (see `package.json`), reserving full sequential `npm run test:live` for integration-branch verification.
 
 Once done, use /code-review to review the work.
 
