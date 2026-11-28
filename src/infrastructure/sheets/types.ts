@@ -165,12 +165,17 @@ export interface GoogleSheetsClientOptions {
   lock?: KeyedAsyncLock | undefined;
 }
 
+export interface SheetsOperationOptions {
+  signal?: AbortSignal | undefined;
+}
+
 export interface SheetsClient {
   readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult>;
   insertIntoGroupedList(request: InsertPositiveGroupedRowRequest): Promise<InsertGroupedRowResult>;
   readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]>;
   readNamedRangesBatch?(
-    request: ReadNamedRangesBatchRequest
+    request: ReadNamedRangesBatchRequest,
+    options?: SheetsOperationOptions
   ): Promise<Record<string, ReadNamedRangeBatchEntry>>;
   writeNamedRange(request: WriteNamedRangeRequest): Promise<void>;
 }

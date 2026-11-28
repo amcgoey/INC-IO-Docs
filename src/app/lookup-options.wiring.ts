@@ -30,11 +30,13 @@ import type { CanonicalOptionsProviderPort } from '../features/source-parser/por
 import type { UiProcessLockedFieldsPort } from '../features/ui-process-manager/ports';
 import type { AppConfigurationProviderPort } from '../features/document/ports';
 import { GoogleDriveClient } from '../infrastructure/drive/drive-client';
+import { throwIfAborted } from '../infrastructure/google/retry';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 
 export type SpaceLookupResolver = (
   spaceId: string,
-  formData?: Readonly<Record<string, unknown>>
+  formData?: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal
 ) => Promise<LookupSpaceContext | undefined>;
 
 export interface LookupOptionsWiringOptions {
@@ -49,6 +51,7 @@ export interface LookupOptionsWiringOptions {
     | ((context: WorkspaceExecutionContext) => Promise<DocumentSpaceService> | DocumentSpaceService)
     | undefined;
   timeoutMs?: number | undefined;
+  lookupTimeoutMs?: number | undefined;
 }
 
 export interface LookupOptionsWiring {
@@ -127,20 +130,23 @@ function createDocumentLogOptionSourceAdapter(
   return {
     readOptionTables: async (params) => {
       try {
+        throwIfAborted(params.signal);
         if (ensureInitialized) {
           await ensureInitialized();
         }
+        throwIfAborted(params.signal);
         let resolvedSpace = params.space;
         if (
           resolvedSpace &&
           (!resolvedSpace.typeId || !resolvedSpace.name) &&
           resolveSpace
         ) {
-          const lookedUp = await resolveSpace(resolvedSpace.id);
+          const lookedUp = await resolveSpace(resolvedSpace.id, undefined, params.signal);
           if (lookedUp) {
             resolvedSpace = lookedUp;
           }
         }
+        throwIfAborted(params.signal);
         const service = getDocumentLogService();
         if (!service.readOptionTables) {
           return {
@@ -149,12 +155,15 @@ function createDocumentLogOptionSourceAdapter(
             tables: {},
           };
         }
-        return await service.readOptionTables({
+        const readRequest = {
           documentTypeKey: params.documentTypeKey,
           ...(resolvedSpace !== undefined ? { space: resolvedSpace } : {}),
           ...(params.selectedLogId !== undefined ? { selectedLogId: params.selectedLogId } : {}),
           ...(params.sourceKeys !== undefined ? { sourceKeys: [...params.sourceKeys] } : {}),
-        });
+        };
+        return params.signal !== undefined
+          ? await service.readOptionTables(readRequest, { signal: params.signal })
+          : await service.readOptionTables(readRequest);
       } catch (error) {
         if (error instanceof DocumentLogConfigurationError) {
           return {
@@ -175,12 +184,18 @@ function createSpaceLookupResolver(
   if (!getSpaceService) {
     return undefined;
   }
-  return async (spaceId: string, formData?: Readonly<Record<string, unknown>>) => {
+  return async (
+    spaceId: string,
+    formData?: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal
+  ) => {
+    throwIfAborted(signal);
     const trimmed = spaceId.trim();
     if (!trimmed) {
       return undefined;
     }
     const spaceService = await getSpaceService();
+    throwIfAborted(signal);
     const allTypes = spaceService.getAllTypes();
     const rawPreferredType = formData?.SelectDocumentSpaceType;
     const preferredTypeId =
@@ -199,8 +214,10 @@ function createSpaceLookupResolver(
     }
 
     for (const typeId of orderedTypeIds) {
+      throwIfAborted(signal);
       try {
         const collection = await spaceService.getCollection(typeId);
+        throwIfAborted(signal);
         const found = collection.spaces.find(
           (s) => s.id === trimmed || s.abstractStorageId === trimmed
         );
@@ -212,7 +229,10 @@ function createSpaceLookupResolver(
             abstractStorageId: found.abstractStorageId,
           };
         }
-      } catch {
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
+        }
         // Ignore unrelated space collection errors
       }
     }
@@ -467,11 +487,12 @@ export function createLookupOptionsService(
         options.ensureDocumentLogInitialized
       )
     : undefined;
+  const resolvedTimeoutMs = options.lookupTimeoutMs ?? options.timeoutMs;
 
   return new LookupOptionsService(manifestPort, {
     driveOptionSource: new DriveOptionSourceAdapter(driveClient),
     ...(documentLogOptionSource !== undefined ? { documentLogOptionSource } : {}),
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(resolvedTimeoutMs !== undefined ? { lookupTimeoutMs: resolvedTimeoutMs } : {}),
   });
 }
 
@@ -483,6 +504,7 @@ export function createLookupOptionsWiring(
     documentSchemaRegistry: options.documentSchemaRegistry,
   });
   const perRequestInstances = new WeakMap<WorkspaceExecutionContext, LookupOptionsPort>();
+  const resolvedTimeoutMs = options.lookupTimeoutMs ?? options.timeoutMs;
 
   const getSpaceResolver = (context: WorkspaceExecutionContext): SpaceLookupResolver | undefined =>
     options.getDocumentSpaceService
@@ -518,7 +540,7 @@ export function createLookupOptionsWiring(
     return new LookupOptionsService(manifestPort, {
       driveOptionSource: new DriveOptionSourceAdapter(driveClient),
       ...(documentLogOptionSource !== undefined ? { documentLogOptionSource } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(resolvedTimeoutMs !== undefined ? { lookupTimeoutMs: resolvedTimeoutMs } : {}),
     });
   };
 

@@ -182,6 +182,7 @@ export interface DriveOptionSourcePort {
     spaceStorageId: string;
     relativePath?: string | undefined;
     maxItems?: number | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<DriveOptionFolderResult>;
 
   validateFolderExistence?(params: {
@@ -189,6 +190,7 @@ export interface DriveOptionSourcePort {
     relativePath?: string | undefined;
     value: string;
     allowUserInput?: boolean | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<{
     isValid: boolean;
     status: LookupValidationStatus;
@@ -238,6 +240,7 @@ export interface DocumentLogOptionSourcePort {
     space?: LookupSpaceContext | undefined;
     selectedLogId?: string | undefined;
     sourceKeys?: readonly string[] | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<DocumentLogOptionTablesBatchResult>;
 }
 

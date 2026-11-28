@@ -232,16 +232,19 @@ describe('lookup-options.wiring', () => {
         { text: 'Closed', value: 'Closed' },
       ],
     });
-    expect(readOptionTables).toHaveBeenCalledWith({
-      documentTypeKey: 'submittal-arch',
-      space: {
-        id: 'sp-1',
-        typeId: 'projects',
-        name: 'Harborview Hotel',
-        abstractStorageId: 'drive-root-1',
+    expect(readOptionTables).toHaveBeenCalledWith(
+      {
+        documentTypeKey: 'submittal-arch',
+        space: {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Harborview Hotel',
+          abstractStorageId: 'drive-root-1',
+        },
+        sourceKeys: ['statuses'],
       },
-      sourceKeys: ['statuses'],
-    });
+      { signal: expect.any(AbortSignal) }
+    );
   });
 
   it('resolves abstractStorageId consistently across optionsFetcher, dynamicValidator, canonicalProvider, and invalidate({ spaceId: abstractStorageId }) when space.id !== space.abstractStorageId', async () => {
@@ -795,5 +798,214 @@ describe('lookup-options.wiring', () => {
         expect(nock.isDone()).toBe(true);
       }
     );
+  });
+
+  describe('AbortSignal cancellation and non-poisoning across wired GoogleSheetsClient and GoogleDriveClient (Ticket #414)', () => {
+    it('cancels GoogleSheetsClient 429 retry backoff on lookupTimeoutMs and prevents timeout cache poisoning across calls in the same request', async () => {
+      const sheetsGet = vi
+        .fn()
+        .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({
+          data: {
+            spreadsheetId: 'log-1',
+            sheets: [{ properties: { sheetId: 1, title: '_Config Submittal Arch' } }],
+            namedRanges: [
+              {
+                name: 'Options_Statuses',
+                range: {
+                  sheetId: 1,
+                  startRowIndex: 2,
+                  endRowIndex: 5,
+                  startColumnIndex: 0,
+                  endColumnIndex: 1,
+                },
+              },
+            ],
+          },
+        });
+      const sheetsBatchGet = vi.fn().mockResolvedValueOnce({
+        data: {
+          valueRanges: [{ values: [['Status'], ['Open'], ['---']] }],
+        },
+      });
+
+      const sheetsClient = new GoogleSheetsClient({
+        sheets: {
+          spreadsheets: {
+            get: sheetsGet,
+            values: { batchGet: sheetsBatchGet, get: vi.fn(), update: vi.fn() },
+            batchUpdate: vi.fn(),
+          },
+        } as never,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      const driveClient = new GoogleDriveClient({
+        drive: {
+          files: {
+            list: vi.fn().mockResolvedValue({
+              data: {
+                files: [{ id: 'log-1', name: 'Harborview Hotel Document Log', parents: ['admin-1'] }],
+              },
+            }),
+          },
+        } as never,
+      });
+
+      const manifest: RawManifestProviderPort = {
+        getRawManifest: vi.fn().mockResolvedValue({
+          documentTypes: ['./document-types/submittal-arch.json'],
+          DocumentSpaceTypes: [
+            {
+              id: 'projects',
+              displayName: 'Projects',
+              spaceSchema: { allowedDocumentTypes: ['submittal-arch'] },
+              storageConfig: { provider: 'google_drive', fetchMethod: 'shared_drives' },
+            },
+          ],
+          configuration: {
+            documentLog: {
+              preferredFolderPath: '1 Admin',
+              fileNameContains: 'Document Log',
+              excludePrefixes: ['Copy of '],
+              excludeSubstrings: ['Template'],
+              templateSpreadsheetId: 'tmpl-1',
+              copyNameTemplate: '{{DocumentSpace.name}} Document Log',
+            },
+          },
+        }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          name: 'Submittal Arch',
+          documentSchema: {
+            fields: [{ key: 'status', options: { source: 'statuses', key: 'key' } }],
+            identity: {
+              idGroup: '{{status.key}}',
+              idDocument: '{{status.key}}',
+              id: '{{status.key}}',
+            },
+            optionSources: { statuses: { provider: 'document_log', properties: ['key'] } },
+          },
+          documentWorkflowConfig: { workflows: [] },
+          documentLogSchema: {
+            provider: 'google_sheets',
+            target: {
+              sheetName: 'Submittal Arch',
+              rangeName: 'Log_Submittal_Arch',
+              extentMarker: '<--->',
+              groupDividerMarker: '---',
+            },
+            grouping: {
+              groupBy: 'idGroup',
+              sortBy: 'id',
+              groupSortOrder: 'asc',
+              rowSortOrder: 'asc',
+              duplicatePolicy: 'insert',
+            },
+            columns: { Status: { template: '{{status.key}}' } },
+            optionBindings: {
+              statuses: {
+                sheetName: '_Config Submittal Arch',
+                rangeName: 'Options_Statuses',
+                endMarker: '---',
+                columns: { Status: 'key' },
+              },
+            },
+          },
+        }),
+      };
+
+      const docLogWiring = createDocumentLogWiring({
+        manifestProvider: manifest,
+        driveClient,
+        sheetsClient,
+      });
+      await docLogWiring.logSchemaRegistry.initialize();
+
+      const lookupWiring = createLookupOptionsWiring({
+        manifestProvider: manifest,
+        driveClient,
+        getDocumentLogService: (ctx) => docLogWiring.getPerRequestService(ctx),
+        lookupTimeoutMs: 25,
+      });
+
+      const reqCtx: WorkspaceExecutionContext = { hostApp: 'DRIVE' };
+      const lookup = lookupWiring.getPerRequestLookupOptions(reqCtx);
+      const callCtx = {
+        space: {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Harborview Hotel',
+          abstractStorageId: 'drive-1',
+        },
+        documentTypeKey: 'submittal-arch',
+        selectedLogId: 'log-1',
+      };
+
+      const startedAt = Date.now();
+      const first = await lookup.resolveOptions(callCtx, ['statuses']);
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(first.statuses.status).toBe('timeout');
+      expect(elapsedMs).toBeLessThan(1000);
+      // Wait briefly to confirm aborted 60s retry loop does NOT fire a background Sheets call
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(sheetsGet).toHaveBeenCalledTimes(1);
+
+      // Second call in the same request is NOT poisoned by timeout and succeeds
+      const second = await lookup.validateFields(callCtx, [
+        { queryId: 'status', fieldKey: 'status', sourceKey: 'statuses', value: 'Open' },
+      ]);
+      expect(second.status).toEqual({
+        isValid: true,
+        status: 'valid',
+        canonicalValue: 'Open',
+        matchedTuple: { key: 'Open' },
+      });
+      expect(sheetsGet).toHaveBeenCalledTimes(2);
+      expect(sheetsBatchGet).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels GoogleDriveClient 429 retry backoff immediately when lookupTimeoutMs fires for google_drive OptionSource', async () => {
+      const filesList = vi
+        .fn()
+        .mockRejectedValueOnce({ status: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({ data: { files: [{ id: 'c-1', name: 'Acme Corp' }] } });
+
+      const driveClient = new GoogleDriveClient({
+        drive: {
+          files: {
+            list: filesList,
+          },
+        } as never,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      const lookupWiring = createLookupOptionsWiring({
+        manifestProvider,
+        driveClient,
+        lookupTimeoutMs: 25,
+      });
+
+      const reqCtx: WorkspaceExecutionContext = { hostApp: 'DRIVE' };
+      const fetcher = lookupWiring.createOptionsFetcher(reqCtx);
+      const startedAt = Date.now();
+      const res = await fetcher.fetchOptions([{ sourceKey: 'contactFolders' }], {
+        spaceId: 'sp-1',
+        documentTypeKey: 'communication-project',
+      });
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(res.contactFolders.status).toBe('timeout');
+      expect(elapsedMs).toBeLessThan(1000);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(filesList).toHaveBeenCalledTimes(1);
+    });
   });
 });

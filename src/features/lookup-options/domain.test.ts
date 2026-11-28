@@ -79,6 +79,7 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
       spaceStorageId: 'storage-1',
       relativePath: '1 Admin/Communication',
       maxItems: 150,
+      signal: expect.any(AbortSignal),
     });
     expect(resolved.direction).toEqual({
       status: 'ready',
@@ -421,6 +422,7 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
         documentTypeKey: 'submittal-arch',
         space: ctx.space,
         sourceKeys: ['statuses', 'actions'],
+        signal: expect.any(AbortSignal),
       });
       expect(resolved.statuses).toEqual({
         status: 'ready',
@@ -590,6 +592,7 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
         documentTypeKey: 'submittal-arch',
         selectedLogId: 'log-stale-omitted',
         sourceKeys: ['statuses', 'actions'],
+        signal: expect.any(AbortSignal),
       });
       expect(resolved.statuses).toEqual({
         status: 'missing_log',
@@ -789,6 +792,191 @@ describe('LookupOptionsService (LookupOptionsPort seam)', () => {
           { specTag: 'AC102' }
         )
       ).resolves.toEqual({ specTitle: 'HOOK LOG B' });
+    });
+  });
+
+  describe('AbortSignal timeout cancellation and timeout cache non-poisoning (Ticket #414)', () => {
+    const submittalArchSchema: LookupDocumentSchema = {
+      fields: [
+        { key: 'status', options: { source: 'statuses', key: 'key' } },
+        { key: 'action', options: { source: 'actions', key: 'key', name: 'name' } },
+      ],
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+        actions: { provider: 'document_log', properties: ['key', 'name'] },
+      },
+    };
+
+    it('propagates an AbortSignal to DocumentLogOptionSourcePort and aborts active backoff loops immediately on timeout', async () => {
+      let capturedSignal: AbortSignal | undefined;
+      let backoffAborted = false;
+
+      const readOptionTables = vi.fn().mockImplementation(async (params: { signal?: AbortSignal }) => {
+        capturedSignal = params.signal;
+        return new Promise<never>((_resolve, reject) => {
+          const timer = setTimeout(() => {
+            reject(new Error('Backoff should have been aborted before 60s'));
+          }, 60_000);
+          params.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              backoffAborted = true;
+              reject(new Error('Aborted'));
+            },
+            { once: true }
+          );
+        });
+      });
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: { readOptionTables }, lookupTimeoutMs: 20 }
+      );
+
+      const startedAt = Date.now();
+      const resolved = await service.resolveOptions(
+        { space: { id: 'sp-1', abstractStorageId: 'drive-1' }, documentTypeKey: 'submittal-arch' },
+        ['statuses', 'actions']
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(resolved.statuses.status).toBe('timeout');
+      expect(resolved.actions.status).toBe('timeout');
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(backoffAborted).toBe(true);
+      expect(elapsedMs).toBeLessThan(1000);
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates an AbortSignal to DriveOptionSourcePort listFoldersAtPath and validateFolderExistence and aborts on timeout', async () => {
+      let listSignal: AbortSignal | undefined;
+      let validateSignal: AbortSignal | undefined;
+
+      const driveSource: DriveOptionSourcePort = {
+        listFoldersAtPath: vi.fn().mockImplementation(async (params: { signal?: AbortSignal }) => {
+          listSignal = params.signal;
+          return new Promise<never>((_resolve, reject) => {
+            params.signal?.addEventListener('abort', () => reject(new Error('Aborted')), {
+              once: true,
+            });
+          });
+        }),
+        validateFolderExistence: vi
+          .fn()
+          .mockImplementation(async (params: { signal?: AbortSignal }) => {
+            validateSignal = params.signal;
+            return new Promise<never>((_resolve, reject) => {
+              params.signal?.addEventListener('abort', () => reject(new Error('Aborted')), {
+                once: true,
+              });
+            });
+          }),
+      };
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'communication-project': commSchema }),
+        { driveOptionSource: driveSource, lookupTimeoutMs: 20 }
+      );
+
+      const valRes = await service.validateFields(
+        { space: { id: 'sp-val', abstractStorageId: 'drive-val' }, documentTypeKey: 'communication-project' },
+        [{ queryId: 'contact', fieldKey: 'contact', sourceKey: 'contactFolders', value: 'Acme', allowUserInput: true }]
+      );
+      expect(valRes.contact.status).toBe('timeout');
+      expect(validateSignal?.aborted).toBe(true);
+
+      const optRes = await service.resolveOptions(
+        { space: { id: 'sp-opt', abstractStorageId: 'drive-opt' }, documentTypeKey: 'communication-project' },
+        ['contactFolders']
+      );
+      expect(optRes.contactFolders.status).toBe('timeout');
+      expect(listSignal?.aborted).toBe(true);
+    });
+
+    it('does not cache transient timeout outcomes in documentLogBatchCache across calls within a request, while caching subsequent settled results', async () => {
+      const readOptionTables = vi
+        .fn()
+        .mockImplementationOnce(async (params: { signal?: AbortSignal }) => {
+          return new Promise<never>((_resolve, reject) => {
+            params.signal?.addEventListener('abort', () => reject(new Error('Aborted')), {
+              once: true,
+            });
+          });
+        })
+        .mockResolvedValueOnce({
+          status: 'ready',
+          spreadsheetId: 'log-1',
+          tables: {
+            statuses: { status: 'ready', tuples: [{ key: 'Open' }] },
+            actions: { status: 'ready', tuples: [{ key: 'REC', name: 'Received' }] },
+          },
+        });
+
+      const service = new LookupOptionsService(
+        createManifestPort({ 'submittal-arch': submittalArchSchema }),
+        { documentLogOptionSource: { readOptionTables }, lookupTimeoutMs: 20 }
+      );
+
+      const ctx = {
+        space: { id: 'sp-1', abstractStorageId: 'drive-1' },
+        documentTypeKey: 'submittal-arch',
+      };
+
+      // Concurrent calls in the first batch share the single in-flight timeout
+      const firstBatch = await service.resolveOptions(ctx, ['statuses', 'actions']);
+      expect(firstBatch.statuses.status).toBe('timeout');
+      expect(firstBatch.actions.status).toBe('timeout');
+      expect(readOptionTables).toHaveBeenCalledTimes(1);
+
+      // Subsequent call in the same request is NOT poisoned by the transient timeout
+      const secondValidation = await service.validateFields(ctx, [
+        { queryId: 'status', fieldKey: 'status', sourceKey: 'statuses', value: 'Open' },
+      ]);
+      expect(secondValidation.status).toEqual({
+        isValid: true,
+        status: 'valid',
+        canonicalValue: 'Open',
+        matchedTuple: { key: 'Open' },
+      });
+      expect(readOptionTables).toHaveBeenCalledTimes(2);
+
+      // Once settled with a non-timeout result, subsequent calls reuse the cached result
+      const thirdResolve = await service.resolveOptions(ctx, ['actions']);
+      expect(thirdResolve.actions.status).toBe('ready');
+      expect(readOptionTables).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps production DEFAULT_TIMEOUT_MS at 5,000 ms when lookupTimeoutMs is omitted', async () => {
+      vi.useFakeTimers();
+      try {
+        let capturedSignal: AbortSignal | undefined;
+        const readOptionTables = vi.fn().mockImplementation(async (params: { signal?: AbortSignal }) => {
+          capturedSignal = params.signal;
+          return new Promise<never>(() => {});
+        });
+
+        const service = new LookupOptionsService(
+          createManifestPort({ 'submittal-arch': submittalArchSchema }),
+          { documentLogOptionSource: { readOptionTables } }
+        );
+
+        const pending = service.resolveOptions(
+          { space: { id: 'sp-default', abstractStorageId: 'drive-default' }, documentTypeKey: 'submittal-arch' },
+          ['statuses']
+        );
+
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(capturedSignal?.aborted).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        const res = await pending;
+        expect(capturedSignal?.aborted).toBe(true);
+        expect(res.statuses.status).toBe('timeout');
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

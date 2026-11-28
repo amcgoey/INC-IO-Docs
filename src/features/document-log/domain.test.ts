@@ -4899,4 +4899,96 @@ describe('DocumentLogService', () => {
       expect(insertRow).not.toHaveBeenCalled();
     });
   });
+
+  describe('AbortSignal propagation across readOptionTables and resolveLog (Ticket #414)', () => {
+    const bindingsSchema: DocumentLogSchema = {
+      ...logSchema,
+      optionBindings: {
+        statuses: {
+          sheetName: '_Config Submittal Arch',
+          rangeName: 'Options_Submittal_Arch_Statuses',
+          endMarker: '---',
+          columns: { Status: 'key' },
+        },
+      },
+    };
+
+    const sourcesSchema: LogTargetDocumentSchema = {
+      ...targetSchema,
+      optionSources: {
+        statuses: { provider: 'document_log', properties: ['key'] },
+      },
+    };
+
+    it('forwards AbortSignal to LogDiscoveryPort and LogStoragePort.readNamedRanges and halts stale-selectedLogId fallback when aborted', async () => {
+      const controller = new AbortController();
+      const searchSpreadsheets = vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return [{ id: 'log-found', name: 'Harborview Hotel Document Log' }];
+      });
+      const readNamedRanges = vi.fn();
+
+      const { registry, discovery, storage } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets },
+        storage: { readNamedRanges },
+      });
+      const service = new DocumentLogService(
+        registry,
+        discovery,
+        storage,
+        new HandlebarsAdapter(),
+        undefined,
+        { memoizeResolvePerInstance: true }
+      );
+
+      await expect(
+        service.readOptionTables(
+          { documentTypeKey: 'submittal-arch', space: sampleSpace },
+          { signal: controller.signal }
+        )
+      ).rejects.toThrow(/abort/i);
+
+      expect(searchSpreadsheets).toHaveBeenCalledWith(
+        expect.objectContaining({ targetName: 'Document Log' }),
+        { signal: controller.signal }
+      );
+      expect(readNamedRanges).not.toHaveBeenCalled();
+
+      const controller2 = new AbortController();
+      const readNamedRanges2 = vi.fn().mockImplementation(async () => {
+        controller2.abort();
+        throw new LogStorageInaccessibleError('Not found', {
+          spreadsheetId: 'stale-1',
+          statusCode: 404,
+        });
+      });
+      const searchSpreadsheets2 = vi.fn();
+
+      const { service: service2 } = createService({
+        registry: {
+          getDocumentLogSchema: vi.fn().mockReturnValue(bindingsSchema),
+          getTargetSchema: vi.fn().mockReturnValue(sourcesSchema),
+        },
+        discovery: { searchSpreadsheets: searchSpreadsheets2 },
+        storage: { readNamedRanges: readNamedRanges2 },
+      });
+
+      await expect(
+        service2.readOptionTables(
+          { documentTypeKey: 'submittal-arch', space: sampleSpace, selectedLogId: 'stale-1' },
+          { signal: controller2.signal }
+        )
+      ).rejects.toThrow(/abort/i);
+
+      expect(readNamedRanges2).toHaveBeenCalledWith(
+        expect.objectContaining({ spreadsheetId: 'stale-1' }),
+        { signal: controller2.signal }
+      );
+      expect(searchSpreadsheets2).not.toHaveBeenCalled();
+    });
+  });
 });

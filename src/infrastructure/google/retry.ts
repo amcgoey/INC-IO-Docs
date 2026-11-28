@@ -16,7 +16,7 @@ function getAbortReason(signal: AbortSignal): unknown {
   return signal.reason !== undefined ? signal.reason : createAbortError();
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
+export function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw getAbortReason(signal);
   }

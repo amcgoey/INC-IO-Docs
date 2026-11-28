@@ -29,6 +29,7 @@ export interface SchemaDrivenUiWiringOptions {
   uiContextQuery?: UiContextQueryPort | undefined;
   driveClient?: DriveFolderListClient | undefined;
   templateParser?: TemplateParserPort | undefined;
+  lookupTimeoutMs?: number | undefined;
 }
 
 export interface SchemaDrivenUiWiring {
@@ -60,6 +61,9 @@ export function createSchemaDrivenUiWiring(
           createLookupOptionsService({
             manifestProvider: options.manifestProvider,
             driveClient: options.driveClient,
+            ...(options.lookupTimeoutMs !== undefined
+              ? { lookupTimeoutMs: options.lookupTimeoutMs }
+              : {}),
           })
         )
       : undefined);

@@ -20,6 +20,7 @@ import type {
   SheetFormulaCell,
   SheetsClient,
   SheetsConfigProvider,
+  SheetsOperationOptions,
   SheetsRetryOptions,
   WriteNamedRangeRequest,
 } from './types';
@@ -36,6 +37,7 @@ import {
   executeWithRateLimitRetry,
   extractHttpStatusCode,
   formatErrorMessage,
+  throwIfAborted,
   type GoogleApiRetryOptions,
 } from '../google/retry';
 
@@ -1442,14 +1444,20 @@ export class GoogleSheetsClient implements SheetsClient {
     }
   }
 
-  private async getSpreadsheetMetadata(spreadsheetId: string): Promise<sheets_v4.Schema$Spreadsheet> {
+  private async getSpreadsheetMetadata(
+    spreadsheetId: string,
+    signal?: AbortSignal
+  ): Promise<sheets_v4.Schema$Spreadsheet> {
     return await this.executeWithRetry(async () => {
-      const response = await this.sheetsApi.spreadsheets.get({
-        spreadsheetId,
-        fields: 'sheets(properties(sheetId,title)),namedRanges',
-      });
+      const response = await this.sheetsApi.spreadsheets.get(
+        {
+          spreadsheetId,
+          fields: 'sheets(properties(sheetId,title)),namedRanges',
+        },
+        ...(signal ? [{ signal }] : [])
+      );
       return response.data;
-    });
+    }, signal);
   }
 
   private findNamedRange(
@@ -1577,17 +1585,23 @@ export class GoogleSheetsClient implements SheetsClient {
   private async readBatchValues(
     spreadsheetId: string,
     ranges: string[],
-    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA'
+    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA',
+    signal?: AbortSignal
   ): Promise<sheets_v4.Schema$ValueRange[]> {
     if (ranges.length === 0) {
       return [];
     }
-    const response = await this.executeWithRetry(() =>
-      this.sheetsApi.spreadsheets.values.batchGet({
-        spreadsheetId,
-        ranges,
-        valueRenderOption,
-      })
+    const response = await this.executeWithRetry(
+      () =>
+        this.sheetsApi.spreadsheets.values.batchGet(
+          {
+            spreadsheetId,
+            ranges,
+            valueRenderOption,
+          },
+          ...(signal ? [{ signal }] : [])
+        ),
+      signal
     );
 
     return response.data.valueRanges ?? [];
@@ -1604,13 +1618,17 @@ export class GoogleSheetsClient implements SheetsClient {
    * surfacing missing sheet or Named Range errors per target key without failing valid sibling targets.
    */
   async readNamedRangesBatch(
-    request: ReadNamedRangesBatchRequest
+    request: ReadNamedRangesBatchRequest,
+    options?: SheetsOperationOptions
   ): Promise<Record<string, ReadNamedRangeBatchEntry>> {
     if (request.targets.length === 0) {
       return {};
     }
 
-    const spreadsheet = await this.getSpreadsheetMetadata(request.spreadsheetId);
+    const signal = options?.signal;
+    throwIfAborted(signal);
+    const spreadsheet = await this.getSpreadsheetMetadata(request.spreadsheetId, signal);
+    throwIfAborted(signal);
     const results: Record<string, ReadNamedRangeBatchEntry> = {};
     const resolvedTargets: Array<{ key: string; a1Range: string }> = [];
 
@@ -1641,7 +1659,8 @@ export class GoogleSheetsClient implements SheetsClient {
       const valueRanges = await this.readBatchValues(
         request.spreadsheetId,
         resolvedTargets.map((item) => item.a1Range),
-        'FORMATTED_VALUE'
+        'FORMATTED_VALUE',
+        signal
       );
       resolvedTargets.forEach((item, index) => {
         results[item.key] = {

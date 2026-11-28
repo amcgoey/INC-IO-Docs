@@ -179,6 +179,7 @@ export function createApp(options?: AppOptions): AppInstance {
         onWriteLogSuccess: () => lookupOptions.invalidate(),
       }),
     ],
+    ...(options?.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: options.lookupTimeoutMs } : {}),
   });
 
   const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;

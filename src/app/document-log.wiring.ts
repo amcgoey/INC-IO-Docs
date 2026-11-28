@@ -172,13 +172,16 @@ function resolveTemplateEvaluator(candidate: unknown): LogTemplateEvaluatorPort 
 
 function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscoveryPort {
   return {
-    searchSpreadsheets: async (query) => {
-      const files = await driveClient.searchFiles({
+    searchSpreadsheets: async (query, options) => {
+      const searchParams = {
         targetName: query.targetName,
         ...(query.exactMatch !== undefined ? { exactMatch: query.exactMatch } : {}),
         ...(query.sharedDriveId !== undefined ? { sharedDriveId: query.sharedDriveId } : {}),
         ...(query.mimeTypes !== undefined ? { mimeTypes: query.mimeTypes } : {}),
-      });
+      };
+      const files = options?.signal
+        ? await driveClient.searchFiles(searchParams, { signal: options.signal })
+        : await driveClient.searchFiles(searchParams);
       return files.map((file) => ({
         id: file.id,
         name: file.name,
@@ -189,8 +192,10 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
     },
     ...(typeof driveClient.getFile === 'function'
       ? {
-          getFile: async (fileId) => {
-            const file = await driveClient.getFile(fileId);
+          getFile: async (fileId, options) => {
+            const file = options?.signal
+              ? await driveClient.getFile(fileId, { signal: options.signal })
+              : await driveClient.getFile(fileId);
             return {
               id: file.id,
               name: file.name,
@@ -205,8 +210,12 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
       : {}),
     ...(typeof driveClient.resolveFolderPath === 'function'
       ? {
-          resolveFolderPath: async (rootFolderId, pathSegments) => {
-            const folder = await driveClient.resolveFolderPath(rootFolderId, pathSegments);
+          resolveFolderPath: async (rootFolderId, pathSegments, options) => {
+            const folder = options?.signal
+              ? await driveClient.resolveFolderPath(rootFolderId, pathSegments, {
+                  signal: options.signal,
+                })
+              : await driveClient.resolveFolderPath(rootFolderId, pathSegments);
             return {
               id: folder.id,
               name: folder.name,
@@ -341,15 +350,18 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
         mapSheetsStorageError(error, request.target.spreadsheetId);
       }
     },
-    readNamedRanges: async (request) => {
+    readNamedRanges: async (request, options) => {
       if (!sheetsClient.readNamedRangesBatch) {
         throw new Error('SheetsClient.readNamedRangesBatch is not implemented.');
       }
       try {
-        return await sheetsClient.readNamedRangesBatch({
+        const batchRequest = {
           spreadsheetId: request.spreadsheetId,
           targets: request.targets,
-        });
+        };
+        return options?.signal
+          ? await sheetsClient.readNamedRangesBatch(batchRequest, { signal: options.signal })
+          : await sheetsClient.readNamedRangesBatch(batchRequest);
       } catch (error) {
         mapSheetsStorageError(error, request.spreadsheetId);
       }

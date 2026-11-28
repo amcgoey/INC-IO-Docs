@@ -161,6 +161,7 @@ export interface CreateDocumentServiceFactoryOptions {
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   documentLogService?: DocumentLogPort | undefined;
   ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
+  lookupTimeoutMs?: number | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
     | ((
@@ -286,6 +287,9 @@ export function createDocumentServiceFactory(
           configProvider: options.configProvider,
           documentLogService: options.documentLogService,
           ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+          ...(options.lookupTimeoutMs !== undefined
+            ? { lookupTimeoutMs: options.lookupTimeoutMs }
+            : {}),
         });
       }
       return fallbackLookupOptions;
@@ -349,6 +353,7 @@ export interface WireDocumentServicesOptions {
   documentLogService?: DocumentLogPort | undefined;
   getDocumentLogService?: ((context: WorkspaceExecutionContext) => DocumentLogPort) | undefined;
   ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
+  lookupTimeoutMs?: number | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
     | ((
@@ -385,6 +390,9 @@ export function wireDocumentServicesAndRoutes(
           ? options.getDocumentLogService(requestContext)
           : options.documentLogService,
       ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+      ...(options.lookupTimeoutMs !== undefined
+        ? { lookupTimeoutMs: options.lookupTimeoutMs }
+        : {}),
     });
 
   const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);

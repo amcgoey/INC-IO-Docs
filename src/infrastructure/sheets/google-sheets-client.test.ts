@@ -3972,6 +3972,42 @@ describe('GoogleSheetsClient', () => {
       expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
       expect(res.statuses.status).toBe('missing_range');
     });
+
+    it('aborts active 429 retry backoff immediately when per-call SheetsOperationOptions.signal aborts', async () => {
+      const controller = new AbortController();
+      mockSheetsApi.spreadsheets.get
+        .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({
+          data: {
+            spreadsheetId: 's1',
+            sheets: [{ properties: { sheetId: 301, title: '_Config Submittal Arch' } }],
+            namedRanges: [],
+          },
+        });
+
+      const retryClient = new GoogleSheetsClient({
+        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      const promise = retryClient.readNamedRangesBatch(
+        {
+          spreadsheetId: 's1',
+          targets: [{ key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Statuses' }],
+        },
+        { signal: controller.signal }
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(/abort/i);
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
+    });
   });
 
   describe('Atomic option write-back & process-shared KeyedAsyncLock (Ticket #361)', () => {
