@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { google, type drive_v3 } from 'googleapis';
+import { drive, type drive_v3 } from '@googleapis/drive';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
 import { createMaxInMemoryFileBytesProvider } from '../manifest/app-manifest-provider';
@@ -294,9 +294,9 @@ export class GoogleDriveClient {
       this.defaultDrive = this.createDriveClientFromToken(options.auth);
     } else if (options.auth) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.defaultDrive = google.drive({ version: 'v3', auth: options.auth as any });
+      this.defaultDrive = drive({ version: 'v3', auth: options.auth as any });
     } else {
-      this.defaultDrive = google.drive({ version: 'v3' });
+      this.defaultDrive = drive({ version: 'v3' });
     }
   }
 
@@ -304,7 +304,7 @@ export class GoogleDriveClient {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: token });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return google.drive({ version: 'v3', auth: oauth2Client as any });
+    return drive({ version: 'v3', auth: oauth2Client as any });
   }
 
   private getDrive(auth?: string): drive_v3.Drive {

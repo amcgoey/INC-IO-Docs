@@ -1,5 +1,7 @@
 // nosemgrep: adapter-leakage-warning
-import type { drive_v3, sheets_v4 } from 'googleapis';
+import type { drive_v3 } from '@googleapis/drive';
+// nosemgrep: adapter-leakage-warning
+import type { sheets_v4 } from '@googleapis/sheets';
 
 export interface ApiCallCategoryCounts {
   reads: number;

@@ -1,5 +1,5 @@
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import { Type, type Static } from '@sinclair/typebox';
 import type { KeyedAsyncLock } from './keyed-lock';
 import type { GoogleApiRetryOptions } from '../google/retry';

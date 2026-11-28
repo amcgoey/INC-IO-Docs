@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { google } from 'googleapis';
+import * as googleDrive from '@googleapis/drive';
+import * as googleDocs from '@googleapis/docs';
 import { OAuth2Client } from 'google-auth-library';
 import {
   createSourceParserWiring,
@@ -408,8 +409,8 @@ describe('source-parser.wiring', () => {
 
     // 2. Without docsClient/driveContextClient overrides, createSourceParser builds ONE shared OAuth2Client per request
     //    using userOAuthToken ?? gmail.accessToken
-    const driveSpy = vi.spyOn(google, 'drive');
-    const docsSpy = vi.spyOn(google, 'docs');
+    const driveSpy = vi.spyOn(googleDrive, 'drive');
+    const docsSpy = vi.spyOn(googleDocs, 'docs');
     try {
       const prodWiring = createSourceParserWiring({
         spaceTypesProvider: mockSpaceTypesProvider,

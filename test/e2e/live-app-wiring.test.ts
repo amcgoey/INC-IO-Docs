@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 // nosemgrep: adapter-leakage-warning
-import type { drive_v3, sheets_v4 } from 'googleapis';
+import type { drive_v3 } from '@googleapis/drive';
+// nosemgrep: adapter-leakage-warning
+import type { sheets_v4 } from '@googleapis/sheets';
 import type { CompositeManifestProvider } from '../../src/app/server';
 import { LiveTestHarness } from '../live/live-test-harness';
 

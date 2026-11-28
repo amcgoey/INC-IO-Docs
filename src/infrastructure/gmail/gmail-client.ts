@@ -1,4 +1,4 @@
-import { google, type gmail_v1 } from 'googleapis';
+import { gmail, type gmail_v1 } from '@googleapis/gmail';
 import { OAuth2Client } from 'google-auth-library';
 import type {
   GoogleGmailClientOptions,
@@ -282,9 +282,9 @@ export class GoogleGmailClient {
         this.defaultAuthToken = options.auth.credentials.access_token;
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.defaultGmail = google.gmail({ version: 'v1', auth: options.auth as any });
+      this.defaultGmail = gmail({ version: 'v1', auth: options.auth as any });
     } else {
-      this.defaultGmail = google.gmail({ version: 'v1' });
+      this.defaultGmail = gmail({ version: 'v1' });
     }
   }
 
@@ -387,7 +387,7 @@ export class GoogleGmailClient {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: token });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return google.gmail({ version: 'v1', auth: oauth2Client as any });
+    return gmail({ version: 'v1', auth: oauth2Client as any });
   }
 
   private getGmail(options?: GmailOperationOptions): gmail_v1.Gmail {
@@ -397,7 +397,7 @@ export class GoogleGmailClient {
         return this.createGmailClientFromToken(token);
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return google.gmail({ version: 'v1', auth: token as any });
+      return gmail({ version: 'v1', auth: token as any });
     }
     return this.defaultGmail;
   }

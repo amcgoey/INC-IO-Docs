@@ -1,6 +1,8 @@
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 // nosemgrep: adapter-leakage-warning
-import { google, type drive_v3, type sheets_v4 } from 'googleapis';
+import { drive, type drive_v3 } from '@googleapis/drive';
+// nosemgrep: adapter-leakage-warning
+import type { sheets_v4 } from '@googleapis/sheets';
 import { GoogleDriveClient } from '../../../src/infrastructure/drive/drive-client';
 import { GoogleSheetsClient } from '../../../src/infrastructure/sheets';
 import {
@@ -40,9 +42,9 @@ export {
  * Creates an authenticated `drive_v3.Drive` SDK instance.
  */
 export function createLiveDriveApi(auth: OAuth2Client | GoogleAuth): drive_v3.Drive {
-  return google.drive({
+  return drive({
     version: 'v3',
-    auth: auth as NonNullable<Parameters<typeof google.drive>[0]['auth']>,
+    auth: auth as NonNullable<drive_v3.Options['auth']>,
   });
 }
 

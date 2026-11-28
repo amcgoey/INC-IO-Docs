@@ -7,7 +7,8 @@ import {
   GoogleDriveFileTooLargeError,
   GoogleDriveNotFoundError,
 } from './drive-client';
-import { google, type drive_v3 } from 'googleapis';
+import * as googleDrive from '@googleapis/drive';
+import type { drive_v3 } from '@googleapis/drive';
 import { GoogleAuth } from 'google-auth-library';
 
 describe('GoogleDriveClient', () => {
@@ -125,7 +126,7 @@ describe('GoogleDriveClient', () => {
           }),
         },
       };
-      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+      const driveSpy = vi.spyOn(googleDrive, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const file = await client.getFile('file-auth-123', { auth: 'ya29.custom-token' });
       expect(file).toEqual({
@@ -865,7 +866,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       try {
@@ -1036,7 +1037,7 @@ describe('GoogleDriveClient', () => {
           }),
         },
       };
-      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+      const driveSpy = vi.spyOn(googleDrive, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const file = await client.rename('file-auth-123', 'New Name.pdf', { auth: 'ya29.custom-token' });
       expect(file).toEqual({
@@ -1202,7 +1203,7 @@ describe('GoogleDriveClient', () => {
           }),
         },
       };
-      const driveSpy = vi.spyOn(google, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
+      const driveSpy = vi.spyOn(googleDrive, 'drive').mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const file = await client.duplicate(
         'file-auth-123',
@@ -2506,7 +2507,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const buffer = await client.downloadAsBuffer('file-auth-1', {
@@ -2686,7 +2687,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const buffer = await client.downloadFileMedia('file-auth-media', {
@@ -3020,7 +3021,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const result = await client.saveBuffer(
@@ -3300,7 +3301,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       const stream = createSampleStream();
@@ -3580,7 +3581,7 @@ describe('GoogleDriveClient', () => {
         },
       };
       const driveSpy = vi
-        .spyOn(google, 'drive')
+        .spyOn(googleDrive, 'drive')
         .mockReturnValue(customDriveMock as unknown as drive_v3.Drive);
 
       try {

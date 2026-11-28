@@ -1,4 +1,4 @@
-import { google, type sheets_v4 } from 'googleapis';
+import { sheets, type sheets_v4 } from '@googleapis/sheets';
 import { OAuth2Client } from 'google-auth-library';
 import type {
   CellValue,
@@ -1385,12 +1385,12 @@ export class GoogleSheetsClient implements SheetsClient {
         const oauth2Client = new OAuth2Client();
         oauth2Client.setCredentials({ access_token: options.auth });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.sheetsApi = google.sheets({ version: 'v4', auth: oauth2Client as any });
+        this.sheetsApi = sheets({ version: 'v4', auth: oauth2Client as any });
       } else if (options.auth) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.sheetsApi = google.sheets({ version: 'v4', auth: options.auth as any });
+        this.sheetsApi = sheets({ version: 'v4', auth: options.auth as any });
       } else {
-        this.sheetsApi = google.sheets({ version: 'v4' });
+        this.sheetsApi = sheets({ version: 'v4' });
       }
     }
   }
