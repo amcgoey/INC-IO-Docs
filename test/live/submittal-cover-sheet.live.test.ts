@@ -17,12 +17,12 @@ import {
   getDocumentLogTestFolderId,
   getSubmittalCoverSheetTemplateId,
   resolveLiveGoogleAuth,
-} from './utils/live-google-auth';
+} from '../e2e/utils/live-google-auth';
 import {
   DEFAULT_LIVE_RETRY_OPTIONS,
   createLiveSheetsApi,
   loadDocumentLogSampleFixture,
-} from './utils/live-sheets-helper';
+} from '../e2e/utils/live-sheets-helper';
 
 const sampleFixture = loadDocumentLogSampleFixture();
 const TEST_FOLDER_ID = getDocumentLogTestFolderId();
