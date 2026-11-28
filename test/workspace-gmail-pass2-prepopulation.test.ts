@@ -23,6 +23,82 @@ import {
   buildSubmittalArchOptionBatchGetReply,
 } from './utils/workspace-gmail-test-helper';
 
+interface StampedSubmittalPdfOptions {
+  submittalNo?: string;
+  responseOptions: string[];
+  selectedResponse: string;
+  dateText?: string;
+}
+
+/** Builds a synthetic stamped submittal AcroForm PDF fixture for Pass 2 integration tests. */
+async function buildStampedSubmittalPdfBytes(options: StampedSubmittalPdfOptions): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([600, 400]);
+  const form = doc.getForm();
+
+  if (options.submittalNo !== undefined) {
+    const subNoField = form.createTextField('Submittal No');
+    subNoField.addToPage(page, { x: 50, y: 340, width: 180, height: 20 });
+    subNoField.setText(options.submittalNo);
+  }
+
+  const radio = form.createRadioGroup('Submittal Response');
+  options.responseOptions.forEach((option, index) => {
+    radio.addOptionToPage(option, page, { x: 50, y: 300 - index * 20, width: 12, height: 12 });
+  });
+  radio.select(options.selectedResponse);
+
+  if (options.dateText !== undefined) {
+    const dateField = form.createTextField('Date');
+    dateField.addToPage(page, { x: 200, y: 300, width: 120, height: 20 });
+    dateField.setText(options.dateText);
+  }
+
+  return doc.save();
+}
+
+let cachedTicket315StampedPdfBytes: Uint8Array | undefined;
+let cachedTicket316StampedPdfBytes: Uint8Array | undefined;
+let cachedTicket317StampedPdfBytes: Uint8Array | undefined;
+let cachedTicket318StampedPdfBytes: Uint8Array | undefined;
+
+async function getCachedTicket315StampedPdfBytes(): Promise<Uint8Array> {
+  cachedTicket315StampedPdfBytes ??= await buildStampedSubmittalPdfBytes({
+    responseOptions: ['No Exceptions Taken', 'No Objections As Corrected'],
+    selectedResponse: 'No Objections As Corrected',
+  });
+  return cachedTicket315StampedPdfBytes;
+}
+
+async function getCachedTicket316StampedPdfBytes(): Promise<Uint8Array> {
+  cachedTicket316StampedPdfBytes ??= await buildStampedSubmittalPdfBytes({
+    responseOptions: ['No Objections As Corrected'],
+    selectedResponse: 'No Objections As Corrected',
+    dateText: '2023-09-13',
+  });
+  return cachedTicket316StampedPdfBytes;
+}
+
+async function getCachedTicket317StampedPdfBytes(): Promise<Uint8Array> {
+  cachedTicket317StampedPdfBytes ??= await buildStampedSubmittalPdfBytes({
+    submittalNo: '081100-002-Rev. B',
+    responseOptions: ['No Objections As Corrected'],
+    selectedResponse: 'No Objections As Corrected',
+    dateText: '2026-11-21',
+  });
+  return cachedTicket317StampedPdfBytes;
+}
+
+async function getCachedTicket318StampedPdfBytes(): Promise<Uint8Array> {
+  cachedTicket318StampedPdfBytes ??= await buildStampedSubmittalPdfBytes({
+    submittalNo: 'LT 159A - B',
+    responseOptions: ['Revise and Resubmit'],
+    selectedResponse: 'Revise and Resubmit',
+    dateText: '5/8/26',
+  });
+  return cachedTicket318StampedPdfBytes;
+}
+
 describe('Workspace Gmail Pass 2 Pre-Population & Cover-Sheet Integration', () => {
   const ctx = setupWorkspaceGmailIntegrationSuite();
 
@@ -2014,14 +2090,7 @@ describe('Workspace Gmail Pass 2 Pre-Population & Cover-Sheet Integration', () =
 
   describe('Ticket #315: Submittal Arch PDF AcroForm pre-population in Gmail Google Drive URL vs Email Attachments mode', () => {
     it('populates action from stamped Drive PDF in Google Drive URL mode for @inc.nyc sender while skipping form extraction in Email Attachments mode', async () => {
-      const doc = await PDFDocument.create();
-      doc.addPage([600, 400]);
-      const form = doc.getForm();
-      const radio = form.createRadioGroup('Submittal Response');
-      radio.addOptionToPage('No Exceptions Taken', doc.getPage(0), { x: 50, y: 300, width: 12, height: 12 });
-      radio.addOptionToPage('No Objections As Corrected', doc.getPage(0), { x: 50, y: 280, width: 12, height: 12 });
-      radio.select('No Objections As Corrected');
-      const stampedPdfBytes = await doc.save();
+      const stampedPdfBytes = await getCachedTicket315StampedPdfBytes();
 
       const getFileSpy = vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
         id: 'drive-url-arch-315',
@@ -2142,16 +2211,7 @@ describe('Workspace Gmail Pass 2 Pre-Population & Cover-Sheet Integration', () =
 
   describe('Ticket #316: Submittal Arch Date pre-population vs email.date precedence in Gmail Google Drive URL mode', () => {
     it('lets email.date win ahead of form Date when email.date exists, and uses form Date ahead of drive.modifiedTime when email.date is absent', async () => {
-      const doc = await PDFDocument.create();
-      doc.addPage([600, 400]);
-      const form = doc.getForm();
-      const radio = form.createRadioGroup('Submittal Response');
-      radio.addOptionToPage('No Objections As Corrected', doc.getPage(0), { x: 50, y: 300, width: 12, height: 12 });
-      radio.select('No Objections As Corrected');
-      const dateField = form.createTextField('Date');
-      dateField.addToPage(doc.getPage(0), { x: 200, y: 300, width: 120, height: 20 });
-      dateField.setText('2023-09-13');
-      const stampedPdfBytes = await doc.save();
+      const stampedPdfBytes = await getCachedTicket316StampedPdfBytes();
 
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
         id: 'drive-url-arch-316',
@@ -2259,19 +2319,7 @@ describe('Workspace Gmail Pass 2 Pre-Population & Cover-Sheet Integration', () =
 
   describe('Ticket #317: Submittal Arch Submittal No multi-token cursor advancement in Gmail Google Drive URL mode', () => {
     it('populates contact/date/section/number from outgoing @inc.nyc email, advances form cursor to populate revision and action, and fills title from drive', async () => {
-      const doc = await PDFDocument.create();
-      const page = doc.addPage([600, 400]);
-      const form = doc.getForm();
-      const subNoField = form.createTextField('Submittal No');
-      subNoField.addToPage(page, { x: 50, y: 340, width: 180, height: 20 });
-      subNoField.setText('081100-002-Rev. B');
-      const radio = form.createRadioGroup('Submittal Response');
-      radio.addOptionToPage('No Objections As Corrected', page, { x: 50, y: 300, width: 12, height: 12 });
-      radio.select('No Objections As Corrected');
-      const dateField = form.createTextField('Date');
-      dateField.addToPage(page, { x: 200, y: 300, width: 120, height: 20 });
-      dateField.setText('2026-11-21');
-      const stampedPdfBytes = await doc.save();
+      const stampedPdfBytes = await getCachedTicket317StampedPdfBytes();
 
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
         id: 'drive-url-arch-317',
@@ -2351,19 +2399,7 @@ describe('Workspace Gmail Pass 2 Pre-Population & Cover-Sheet Integration', () =
 
   describe('Ticket #318: Submittal FF&E Submittal No multi-token cursor advancement and cover-sheet pre-population in Gmail Google Drive URL mode', () => {
     it('populates contact/date/specTag/specTitle from outgoing @inc.nyc email, advances form cursor to populate revision and action, and fills vendor from drive', async () => {
-      const doc = await PDFDocument.create();
-      const page = doc.addPage([600, 400]);
-      const form = doc.getForm();
-      const subNoField = form.createTextField('Submittal No');
-      subNoField.addToPage(page, { x: 50, y: 340, width: 180, height: 20 });
-      subNoField.setText('LT 159A - B');
-      const radio = form.createRadioGroup('Submittal Response');
-      radio.addOptionToPage('Revise and Resubmit', page, { x: 50, y: 300, width: 12, height: 12 });
-      radio.select('Revise and Resubmit');
-      const dateField = form.createTextField('Date');
-      dateField.addToPage(page, { x: 200, y: 300, width: 120, height: 20 });
-      dateField.setText('5/8/26');
-      const stampedPdfBytes = await doc.save();
+      const stampedPdfBytes = await getCachedTicket318StampedPdfBytes();
 
       vi.spyOn(GoogleDriveClient.prototype, 'getFile').mockResolvedValue({
         id: 'drive-url-ffe-318',
