@@ -165,6 +165,83 @@ describe('lookup-options.wiring', () => {
     expect(listFolders).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards getDocumentSpaceService in createLookupOptionsService to resolve partial space metadata before readOptionTables (#415)', async () => {
+    const readOptionTables = vi.fn().mockResolvedValue({
+      status: 'ready',
+      spreadsheetId: 'log-1',
+      tables: {
+        statuses: {
+          status: 'ready',
+          tuples: [{ key: 'Open' }],
+        },
+      },
+    });
+    const mockDocLogService = {
+      requiresDocumentLog: vi.fn().mockReturnValue(true),
+      resolveLog: vi.fn(),
+      copyLog: vi.fn(),
+      queryUiContext: vi.fn(),
+      readLog: vi.fn(),
+      readOptionTables,
+      writeLog: vi.fn(),
+    };
+    const getCollection = vi.fn().mockResolvedValue({
+      spaces: [
+        {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Harborview Hotel',
+          abstractStorageId: 'drive-root-1',
+        },
+      ],
+    });
+    const getDocumentSpaceService = vi.fn().mockReturnValue({
+      getAllTypes: () => [{ id: 'projects' }],
+      getCollection,
+    } as never);
+
+    const service = createLookupOptionsService({
+      manifestProvider: {
+        getRawManifest: vi.fn().mockResolvedValue({ documentTypes: ['./submittal.json'] }),
+        readParsedSchema: vi.fn().mockResolvedValue({
+          key: 'submittal-arch',
+          documentSchema: {
+            fields: [{ key: 'status', options: { source: 'statuses', key: 'key' } }],
+            optionSources: {
+              statuses: { provider: 'document_log', properties: ['key'] },
+            },
+          },
+        }),
+      },
+      documentLogService: mockDocLogService,
+      getDocumentSpaceService,
+    });
+
+    const res = await service.resolveOptions(
+      {
+        space: { id: 'sp-1', abstractStorageId: 'drive-root-1' },
+        documentTypeKey: 'submittal-arch',
+      },
+      ['statuses']
+    );
+
+    expect(res.statuses.status).toBe('ready');
+    expect(getDocumentSpaceService).toHaveBeenCalledTimes(1);
+    expect(readOptionTables).toHaveBeenCalledWith(
+      {
+        documentTypeKey: 'submittal-arch',
+        space: {
+          id: 'sp-1',
+          typeId: 'projects',
+          name: 'Harborview Hotel',
+          abstractStorageId: 'drive-root-1',
+        },
+        sourceKeys: ['statuses'],
+      },
+      { signal: expect.any(AbortSignal) }
+    );
+  });
+
   it('wires document_log option source to DocumentLogPort.readOptionTables and resolves full space metadata via getDocumentSpaceService', async () => {
     const readOptionTables = vi.fn().mockResolvedValue({
       status: 'ready',

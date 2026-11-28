@@ -16,6 +16,8 @@ import { DocumentService } from '../features/document/domain';
 import * as driveActivityHandlerModule from '../features/document/adapters/drive-activity-handler';
 import { GmailSourceFileHydratorAdapter } from '../features/document/adapters/gmail-source-file-hydrator.adapter';
 import type { HttpServer } from '../infrastructure/http';
+import { createHttpServer } from '../infrastructure/http';
+import * as lookupOptionsWiringModule from './lookup-options.wiring';
 import type { GoogleDriveClient } from '../infrastructure/drive/drive-client';
 import type { GoogleGmailClient } from '../infrastructure/gmail/gmail-client';
 import type { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
@@ -253,6 +255,45 @@ describe('document.wiring', () => {
         expect(getMaxInMemoryFileBytes).toHaveBeenCalled();
       } finally {
         handlerSpy.mockRestore();
+      }
+    });
+
+    it('forwards getDocumentSpaceService and lookupTimeoutMs into fallback LookupOptionsService (#415)', async () => {
+      const compiledRegistry = new CompiledSchemaRegistry(mockSchemaRegistry);
+      await compiledRegistry.initialize();
+
+      const createLookupServiceSpy = vi.spyOn(
+        lookupOptionsWiringModule,
+        'createLookupOptionsService'
+      );
+      try {
+        const mockSpaceService = {
+          getAllTypes: () => [{ id: 'projects' }],
+          getCollection: vi.fn(),
+        };
+        const getDocumentSpaceService = vi.fn().mockReturnValue(mockSpaceService);
+
+        const factory = createDocumentServiceFactory({
+          documentSchemaRegistry: mockSchemaRegistry,
+          templateEvaluator: mockEvaluator,
+          compiledSchemaRegistry: compiledRegistry,
+          getDocumentSpaceService,
+          lookupTimeoutMs: 1234,
+        });
+
+        await factory({ hostApp: 'DRIVE' } as WorkspaceExecutionContext);
+
+        expect(createLookupServiceSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            lookupTimeoutMs: 1234,
+            getDocumentSpaceService: expect.any(Function),
+          })
+        );
+        const forwardedSpaceResolver = createLookupServiceSpy.mock.calls[0]?.[0]?.getDocumentSpaceService;
+        expect(forwardedSpaceResolver?.({})).toBe(mockSpaceService);
+        expect(getDocumentSpaceService).toHaveBeenCalledTimes(1);
+      } finally {
+        createLookupServiceSpy.mockRestore();
       }
     });
   });
@@ -856,6 +897,296 @@ describe('document.wiring', () => {
         } else {
           process.env.SUBMITTAL_COVER_SHEET_TEMPLATE_ID = savedEnv;
         }
+      }
+    });
+
+    it('forwards getDynamicValidator, getOptionTablePort, and getLookupOptions into POST /documents without fallback createLookupOptionsService calls (#415)', async () => {
+      const docTypeWithDynamicAndCalc: DocumentType = {
+        key: 'parity-wiring-doc',
+        name: 'Parity Wiring Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              options: { source: 'statuses', key: 'key' },
+            },
+            { key: 'section', name: 'Section', type: 'string', required: true },
+          ],
+          optionSources: {
+            statuses: { provider: 'document_log', properties: ['key'] },
+            csiDivisions: { provider: 'document_log', properties: ['key', 'folder'] },
+          },
+          calculatedFields: [
+            {
+              key: 'csiDivisionFolder',
+              template: '{{section}}',
+              transforms: [{ type: 'prefix', length: 2 }],
+              lookup: { source: 'csiDivisions', matchProperty: 'key', resultProperty: 'folder' },
+              required: true,
+            },
+          ],
+        },
+        documentUiSchema: {
+          events: { onSubmit: { catchAllWorkflow: 'LogOnly' } },
+        },
+        documentWorkflowConfig: {
+          workflows: [
+            {
+              name: 'LogOnly',
+              activitySequence: [{ type: 'CUSTOM_LOG', payload: {} }],
+            },
+          ],
+        },
+      };
+
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([docTypeWithDynamicAndCalc]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const createLookupServiceSpy = vi.spyOn(
+        lookupOptionsWiringModule,
+        'createLookupOptionsService'
+      );
+
+      try {
+        const readOptionTables = vi.fn().mockResolvedValue({
+          status: 'ready',
+          spreadsheetId: 'log-parity-1',
+          tables: {
+            statuses: { status: 'ready', tuples: [{ key: 'Open' }] },
+            csiDivisions: {
+              status: 'ready',
+              tuples: [{ key: '07', folder: '07 Thermal and Moisture Protection' }],
+            },
+          },
+        });
+        const mockDocLogService = {
+          requiresDocumentLog: vi.fn().mockReturnValue(true),
+          resolveLog: vi.fn(),
+          copyLog: vi.fn(),
+          queryUiContext: vi.fn(),
+          readLog: vi.fn(),
+          readOptionTables,
+          writeLog: vi.fn(),
+        };
+        const getCollection = vi.fn().mockResolvedValue({
+          spaces: [
+            {
+              id: 'sp-parity-1',
+              typeId: 'projects',
+              name: 'Parity Space',
+              abstractStorageId: 'drive-parity-1',
+            },
+          ],
+        });
+        const getDocumentSpaceService = vi.fn().mockReturnValue({
+          getAllTypes: () => [{ id: 'projects' }],
+          getCollection,
+        } as never);
+
+        const sharedLookupWiring = lookupOptionsWiringModule.createLookupOptionsWiring({
+          documentSchemaRegistry: registry,
+          getDocumentLogService: () => mockDocLogService,
+          getDocumentSpaceService,
+        });
+        const getDynamicValidator = vi.fn((ctx: WorkspaceExecutionContext) =>
+          sharedLookupWiring.createDynamicValidator(ctx)
+        );
+        const getOptionTablePort = vi.fn((ctx: WorkspaceExecutionContext) =>
+          sharedLookupWiring.createOptionTableResolver(ctx)
+        );
+        const getLookupOptions = vi.fn((ctx: WorkspaceExecutionContext) =>
+          sharedLookupWiring.getPerRequestLookupOptions(ctx)
+        );
+
+        const invalidateSpies: Array<ReturnType<typeof vi.spyOn>> = [];
+        const httpServer = createHttpServer();
+        wireDocumentServicesAndRoutes({
+          server: httpServer,
+          driveClient: {} as unknown as GoogleDriveClient,
+          configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+          documentSchemaRegistry: registry,
+          templateEvaluator: new HandlebarsAdapter(),
+          compiledSchemaRegistry: compiled,
+          getDocumentSpaceService,
+          getDynamicValidator,
+          getOptionTablePort,
+          getLookupOptions,
+          createAdditionalActivityHandlers: (lookupOptions) => {
+            invalidateSpies.push(vi.spyOn(lookupOptions, 'invalidate'));
+            return [
+              {
+                canHandle: (act) => act.type === 'CUSTOM_LOG',
+                handle: async () => {
+                  lookupOptions.invalidate();
+                  return { success: true };
+                },
+              },
+            ];
+          },
+        });
+
+        const res = await httpServer.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'parity-wiring-doc',
+            space: {
+              id: 'sp-parity-1',
+              typeId: 'projects',
+              name: 'Parity Space',
+              abstractStorageId: 'drive-parity-1',
+            },
+            data: { status: 'Open', section: '071200' },
+          },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(true);
+        expect(body.data.calculated.csiDivisionFolder).toBe(
+          '07 Thermal and Moisture Protection'
+        );
+        // Zero fallback createLookupOptionsService instantiations (shared LookupOptionsWiring used)
+        expect(createLookupServiceSpy).not.toHaveBeenCalled();
+        expect(getDynamicValidator).toHaveBeenCalled();
+        expect(getOptionTablePort).toHaveBeenCalled();
+        expect(getLookupOptions).toHaveBeenCalled();
+        // Both dynamic validation & calculated field lookup share one batched readOptionTables call
+        expect(readOptionTables).toHaveBeenCalledTimes(1);
+        expect(readOptionTables).toHaveBeenCalledWith(
+          expect.objectContaining({
+            space: {
+              id: 'sp-parity-1',
+              typeId: 'projects',
+              name: 'Parity Space',
+              abstractStorageId: 'drive-parity-1',
+            },
+          }),
+          expect.anything()
+        );
+        expect(invalidateSpies.length).toBeGreaterThanOrEqual(1);
+        expect(invalidateSpies[0]).toHaveBeenCalledTimes(1);
+      } finally {
+        createLookupServiceSpy.mockRestore();
+      }
+    });
+
+    it('forwards getDocumentSpaceService and lookupTimeoutMs into fallback LookupOptionsService on POST /documents when factories are omitted (#415)', async () => {
+      const docType: DocumentType = {
+        key: 'fallback-parity-doc',
+        name: 'Fallback Parity Doc',
+        documentSchema: {
+          fields: [
+            {
+              key: 'status',
+              name: 'Status',
+              type: 'string',
+              required: true,
+              options: { source: 'statuses', key: 'key' },
+            },
+          ],
+          optionSources: {
+            statuses: { provider: 'document_log', properties: ['key'] },
+          },
+        },
+      };
+      const registry: DocumentSchemaRegistryPort = {
+        loadAll: vi.fn().mockResolvedValue([docType]),
+      };
+      const compiled = new CompiledSchemaRegistry(registry);
+      await compiled.initialize();
+
+      const readOptionTables = vi.fn().mockImplementation(async (_req, opts?: { signal?: AbortSignal }) => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        if (opts?.signal?.aborted) {
+          throw new Error('Aborted');
+        }
+        return {
+          status: 'ready',
+          spreadsheetId: 'log-1',
+          tables: { statuses: { status: 'ready', tuples: [{ key: 'Open' }] } },
+        };
+      });
+      const mockDocLogService = {
+        requiresDocumentLog: vi.fn().mockReturnValue(true),
+        resolveLog: vi.fn(),
+        copyLog: vi.fn(),
+        queryUiContext: vi.fn(),
+        readLog: vi.fn(),
+        readOptionTables,
+        writeLog: vi.fn(),
+      };
+      const getCollection = vi.fn().mockResolvedValue({
+        spaces: [
+          {
+            id: 'sp-fb-1',
+            typeId: 'projects',
+            name: 'Fallback Space',
+            abstractStorageId: 'drive-fb-1',
+          },
+        ],
+      });
+
+      const createLookupServiceSpy = vi.spyOn(
+        lookupOptionsWiringModule,
+        'createLookupOptionsService'
+      );
+      try {
+        const getDocumentSpaceService = vi.fn().mockReturnValue({
+          getAllTypes: () => [{ id: 'projects' }],
+          getCollection,
+        } as never);
+
+        const httpServer = createHttpServer();
+        wireDocumentServicesAndRoutes({
+          server: httpServer,
+          driveClient: {} as unknown as GoogleDriveClient,
+          configProvider: { getDriveConfig: vi.fn().mockResolvedValue(undefined) },
+          documentSchemaRegistry: registry,
+          templateEvaluator: new HandlebarsAdapter(),
+          compiledSchemaRegistry: compiled,
+          documentLogService: mockDocLogService,
+          getDocumentSpaceService,
+          lookupTimeoutMs: 25,
+        });
+
+        const res = await httpServer.inject({
+          method: 'POST',
+          url: '/documents?eventName=onSubmit',
+          payload: {
+            type: 'fallback-parity-doc',
+            space: {
+              id: 'sp-fb-1',
+              typeId: 'projects',
+              name: 'Fallback Space',
+              abstractStorageId: 'drive-fb-1',
+            },
+            data: { status: 'Open' },
+          },
+        });
+
+        expect(res.statusCode).toBe(400);
+        const body = JSON.parse(res.payload);
+        expect(body.success).toBe(false);
+        expect(JSON.stringify(body.errors ?? '')).toMatch(/timed out/i);
+        expect(createLookupServiceSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            lookupTimeoutMs: 25,
+            getDocumentSpaceService: expect.any(Function),
+          })
+        );
+        // Verify forwarded getDocumentSpaceService works when invoked by the fallback LookupOptionsService
+        const forwardedSpaceResolver = createLookupServiceSpy.mock.calls[0]?.[0]?.getDocumentSpaceService;
+        expect(forwardedSpaceResolver?.({})).toBeDefined();
+        expect(getDocumentSpaceService).toHaveBeenCalledTimes(1);
+      } finally {
+        createLookupServiceSpy.mockRestore();
       }
     });
   });

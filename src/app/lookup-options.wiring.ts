@@ -468,6 +468,31 @@ export function createUiProcessLockedFieldsAdapter(
   };
 }
 
+function resolveDocumentLogOptionSource(
+  options: Pick<
+    LookupOptionsWiringOptions,
+    'documentLogService' | 'getDocumentLogService' | 'ensureDocumentLogInitialized' | 'getDocumentSpaceService'
+  >,
+  context: WorkspaceExecutionContext
+): DocumentLogOptionSourcePort | undefined {
+  const spaceResolver = options.getDocumentSpaceService
+    ? createSpaceLookupResolver(() => options.getDocumentSpaceService!(context))
+    : undefined;
+  const getDocumentLogService = options.getDocumentLogService
+    ? () => options.getDocumentLogService!(context)
+    : options.documentLogService
+      ? () => options.documentLogService!
+      : undefined;
+
+  return getDocumentLogService
+    ? createDocumentLogOptionSourceAdapter(
+        getDocumentLogService,
+        options.ensureDocumentLogInitialized,
+        spaceResolver
+      )
+    : undefined;
+}
+
 export function createLookupOptionsService(
   options: LookupOptionsWiringOptions
 ): LookupOptionsPort {
@@ -481,12 +506,7 @@ export function createLookupOptionsService(
       ...(options.configProvider !== undefined ? { configProvider: options.configProvider } : {}),
     });
 
-  const documentLogOptionSource = options.documentLogService
-    ? createDocumentLogOptionSourceAdapter(
-        () => options.documentLogService!,
-        options.ensureDocumentLogInitialized
-      )
-    : undefined;
+  const documentLogOptionSource = resolveDocumentLogOptionSource(options, {});
   const resolvedTimeoutMs = options.lookupTimeoutMs ?? options.timeoutMs;
 
   return new LookupOptionsService(manifestPort, {
@@ -506,11 +526,6 @@ export function createLookupOptionsWiring(
   const perRequestInstances = new WeakMap<WorkspaceExecutionContext, LookupOptionsPort>();
   const resolvedTimeoutMs = options.lookupTimeoutMs ?? options.timeoutMs;
 
-  const getSpaceResolver = (context: WorkspaceExecutionContext): SpaceLookupResolver | undefined =>
-    options.getDocumentSpaceService
-      ? createSpaceLookupResolver(() => options.getDocumentSpaceService!(context))
-      : undefined;
-
   const createLookupOptions = (context?: WorkspaceExecutionContext): LookupOptionsPort => {
     const oauthCredential = context?.userOAuthToken ?? context?.gmail?.accessToken;
     const driveClient: DriveFolderListClient = oauthCredential
@@ -521,21 +536,15 @@ export function createLookupOptionsWiring(
       : (options.driveClient ??
           new GoogleDriveClient({ configProvider: options.configProvider }));
 
-    const spaceResolver = context ? getSpaceResolver(context) : undefined;
-    const documentLogOptionSource =
-      context && options.getDocumentLogService
-        ? createDocumentLogOptionSourceAdapter(
-            () => options.getDocumentLogService!(context),
-            options.ensureDocumentLogInitialized,
-            spaceResolver
-          )
-        : options.documentLogService
-          ? createDocumentLogOptionSourceAdapter(
-              () => options.documentLogService!,
-              options.ensureDocumentLogInitialized,
-              spaceResolver
-            )
-          : undefined;
+    const documentLogOptionSource = resolveDocumentLogOptionSource(
+      context
+        ? options
+        : {
+            documentLogService: options.documentLogService,
+            ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+          },
+      context ?? {}
+    );
 
     return new LookupOptionsService(manifestPort, {
       driveOptionSource: new DriveOptionSourceAdapter(driveClient),

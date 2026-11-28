@@ -15,8 +15,16 @@ import {
   wireDocumentServicesAndRoutes,
   type InjectedDocumentService,
 } from './document.wiring';
-import { createDocumentSpaceFeatureWiring } from './document-space.wiring';
-import { wireWorkspaceAddonRoutes } from './workspace-addon.wiring';
+import {
+  createDocumentSpaceFeatureWiring,
+  createDocumentSpaceServiceFactory,
+  memoizeDocumentSpaceServiceFactory,
+} from './document-space.wiring';
+import {
+  createRetryableInitializer,
+  wireWorkspaceAddonRoutes,
+} from './workspace-addon.wiring';
+import { createLookupOptionsWiring } from './lookup-options.wiring';
 import { createSourceParserWiring } from './source-parser.wiring';
 import { createDocumentLogWiring } from './document-log.wiring';
 import { PdfProcessor } from '../infrastructure/pdf/pdf-processor';
@@ -152,15 +160,52 @@ export function createApp(options?: AppOptions): AppInstance {
     manifestProvider,
     driveClient,
     sheetsClient: options?.sheetsClient,
-    configProvider: manifestProvider ?? defaultAppConfigProvider,
+    configProvider: resolvedConfigProvider,
     templateEvaluator,
     documentLogService: options?.documentLogService,
+  });
+
+  const ensureDocumentLogInitialized = createRetryableInitializer(() =>
+    documentLogWiring.logSchemaRegistry.initialize()
+  );
+
+  const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
+  const documentSpaceWiring = createDocumentSpaceFeatureWiring({
+    rawManifestProvider: manifestProvider ?? defaultSpaceRawManifestProvider,
+    storageAdapter,
+    driveClient: storageAdapter ? undefined : driveClient,
+  });
+  const documentSpaceService =
+    options?.documentSpaceService ??
+    documentSpaceWiring.documentSpaceService;
+
+  const createDocumentSpaceService = memoizeDocumentSpaceServiceFactory(
+    options?.documentSpaceService
+      ? () => options.documentSpaceService!
+      : createDocumentSpaceServiceFactory({
+          documentSpaceRegistry: documentSpaceWiring.documentSpaceRegistry,
+          configProvider: resolvedConfigProvider,
+          driveClient,
+          storageAdapter,
+        })
+  );
+
+  const lookupOptionsWiring = createLookupOptionsWiring({
+    manifestProvider,
+    documentSchemaRegistry,
+    driveClient,
+    configProvider: resolvedConfigProvider,
+    ...(options?.lookupTimeoutMs !== undefined ? { timeoutMs: options.lookupTimeoutMs } : {}),
+    getDocumentLogService: (requestContext) =>
+      documentLogWiring.getPerRequestService(requestContext),
+    ensureDocumentLogInitialized,
+    getDocumentSpaceService: (requestContext) => createDocumentSpaceService(requestContext),
   });
 
   const documentService = wireDocumentServicesAndRoutes({
     server,
     driveClient,
-    configProvider: manifestProvider ?? defaultAppConfigProvider,
+    configProvider: resolvedConfigProvider,
     ...(manifestProvider !== undefined ? { manifestProvider } : {}),
     documentSchemaRegistry,
     templateEvaluator,
@@ -172,25 +217,25 @@ export function createApp(options?: AppOptions): AppInstance {
     documentLogService: documentLogWiring.documentLogService,
     getDocumentLogService: (requestContext) =>
       documentLogWiring.getPerRequestService(requestContext),
-    ensureDocumentLogInitialized: () => documentLogWiring.logSchemaRegistry.initialize(),
+    ensureDocumentLogInitialized,
+    getDocumentSpaceService: (requestContext) => createDocumentSpaceService(requestContext),
+    getDynamicValidator: (requestContext) =>
+      lookupOptionsWiring.createDynamicValidator(requestContext),
+    getOptionTablePort: (requestContext) =>
+      lookupOptionsWiring.createOptionTableResolver(requestContext),
+    getLookupOptions: (requestContext) =>
+      lookupOptionsWiring.getPerRequestLookupOptions(requestContext),
     additionalActivityHandlers: [documentLogWiring.createActivityHandler()],
-    createAdditionalActivityHandlers: (lookupOptions, requestContext) => [
-      documentLogWiring.createPerRequestActivityHandler(requestContext, {
-        onWriteLogSuccess: () => lookupOptions.invalidate(),
-      }),
-    ],
+    createAdditionalActivityHandlers: async (lookupOptions, requestContext) => {
+      await ensureDocumentLogInitialized();
+      return [
+        documentLogWiring.createPerRequestActivityHandler(requestContext, {
+          onWriteLogSuccess: () => lookupOptions.invalidate(),
+        }),
+      ];
+    },
     ...(options?.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: options.lookupTimeoutMs } : {}),
   });
-
-  const storageAdapter = options?.storageAdapter ?? options?.documentSpaceStoragePort;
-  const documentSpaceWiring = createDocumentSpaceFeatureWiring({
-    rawManifestProvider: manifestProvider ?? defaultSpaceRawManifestProvider,
-    storageAdapter,
-    driveClient: storageAdapter ? undefined : driveClient,
-  });
-  const documentSpaceService =
-    options?.documentSpaceService ??
-    documentSpaceWiring.documentSpaceService;
 
   const appBaseUrl = options?.appBaseUrl ?? process.env.APP_BASE_URL;
 
@@ -218,6 +263,7 @@ export function createApp(options?: AppOptions): AppInstance {
     server,
     documentService: options?.documentService,
     documentSpaceService: options?.documentSpaceService,
+    createDocumentSpaceService,
     authVerifier: options?.authVerifier,
     configProvider: manifestProvider,
     manifestProvider,
@@ -237,6 +283,8 @@ export function createApp(options?: AppOptions): AppInstance {
       ? { documentLogService: options.documentLogService }
       : {}),
     documentLogWiring,
+    ensureDocumentLogInitialized,
+    lookupOptionsWiring,
     sourceParser: sourceParserWiring.sourceParser,
     createSourceParser: sourceParserWiring.createSourceParser,
     ...(options?.lookupTimeoutMs !== undefined ? { lookupTimeoutMs: options.lookupTimeoutMs } : {}),

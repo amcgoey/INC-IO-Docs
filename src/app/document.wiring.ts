@@ -30,6 +30,7 @@ import {
 } from './lookup-options.wiring';
 import type { LookupOptionsPort } from '../features/lookup-options';
 import type { DocumentLogPort } from '../features/document-log';
+import type { DocumentSpaceService } from '../features/document-space/domain';
 
 export type InjectedDocumentService =
   | DocumentService
@@ -161,6 +162,9 @@ export interface CreateDocumentServiceFactoryOptions {
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   documentLogService?: DocumentLogPort | undefined;
   ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
+  getDocumentSpaceService?:
+    | ((requestContext: WorkspaceExecutionContext) => Promise<DocumentSpaceService> | DocumentSpaceService)
+    | undefined;
   lookupTimeoutMs?: number | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
@@ -287,6 +291,14 @@ export function createDocumentServiceFactory(
           configProvider: options.configProvider,
           documentLogService: options.documentLogService,
           ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+          ...(options.getDocumentSpaceService !== undefined
+            ? {
+                getDocumentSpaceService: (ctx: WorkspaceExecutionContext) =>
+                  options.getDocumentSpaceService!(
+                    Object.keys(ctx).length > 0 ? ctx : effectiveRequestContext
+                  ),
+              }
+            : {}),
           ...(options.lookupTimeoutMs !== undefined
             ? { lookupTimeoutMs: options.lookupTimeoutMs }
             : {}),
@@ -348,11 +360,17 @@ export interface WireDocumentServicesOptions {
   compiledSchemaRegistry?: CompiledSchemaRegistryPort | undefined;
   primaryTargetId?: string | undefined;
   dynamicValidator?: DocumentDynamicValidationPort | undefined;
+  getDynamicValidator?: ((requestContext: WorkspaceExecutionContext) => DocumentDynamicValidationPort) | undefined;
   optionTablePort?: DocumentOptionTablePort | undefined;
+  getOptionTablePort?: ((requestContext: WorkspaceExecutionContext) => DocumentOptionTablePort) | undefined;
   validationMessageFormatter?: DynamicValidationMessageFormatter | undefined;
   documentLogService?: DocumentLogPort | undefined;
   getDocumentLogService?: ((context: WorkspaceExecutionContext) => DocumentLogPort) | undefined;
   ensureDocumentLogInitialized?: (() => Promise<void>) | undefined;
+  getDocumentSpaceService?:
+    | ((requestContext: WorkspaceExecutionContext) => Promise<DocumentSpaceService> | DocumentSpaceService)
+    | undefined;
+  getLookupOptions?: ((requestContext: WorkspaceExecutionContext) => LookupOptionsPort) | undefined;
   lookupTimeoutMs?: number | undefined;
   additionalActivityHandlers?: readonly ActivityHandler[] | undefined;
   createAdditionalActivityHandlers?:
@@ -378,7 +396,7 @@ export function wireDocumentServicesAndRoutes(
       'Option not found.');
 
   const buildDefaultLookupOptions = (
-    requestContext?: WorkspaceExecutionContext
+    requestContext: WorkspaceExecutionContext = {}
   ): LookupOptionsPort =>
     createLookupOptionsService({
       manifestProvider: options.manifestProvider,
@@ -386,14 +404,53 @@ export function wireDocumentServicesAndRoutes(
       driveClient: options.driveClient,
       configProvider: options.configProvider,
       documentLogService:
-        requestContext && options.getDocumentLogService
+        options.getDocumentLogService
           ? options.getDocumentLogService(requestContext)
           : options.documentLogService,
       ensureDocumentLogInitialized: options.ensureDocumentLogInitialized,
+      ...(options.getDocumentSpaceService !== undefined
+        ? {
+            getDocumentSpaceService: (ctx: WorkspaceExecutionContext) =>
+              options.getDocumentSpaceService!(
+                Object.keys(ctx).length > 0 ? ctx : requestContext
+              ),
+          }
+        : {}),
       ...(options.lookupTimeoutMs !== undefined
         ? { lookupTimeoutMs: options.lookupTimeoutMs }
         : {}),
     });
+
+  const resolvePerRequestLookups = (requestContext: WorkspaceExecutionContext) => {
+    let fallbackLookupOptions: LookupOptionsPort | undefined;
+    const getLookupOptions = (): LookupOptionsPort => {
+      if (options.getLookupOptions) {
+        return options.getLookupOptions(requestContext);
+      }
+      if (!fallbackLookupOptions) {
+        fallbackLookupOptions = buildDefaultLookupOptions(requestContext);
+      }
+      return fallbackLookupOptions;
+    };
+
+    const dynamicValidator =
+      options.dynamicValidator ??
+      (options.getDynamicValidator
+        ? options.getDynamicValidator(requestContext)
+        : createDocumentDynamicValidationAdapter(getLookupOptions()));
+
+    const optionTablePort =
+      options.optionTablePort ??
+      (options.getOptionTablePort
+        ? options.getOptionTablePort(requestContext)
+        : createDocumentOptionTableAdapter(getLookupOptions()));
+
+    return {
+      getLookupOptions,
+      dynamicValidator,
+      optionTablePort,
+    };
+  };
 
   const getMaxInMemoryFileBytes = createMaxInMemoryFileBytesProvider(options.configProvider);
   const pdfProcessor =
@@ -462,10 +519,7 @@ export function wireDocumentServicesAndRoutes(
       contentEditor: options.contentEditor,
     });
 
-    const lookupOptions =
-      options.dynamicValidator && options.optionTablePort
-        ? undefined
-        : buildDefaultLookupOptions();
+    const singletonLookups = resolvePerRequestLookups({});
     const handlers: ActivityHandler[] = [
       driveActivityHandler,
       contentActivityHandler,
@@ -474,22 +528,17 @@ export function wireDocumentServicesAndRoutes(
 
     const activityEngine = options.activityEngine ?? new ActivityEngine(handlers);
 
-    const dynamicValidator =
-      options.dynamicValidator ?? createDocumentDynamicValidationAdapter(lookupOptions!);
-    const optionTablePort =
-      options.optionTablePort ?? createDocumentOptionTableAdapter(lookupOptions!);
-
     documentService = new DocumentService(
       activityEngine,
       options.documentSchemaRegistry,
       options.templateEvaluator,
       compiledSchemaRegistry,
-      dynamicValidator,
+      singletonLookups.dynamicValidator,
       validationMessageFormatter,
       undefined,
       driveService,
       undefined,
-      optionTablePort,
+      singletonLookups.optionTablePort,
       templateRegistry
     );
   }
@@ -502,8 +551,12 @@ export function wireDocumentServicesAndRoutes(
     registerDocumentFeatureRoutes(options.server, {
       createService: async () => {
         const reqContext: WorkspaceExecutionContext = {};
-        const reqLookupOptions = buildDefaultLookupOptions(reqContext);
-        const activityEngine = await buildActivityEngine(reqLookupOptions, reqContext);
+        const reqLookups = resolvePerRequestLookups(reqContext);
+        const reqLookupOptionsForHandlers =
+          !options.activityEngine && options.createAdditionalActivityHandlers
+            ? reqLookups.getLookupOptions()
+            : undefined;
+        const activityEngine = await buildActivityEngine(reqLookupOptionsForHandlers, reqContext);
         const reqDriveService: DriveServicePort =
           options.driveService ?? new DriveServiceAdapter(options.driveClient);
         const reqService = new DocumentService(
@@ -511,12 +564,12 @@ export function wireDocumentServicesAndRoutes(
           options.documentSchemaRegistry,
           options.templateEvaluator,
           compiledSchemaRegistry,
-          createDocumentDynamicValidationAdapter(reqLookupOptions),
+          reqLookups.dynamicValidator,
           validationMessageFormatter,
           undefined,
           reqDriveService,
           undefined,
-          options.optionTablePort ?? createDocumentOptionTableAdapter(reqLookupOptions),
+          reqLookups.optionTablePort,
           templateRegistry
         );
         await reqService.initialize();
