@@ -410,7 +410,7 @@ As `DocumentService.processDocument()` iterates through a workflow's `activitySe
 
 ## 4. Validating Configuration & Schema Changes
 
-After editing [`assets/manifest.json`](../assets/manifest.json) or any `DocumentType` JSON file in `assets/document-types/`, run the validation and quality-gate scripts from the repository root:
+After editing [`assets/manifest.json`](../assets/manifest.json) or any `DocumentType` JSON file in `assets/document-types/`, run the offline validation and quality-gate scripts from the repository root:
 
 ```bash
 npm run typecheck
@@ -418,4 +418,6 @@ npm run lint
 npm run test:all
 ```
 
-`test/validation/schema.test.ts` automatically validates `assets/manifest.json` (`AppConfiguration` and `DocumentSpaceTypes`) and every registered `DocumentType` schema against `DocumentTypeSchema`, `UiSchema`, `FormSchemaType`, and static Handlebars template variable checks.
+`test/validation/schema.test.ts` (included in both `npm test` and `npm run test:all`) validates `assets/manifest.json` (`AppConfiguration` and `DocumentSpaceTypes`) and every registered `DocumentType` schema against `DocumentTypeSchema`, `UiSchema`, `FormSchemaType`, and static Handlebars template variable checks.
+
+When verifying `DocumentSpaceTypes` or `DocumentType` workflow changes against real Google Workspace targets, run the matching scoped live suite sequentially (`npm run test:live:space`, `npm run test:live:arch`, `npm run test:live:ffe`, or `npm run test:live:cover-sheet`).

@@ -20,7 +20,7 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
 - `src/app/`: The wiring layer. This is the only place where infrastructure modules are injected into feature adapters.
   - **Modular Wiring**: Do not wire feature dependencies in a monolithic `index.ts` or use a global DI framework. You must create per-feature composition roots (e.g., `src/app/document.wiring.ts`). 
   - The main entrypoint simply boots infrastructure and passes it into these feature factories, containing the blast radius of structural refactors to isolated files.
-- `test/`: E2E and integration tests that span multiple features. Unit tests must be co-located next to their subjects (e.g., `**/*.test.ts`) inside `src/`.
+- `test/`: Cross-feature integration, offline E2E, contract validation, infrastructure bootstrap (`test/infra/`), and live Google (`test/live/`) suites. Unit tests live alongside their subjects in `src/**/*.test.ts`.
 
 ## Rules
 1. **Dependency Inversion**: Domain and Ports must never import from Adapters. Adapters depend on Ports.
@@ -30,7 +30,7 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
      - *`ports.ts`*: Use for Data Transfer Objects (DTOs) strictly tied to a specific port interface (e.g., a pure read model) that carry no domain invariants.
    - **Infrastructure Schemas**: Infrastructure modules must define their own local Typebox schemas to validate external boundaries (e.g., API payloads, raw config files). They must **never** import feature schemas.
    - **Wiring**: `src/app/` is responsible for mapping the validated infrastructure schemas into the feature's schemas.
-3. **Testing**: Use `Vitest`. Unit tests must be co-located with their subjects in `src/` and should mock driven ports. Integration tests in `test/` can test the real adapters.
+3. **Testing**: Follow the four-tier layout, seam placement, and concurrency rules in [Testing](#testing) and [ADR 0025](docs/adr/0025-test-tier-isolation-live-tracer-bullets-and-retry-seams.md).
 4. **Verification**: A change is not complete until `npm run typecheck` and `npm run lint` pass cleanly.
 5. **Read Patterns (Fast-Track vs Guarded):** Route reads based on their need for business logic.
    - **Fast-Track Read**: Route pure data queries directly from a driving adapter to a driven port. Bypass the domain core entirely to keep `domain.ts` strictly focused on business invariants.
@@ -45,3 +45,25 @@ The structure balances **Locality** (feature-first) with **Leverage** (shared, d
    - **Application Layer Coordination**: A higher-level coordinator/request wrapper in the application wiring layer (`src/app/`) intercepts the intent payload. If the intent is a render request, the coordinator dispatches a Query to the Read module and handles infrastructure translation.
    - **Infrastructure Context Isolation**: Request-scoped infrastructure context (such as HTTP routing URL bases) must never leak into feature/domain ports. The application wiring layer binds request-scoped infrastructure context into the infrastructure views during translation.
 7. **Dependency Injection Lifecycles:** Keep domain method signatures pure of execution context and authentication tokens. The Composition Root (`src/app/`) must inject these into adapters via constructors. Choose the DI lifecycle (Per-Request vs Singleton) based on the delivery mechanism's statefulness (see [ADR 0005: Per-Request Dependency Injection](docs/adr/0005-per-request-dependency-injection-for-context.md) for lifecycle criteria).
+
+## Testing
+
+Use `Vitest` across four isolated test tiers (see `package.json` for script definitions and [ADR 0025](docs/adr/0025-test-tier-isolation-live-tracer-bullets-and-retry-seams.md) for rationale):
+
+- **Tiers & Runner Isolation**:
+  - **Offline App & Integration (`test`)**: Fast, deterministic unit, integration, contract validation, and offline E2E suites. Excludes `test/live/` and `test/infra/` so local `.env` credentials remain inert and workers make zero live network calls.
+  - **Infrastructure (`test:infra`)**: Bootstrap script (`test/infra/`) and Pulumi (`infra/pulumi/`) suites.
+  - **Full Offline CI Gate (`test:all`)**: Chains `test` and `test:infra`.
+  - **Sequential Live Google API (`test:live`, `test:live:<scope>`)**: Opt-in sequential suites targeting real Google Workspace APIs through `LiveTestHarness`.
+- **Directory Placement**:
+  - `src/**/*.test.ts`: Co-located unit tests mocking driven ports.
+  - `test/*.test.ts`, `test/e2e/`, `test/validation/`: Cross-feature integration, offline E2E, and contract validation suites testing real adapters against `nock` or `MultiSpreadsheetSim`.
+  - `test/infra/`: Infrastructure bootstrap script suites.
+  - `test/live/*.live.test.ts`: Live Google tracer-bullet suites.
+- **Live Tracer Bullets vs. Offline Seams**:
+  - Cover combinatorial matrices, edge cases, `DocumentSpaceType` logic, and error mapping in offline seam tests (`nock` and `MultiSpreadsheetSim`).
+  - Keep `test/live/*.live.test.ts` focused on minimal real-API contract tracer bullets via `LiveTestHarness` within a `<= 50` Google Sheets read budget per suite (respecting the `60 ReadRequestsPerMinutePerUser` quota), using pre-seeded `INC` contacts on non-writeback `DocumentLog` checks and isolating `_Config`-mutating tests onto dedicated copies.
+- **Concurrency & Fixture Isolation**:
+  - Split large `nock` or fake-timer integration suites across separate files for safe cross-file worker parallelism.
+  - Run tests sequentially inside any file that mutates global `nock` interceptors or fake timers (avoid `it.concurrent` there), restore `vi.useRealTimers()` in teardown, and cache `PDFDocument` fixture bytes at module scope.
+  - Use bounded `it.concurrent` with per-test local shims cleaned up in `try/finally` blocks for CLI-spawning bootstrap tests in `test/infra/`.

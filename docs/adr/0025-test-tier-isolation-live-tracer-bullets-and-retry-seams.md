@@ -23,7 +23,7 @@ End-to-end verification against live Google Workspace services shares a per-user
 ### 2. Live Contract Tracer Bullets, Offline Seam Coverage & 60/min Quota Ceiling
 
 - Execute live suites sequentially (`fileParallelism: false`) through a shared modular `LiveTestHarness` facade to stay within Google Sheets' `60 ReadRequestsPerMinutePerUser` quota ceiling.
-- Budget `<=45` cumulative Google Sheets reads across the full `test:live` run (targeting a `~45–60s` soft runtime benchmark) by keeping `test/live/*.live.test.ts` focused on lean contract tracer bullets (using pre-seeded `MB` contacts for non-writeback checks).
+- Enforce a per-suite budget of `<=50` Google Sheets reads (fitting each scoped `npm run test:live:*` command inside a single `60 ReadRequestsPerMinutePerUser` window) and run full `npm run test:live` sequentially with retry backing across all five suites (`~153` cumulative reads observed across the 5 suites). Keep `test/live/*.live.test.ts` focused on lean contract tracer bullets, using the template's pre-seeded `INC` contact (not `MB`) for non-writeback `DocumentLog` checks.
 - Place combinatorial, edge-case, `DocumentSpaceType`, and error-matrix coverage in offline seam tests backed by `nock` and `MultiSpreadsheetSim`.
 
 ### 3. Google Retry, Timeout Cancellation & `readOptionTables` Seams
