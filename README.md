@@ -118,7 +118,7 @@ The codebase follows a **Hybrid Hexagonal Architecture** (Ports and Adapters) th
 │   ├── features/          # Vertical feature slices (domain.ts, ports.ts, adapters/)
 │   ├── infrastructure/    # Domain-agnostic heavy lifters (drive, gmail, sheets, pdf, http, manifest, workspace-addon)
 │   └── app/               # Per-feature composition roots (*.wiring.ts) and HTTP server entrypoint
-└── test/                  # Cross-feature integration, E2E, infrastructure, and contract validation tests
+└── test/                  # Cross-feature integration, offline E2E, infrastructure (test/infra/), live Google (test/live/), and validation tests
 ```
 
 ### Feature Slices (`src/features/`)
@@ -220,10 +220,11 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 | **`APP_MANIFEST_PATH`** | `./assets/manifest.json` | Relative or absolute filesystem path to the runtime `Manifest` JSON file. |
 | **`PORT`** | `8080` | TCP port the Fastify HTTP server listens on. |
 | **`HOST`** | `0.0.0.0` | Network interface address bound by the Fastify HTTP server. |
-| **`GOOGLE_CLIENT_ID`** | `your-google-client-id.apps.googleusercontent.com` | Google Cloud OAuth 2.0 Client ID used for local E2E tests against live Google APIs. |
+| **`GOOGLE_CLIENT_ID`** | `your-google-client-id.apps.googleusercontent.com` | Google Cloud OAuth 2.0 Client ID used for opt-in live tests (`test/live/`) against real Google APIs. |
 | **`GOOGLE_CLIENT_SECRET`** | `your-google-client-secret` | Google Cloud OAuth 2.0 Client Secret paired with `GOOGLE_CLIENT_ID`. |
-| **`GOOGLE_REFRESH_TOKEN`** | `your-user-oauth-refresh-token` | Delegated user OAuth 2.0 refresh token used by local E2E tests. |
-| **`TEST_DRIVE_FILE_ID`** | *(empty)* | Optional Google Drive file ID targeted by synthetic E2E tests. |
+| **`GOOGLE_REFRESH_TOKEN`** | `your-user-oauth-refresh-token` | Delegated user OAuth 2.0 refresh token used by opt-in live tests (`test/live/`). |
+| **`TEST_DRIVE_FILE_ID`** | *(empty)* | Optional Google Drive file ID targeted by synthetic live/E2E tests. |
+| **`DOCUMENT_LOG_TEST_FOLDER_ID`** | *(empty)* | Optional scratch Drive folder ID enabling copy-and-trash live Sheets and `DocumentLog` suites (`test/live/`). |
 | **`SKIP_JWT_VERIFICATION`** | `false` | When set to `true` in local development, bypasses Google Workspace Add-on request JWT signature verification. |
 
 ### Development & Quality Gate Commands
@@ -233,13 +234,17 @@ Runtime behavior is driven by [`assets/manifest.json`](assets/manifest.json) (`M
 | `npm run dev` | Start the local Fastify server (`src/app/server.ts`) via `tsx`. |
 | `npm run build` | Compile TypeScript source files into `dist/` using `tsconfig.build.json`. |
 | `npm start` | Run the compiled production server (`node dist/src/app/server.js`). |
-| `npm test` | Run the full Vitest suite and Pulumi infrastructure unit tests. |
-| `npm run test:all` | Run all application unit, integration, validation, and Pulumi infrastructure tests. |
-| `npm run test:infra` | Run the Pulumi infrastructure unit test suite (`infra/pulumi`). |
+| `npm test` | Run fast offline unit, integration, offline E2E (`test/e2e/`), and validation tests via `vitest.config.mts` (excludes `test/infra/`, `test/infra-workflow.test.ts`, and `test/live/`). |
+| `npm run test:infra` | Run infrastructure bootstrap (`test/infra/`) and workflow (`test/infra-workflow.test.ts`) suites via `vitest.infra.config.mts`, plus Pulumi unit tests (`infra/pulumi/`). |
+| `npm run test:all` | Run the full offline CI gate: unified `infra` and `app` Vitest projects in one process pool (`vitest.all.config.mts`, scheduling `infra` first to overlap with `app`) plus Pulumi unit tests (`infra/pulumi/`). |
+| `npm run test:live` | Sequentially run all five opt-in live Google API tracer-bullet suites (`test/live/*.live.test.ts`). |
+| `npm run test:live:<scope>` | Run a single scoped live suite (`sheets`, `arch`, `ffe`, `cover-sheet`, or `space`) within the per-suite Sheets read budget. |
 | `npm run typecheck` | Run strict TypeScript typechecking across both the root project and `infra/pulumi`. |
 | `npm run lint` | Run ESLint and Semgrep hexagonal architecture guardrail rules (`semgrep.yml`). |
 | `npm run generate:manifest` | Render and validate the Google Workspace Add-on deployment manifest from `infra/deployment.template.json`. |
 | `npm run generate:branding` | Deterministically generate the `48x48` companion icons (`icon-48x48.png`, `icon-dev-48x48.png`) and `1280x800` Marketplace screenshot (`screenshot-1280x800.png`). |
+
+Offline runs (`npm test` and `npm run test:all`) exclude `test/live/`, so local `.env` credentials remain inert without blanking environment variables.
 
 ---
 

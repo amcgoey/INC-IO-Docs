@@ -146,7 +146,7 @@ const CONFIG_ARCH_STATUS_VALUES = [
 ];
 
 const CONFIG_ARCH_ACTION_VALUES = [
-  ['Action', 'Name', 'Suffix', 'Order'],
+  ['Key', 'Name', 'Suffix', 'Order'],
   ['REC', 'Received', '', '1'],
   ['REF', 'Referred', '_REF', '2'],
   ['NR', 'Not Reviewed', '_NR', '3'],
@@ -158,10 +158,10 @@ const CONFIG_ARCH_ACTION_VALUES = [
 ];
 
 const CONFIG_ARCH_CONTACT_VALUES = [
-  ['Contact', 'Name', 'Contact Type'],
-  ['INC', 'INC Architecture and Design', 'INC'],
-  ['PMG', 'Pavarini McGovern', 'Contractor'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['INC', 'INC', 'INC Architecture and Design', ''],
+  ['Contractor', 'PMG', 'Pavarini McGovern', ''],
+  ['', '---', '', ''],
 ];
 
 const CONFIG_ARCH_CSI_DIVISION_VALUES = [
@@ -177,16 +177,16 @@ const CONFIG_ARCH_CSI_DIVISION_VALUES = [
 const CONFIG_FFE_STATUS_VALUES = CONFIG_ARCH_STATUS_VALUES;
 const CONFIG_FFE_ACTION_VALUES = CONFIG_ARCH_ACTION_VALUES;
 const CONFIG_FFE_CONTACT_VALUES = [
-  ['Contact', 'Name', 'Contact Type'],
-  ['INC', 'INC Architecture & Design', 'INC'],
-  ['BW', 'Benjamin West', 'Procurement'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['INC', 'INC', 'INC Architecture & Design', ''],
+  ['Procurement', 'BW', 'Benjamin West', ''],
+  ['', '---', '', ''],
 ];
 const CONFIG_FFE_VENDOR_VALUES = [
-  ['Vendor', 'Name', 'Vendor Type'],
-  ['BM', 'Berman Falk', 'Casegoods'],
-  ['AL', 'Ashley Lighting', 'Lighting'],
-  ['---', '', ''],
+  ['Type', 'Key', 'Name', 'Aliases'],
+  ['Casegoods', 'BM', 'Berman Falk', ''],
+  ['Lighting', 'AL', 'Ashley Lighting', ''],
+  ['', '---', '', ''],
 ];
 
 function mockConfigSubmittalArchBatchGet(
@@ -216,21 +216,21 @@ function mockConfigSubmittalArchBatchGet(
     return {
       valueRanges: ranges.map((range) => {
         if (range.includes('_Config Submittal FF&E')) {
-          if (range.includes('A1:A6')) return { range, values: CONFIG_FFE_STATUS_VALUES };
-          if (range.includes('C1:F9')) return { range, values: CONFIG_FFE_ACTION_VALUES };
-          if (range.includes('H1:J')) return { range, values: CONFIG_FFE_CONTACT_VALUES };
-          if (range.includes('L1:N')) return { range, values: CONFIG_FFE_VENDOR_VALUES };
+          if (range.includes('A3:A8')) return { range, values: CONFIG_FFE_STATUS_VALUES };
+          if (range.includes('C3:F11')) return { range, values: CONFIG_FFE_ACTION_VALUES };
+          if (range.includes('H3:K')) return { range, values: CONFIG_FFE_CONTACT_VALUES };
+          if (range.includes('M3:P')) return { range, values: CONFIG_FFE_VENDOR_VALUES };
         }
-        if (range.includes('A1:A6')) {
+        if (range.includes('A3:A8')) {
           return { range, values: CONFIG_ARCH_STATUS_VALUES };
         }
-        if (range.includes('C1:F9')) {
+        if (range.includes('C3:F11')) {
           return { range, values: CONFIG_ARCH_ACTION_VALUES };
         }
-        if (range.includes('H1:J')) {
+        if (range.includes('H3:K')) {
           return { range, values: CONFIG_ARCH_CONTACT_VALUES };
         }
-        if (range.includes('L1:M')) {
+        if (range.includes('M3:N')) {
           return { range, values: CONFIG_ARCH_CSI_DIVISION_VALUES };
         }
         return { range, values: [] };
@@ -270,42 +270,42 @@ function mockEmptyDocumentLogSheetsRead(spreadsheetId: string, options?: { optio
       {
         namedRangeId: 'nr-arch-statuses',
         name: 'Options_Submittal_Arch_Statuses',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 8, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-arch-actions',
         name: 'Options_Submittal_Arch_Actions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 11, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-arch-contacts',
         name: 'Options_Submittal_Arch_Contacts',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + CONFIG_ARCH_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 11 },
       },
       {
         namedRangeId: 'nr-arch-csi-divisions',
         name: 'Options_Submittal_Arch_CSI_Divisions',
-        range: { sheetId: 103, startRowIndex: 0, endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length, startColumnIndex: 11, endColumnIndex: 13 },
+        range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + CONFIG_ARCH_CSI_DIVISION_VALUES.length, startColumnIndex: 12, endColumnIndex: 14 },
       },
       {
         namedRangeId: 'nr-ffe-statuses',
         name: 'Options_Submittal_FFE_Statuses',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 8, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-ffe-actions',
         name: 'Options_Submittal_FFE_Actions',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: 9, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 11, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-ffe-contacts',
         name: 'Options_Submittal_FFE_Contacts',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 10 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_FFE_CONTACT_VALUES.length, startColumnIndex: 7, endColumnIndex: 11 },
       },
       {
         namedRangeId: 'nr-ffe-vendors',
         name: 'Options_Submittal_FFE_Vendors',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: CONFIG_FFE_VENDOR_VALUES.length, startColumnIndex: 11, endColumnIndex: 14 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + CONFIG_FFE_VENDOR_VALUES.length, startColumnIndex: 12, endColumnIndex: 16 },
       },
     ],
   });
@@ -463,8 +463,8 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
           name: 'Options_Submittal_Arch_Statuses',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: 6,
+            startRowIndex: 2,
+            endRowIndex: 8,
             startColumnIndex: 0,
             endColumnIndex: 1,
           },
@@ -474,8 +474,8 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
           name: 'Options_Submittal_Arch_Actions',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: 9,
+            startRowIndex: 2,
+            endRowIndex: 11,
             startColumnIndex: 2,
             endColumnIndex: 6,
           },
@@ -485,10 +485,10 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
           name: 'Options_Submittal_Arch_Contacts',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_ARCH_CONTACT_VALUES.length,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_ARCH_CONTACT_VALUES.length,
             startColumnIndex: 7,
-            endColumnIndex: 10,
+            endColumnIndex: 11,
           },
         },
         {
@@ -496,10 +496,10 @@ function mockSubmittalArchLogWrite(spreadsheetId: string) {
           name: 'Options_Submittal_Arch_CSI_Divisions',
           range: {
             sheetId: 103,
-            startRowIndex: 0,
-            endRowIndex: CONFIG_ARCH_CSI_DIVISION_VALUES.length,
-            startColumnIndex: 11,
-            endColumnIndex: 13,
+            startRowIndex: 2,
+            endRowIndex: 2 + CONFIG_ARCH_CSI_DIVISION_VALUES.length,
+            startColumnIndex: 12,
+            endColumnIndex: 14,
           },
         },
       ],

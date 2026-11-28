@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
 // nosemgrep: adapter-leakage-warning
-import { google, type sheets_v4 } from 'googleapis';
+import { sheets, type sheets_v4 } from '@googleapis/sheets';
 import {
   buildColumnIndexMap,
   cellValueToCellData,
@@ -13,6 +13,10 @@ import {
   type RowRecord,
   type SheetCellInput,
 } from '../../../src/infrastructure/sheets';
+import {
+  executeWithRateLimitRetry,
+  type GoogleApiRetryOptions,
+} from '../../../src/infrastructure/google/retry';
 
 export const DEFAULT_LIVE_RETRY_OPTIONS = {
   maxRetries: 5,
@@ -20,7 +24,22 @@ export const DEFAULT_LIVE_RETRY_OPTIONS = {
   backoffFactor: 2,
 };
 
-export const SHEET_ERROR_TOKENS = ['#REF!', '#ERROR!', '#N/A', '#VALUE!'] as const;
+export const SHEET_ERROR_TOKENS = [
+  '#REF!',
+  '#ERROR!',
+  '#N/A',
+  '#VALUE!',
+  '#NAME?',
+  '#DIV/0!',
+] as const;
+
+export interface SpreadsheetErrorFinding {
+  sheetTitle: string;
+  rowNumber: number;
+  columnIndex: number;
+  value: string;
+  tokens: string[];
+}
 
 export interface FixtureSubmittalEntry {
   documentData: Record<string, string>;
@@ -61,11 +80,7 @@ export interface DocumentLogSampleFixture {
   };
 }
 
-export interface LiveSheetsRetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-}
+export type LiveSheetsRetryOptions = GoogleApiRetryOptions;
 
 type PositiveRowKind = 'data' | 'blank' | 'divider';
 
@@ -151,9 +166,9 @@ export function partialHydrationRowToCellInputs(
  * Creates an authenticated `sheets_v4.Sheets` client for live integration tests.
  */
 export function createLiveSheetsApi(auth: OAuth2Client | GoogleAuth): sheets_v4.Sheets {
-  return google.sheets({
+  return sheets({
     version: 'v4',
-    auth: auth as NonNullable<Parameters<typeof google.sheets>[0]['auth']>,
+    auth: auth as NonNullable<sheets_v4.Options['auth']>,
   });
 }
 
@@ -173,6 +188,68 @@ export function findSheetErrorTokens(values: RowRecord): string[] {
     }
   }
   return found;
+}
+
+/**
+ * Scans every sheet tab in a spreadsheet for Google Sheets formula evaluation error tokens.
+ */
+export async function findSpreadsheetErrorTokens(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<SpreadsheetErrorFinding[]> {
+  const metaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(title))',
+      }),
+    retryOptions
+  );
+
+  const sheetTitles = (metaResponse.data.sheets ?? [])
+    .map((sheet) => sheet.properties?.title)
+    .filter((title): title is string => typeof title === 'string' && title.length > 0);
+
+  if (sheetTitles.length === 0) {
+    return [];
+  }
+
+  const quotedRanges = sheetTitles.map((title) => gridRangeToA1(title, {}));
+  const valuesResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.batchGet({
+        spreadsheetId,
+        ranges: quotedRanges,
+        valueRenderOption: 'FORMATTED_VALUE',
+      }),
+    retryOptions
+  );
+
+  const findings: SpreadsheetErrorFinding[] = [];
+  const valueRanges = valuesResponse.data.valueRanges ?? [];
+  sheetTitles.forEach((sheetTitle, sheetIdx) => {
+    const rows = (valueRanges[sheetIdx]?.values as CellValue[][] | undefined) ?? [];
+    rows.forEach((row, rowIdx) => {
+      row.forEach((cellVal, columnIndex) => {
+        if (typeof cellVal !== 'string') {
+          return;
+        }
+        const tokens = SHEET_ERROR_TOKENS.filter((token) => cellVal.includes(token));
+        if (tokens.length > 0) {
+          findings.push({
+            sheetTitle,
+            rowNumber: rowIdx + 1,
+            columnIndex,
+            value: cellVal,
+            tokens,
+          });
+        }
+      });
+    });
+  });
+
+  return findings;
 }
 
 /**
@@ -245,47 +322,115 @@ export function findCleanDividerViolations(params: {
   return violations;
 }
 
-function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-  const err = error as {
-    statusCode?: unknown;
-    status?: unknown;
-    code?: unknown;
-    response?: { status?: unknown };
-  };
-  return (
-    err.statusCode === 429 ||
-    err.status === 429 ||
-    err.response?.status === 429 ||
-    err.code === 429 ||
-    err.code === '429'
-  );
+/**
+ * Wraps a raw Sheets SDK operation with unified rate-limit retry (`±25%` jitter, 429 & quota-403).
+ */
+export async function withLiveSheetsRetry<T>(
+  operation: () => Promise<T>,
+  retryOptions: LiveSheetsRetryOptions = DEFAULT_LIVE_RETRY_OPTIONS
+): Promise<T> {
+  return executeWithRateLimitRetry(operation, {
+    ...retryOptions,
+    maxRetries: retryOptions.maxRetries ?? DEFAULT_LIVE_RETRY_OPTIONS.maxRetries,
+    initialDelayMs: retryOptions.initialDelayMs ?? DEFAULT_LIVE_RETRY_OPTIONS.initialDelayMs,
+    backoffFactor: retryOptions.backoffFactor ?? DEFAULT_LIVE_RETRY_OPTIONS.backoffFactor,
+  });
 }
 
 async function withSheetsRetry<T>(
   operation: () => Promise<T>,
   retryOptions: LiveSheetsRetryOptions = DEFAULT_LIVE_RETRY_OPTIONS
 ): Promise<T> {
-  const maxRetries = retryOptions.maxRetries ?? DEFAULT_LIVE_RETRY_OPTIONS.maxRetries;
-  const initialDelayMs = retryOptions.initialDelayMs ?? DEFAULT_LIVE_RETRY_OPTIONS.initialDelayMs;
-  const backoffFactor = retryOptions.backoffFactor ?? DEFAULT_LIVE_RETRY_OPTIONS.backoffFactor;
+  return withLiveSheetsRetry(operation, retryOptions);
+}
 
-  let attempt = 0;
-  while (true) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (isRateLimitError(error) && attempt < maxRetries) {
-        const delayMs = initialDelayMs * Math.pow(backoffFactor, attempt);
-        attempt++;
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-      throw error;
-    }
-  }
+/**
+ * Reads spreadsheet metadata with unified rate-limit retry.
+ */
+export async function readSpreadsheetMetadata(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  fields = 'sheets(properties(sheetId,title))',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<sheets_v4.Schema$Spreadsheet> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields,
+      }),
+    retryOptions
+  );
+  return response.data;
+}
+
+/**
+ * Reads A1 range values with unified rate-limit retry.
+ */
+export async function readSpreadsheetValues(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  range: string,
+  valueRenderOption: 'FORMATTED_VALUE' | 'UNFORMATTED_VALUE' | 'FORMULA' = 'FORMATTED_VALUE',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<CellValue[][]> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.get({
+        spreadsheetId,
+        range,
+        valueRenderOption,
+      }),
+    retryOptions
+  );
+  return (response.data.values as CellValue[][] | undefined) ?? [];
+}
+
+/**
+ * Writes raw or user-entered values via `values.batchUpdate` with unified rate-limit retry.
+ */
+export async function batchUpdateSpreadsheetValues(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  data: sheets_v4.Schema$ValueRange[],
+  valueInputOption: 'RAW' | 'USER_ENTERED' = 'RAW',
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<void> {
+  await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption,
+          data,
+        },
+      }),
+    retryOptions
+  );
+}
+
+/**
+ * Reads grid layout (`formattedValue`, `userEnteredValue`, `note`), sheet `merges`, and `namedRanges`
+ * for one or more A1 ranges in a single retry-backed `spreadsheets.get` call.
+ */
+export async function readSheetsGridLayout(
+  sheetsApi: sheets_v4.Sheets,
+  spreadsheetId: string,
+  ranges: readonly string[],
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<sheets_v4.Schema$Spreadsheet> {
+  const response = await withLiveSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        ranges: [...ranges],
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,note)))),namedRanges',
+      }),
+    retryOptions
+  );
+  return response.data;
 }
 
 async function resolvePositiveNamedRange(
@@ -876,7 +1021,9 @@ interface OptionTableGridRowInfo {
 
 export interface OptionTableGridFormatsInfo {
   headerRow: string[];
+  headerNotes: string[];
   dataRows: OptionTableGridRowInfo[];
+  sheetMerges: sheets_v4.Schema$GridRange[];
 }
 
 function findNamedRangeInSpreadsheet(
@@ -1002,9 +1149,13 @@ export async function readNamedRangesFormattedValues(
   sheetsApi: sheets_v4.Sheets,
   spreadsheetId: string,
   snapshots: Readonly<Record<string, NamedRangeSnapshot>>,
-  retryOptions?: LiveSheetsRetryOptions
+  retryOptions?: LiveSheetsRetryOptions,
+  extraRanges?: Readonly<Record<string, string>>
 ): Promise<Record<string, CellValue[][]>> {
-  const entries = Object.entries(snapshots);
+  const entries = [
+    ...Object.entries(snapshots).map(([key, snap]) => ({ key, a1Range: snap.a1Range })),
+    ...Object.entries(extraRanges ?? {}).map(([key, a1Range]) => ({ key, a1Range })),
+  ];
   if (entries.length === 0) {
     return {};
   }
@@ -1013,7 +1164,7 @@ export async function readNamedRangesFormattedValues(
     () =>
       sheetsApi.spreadsheets.values.batchGet({
         spreadsheetId,
-        ranges: entries.map(([, snap]) => snap.a1Range),
+        ranges: entries.map((entry) => entry.a1Range),
         valueRenderOption: 'FORMATTED_VALUE',
       }),
     retryOptions
@@ -1021,7 +1172,7 @@ export async function readNamedRangesFormattedValues(
 
   const valueRanges = response.data.valueRanges ?? [];
   const output: Record<string, CellValue[][]> = {};
-  entries.forEach(([key], idx) => {
+  entries.forEach(({ key }, idx) => {
     output[key] = (valueRanges[idx]?.values as CellValue[][] | undefined) ?? [];
   });
   return output;
@@ -1062,6 +1213,189 @@ export function findSideBySideTableShiftViolations(params: {
 }
 
 /**
+ * Clears one or more side-by-side option tables to 1 unformatted blank row + `endMarker` using
+ * range-scoped `deleteRange` in a single `spreadsheets.get` + `values` read + `batchUpdate`.
+ */
+export async function clearOptionTablesToEmpty(
+  sheetsApi: sheets_v4.Sheets,
+  params: {
+    spreadsheetId: string;
+    targets: ReadonlyArray<{
+      sheetName: string;
+      rangeName: string;
+      validationRangeName?: string | undefined;
+      endMarker: string;
+    }>;
+  },
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<Record<string, ClearOptionTableResult>> {
+  const { spreadsheetId, targets } = params;
+  if (targets.length === 0) {
+    return {};
+  }
+
+  const metaResponse = await withSheetsRetry(
+    () =>
+      sheetsApi.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(sheetId,title)),namedRanges',
+      }),
+    retryOptions
+  );
+
+  const spreadsheet: sheets_v4.Schema$Spreadsheet = {
+    ...metaResponse.data,
+    spreadsheetId,
+  };
+  const resolvedTargets = targets.map((target) => ({
+    target,
+    resolved: findNamedRangeInSpreadsheet(spreadsheet, target.rangeName, target.sheetName),
+  }));
+
+  const valueGrids: CellValue[][][] =
+    resolvedTargets.length === 1
+      ? [
+          ((
+            await withSheetsRetry(
+              () =>
+                sheetsApi.spreadsheets.values.get({
+                  spreadsheetId,
+                  range: resolvedTargets[0].resolved.a1Range,
+                  valueRenderOption: 'FORMATTED_VALUE',
+                }),
+              retryOptions
+            )
+          ).data.values as CellValue[][] | undefined) ?? [],
+        ]
+      : (
+          (
+            await withSheetsRetry(
+              () =>
+                sheetsApi.spreadsheets.values.batchGet({
+                  spreadsheetId,
+                  ranges: resolvedTargets.map((item) => item.resolved.a1Range),
+                  valueRenderOption: 'FORMATTED_VALUE',
+                }),
+              retryOptions
+            )
+          ).data.valueRanges ?? []
+        ).map((vr) => (vr.values as CellValue[][] | undefined) ?? []);
+
+  const requests: sheets_v4.Schema$Request[] = [];
+  const results: Record<string, ClearOptionTableResult> = {};
+
+  resolvedTargets.forEach(({ target, resolved }, idx) => {
+    const values = valueGrids[idx] ?? [];
+    const startRow = resolved.gridRange.startRowIndex ?? 0;
+    const startCol = resolved.gridRange.startColumnIndex ?? 0;
+    const endCol =
+      resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
+        ? resolved.gridRange.endColumnIndex
+        : startCol + Math.max((values[0] ?? []).length, 1);
+    const width = Math.max(endCol - startCol, 1);
+
+    let terminatorRelIndex = -1;
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i] ?? [];
+      if (row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() === target.endMarker)) {
+        terminatorRelIndex = i;
+        break;
+      }
+    }
+
+    if (terminatorRelIndex === -1) {
+      throw new Error(
+        `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing endMarker "${target.endMarker}".`
+      );
+    }
+
+    if (terminatorRelIndex <= 1) {
+      results[target.rangeName] = {
+        cleared: false,
+        blankRowIndex: startRow + 1,
+        absTerminatorRowIndex: startRow + terminatorRelIndex,
+      };
+      return;
+    }
+
+    requests.push({
+      updateCells: {
+        range: {
+          sheetId: resolved.sheetId,
+          startRowIndex: startRow + 1,
+          endRowIndex: startRow + 2,
+          startColumnIndex: startCol,
+          endColumnIndex: startCol + width,
+        },
+        rows: [{ values: Array.from({ length: width }, () => ({})) }],
+        fields: 'userEnteredValue,userEnteredFormat',
+      },
+    });
+
+    if (terminatorRelIndex > 2) {
+      requests.push({
+        deleteRange: {
+          range: {
+            sheetId: resolved.sheetId,
+            startRowIndex: startRow + 2,
+            endRowIndex: startRow + terminatorRelIndex,
+            startColumnIndex: startCol,
+            endColumnIndex: startCol + width,
+          },
+          shiftDimension: 'ROWS',
+        },
+      });
+    }
+
+    if (target.validationRangeName) {
+      const valResolved = findNamedRangeInSpreadsheet(
+        spreadsheet,
+        target.validationRangeName,
+        target.sheetName
+      );
+      requests.push({
+        updateNamedRange: {
+          namedRange: {
+            ...(typeof valResolved.namedRange.namedRangeId === 'string'
+              ? { namedRangeId: valResolved.namedRange.namedRangeId }
+              : {}),
+            ...(typeof valResolved.namedRange.name === 'string'
+              ? { name: valResolved.namedRange.name }
+              : {}),
+            range: {
+              ...valResolved.gridRange,
+              sheetId: valResolved.sheetId,
+              startRowIndex: startRow + 1,
+              endRowIndex: startRow + 2,
+            },
+          },
+          fields: 'range',
+        },
+      });
+    }
+
+    results[target.rangeName] = {
+      cleared: true,
+      blankRowIndex: startRow + 1,
+      absTerminatorRowIndex: startRow + 2,
+    };
+  });
+
+  if (requests.length > 0) {
+    await withSheetsRetry(
+      () =>
+        sheetsApi.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: { requests },
+        }),
+      retryOptions
+    );
+  }
+
+  return results;
+}
+
+/**
  * Clears an option table to 1 unformatted blank row + `endMarker` using range-scoped `deleteRange`
  * so neighboring side-by-side `_Config` tables on the same sheet are unaffected.
  */
@@ -1076,139 +1410,217 @@ export async function clearOptionTableToEmpty(
   },
   retryOptions?: LiveSheetsRetryOptions
 ): Promise<ClearOptionTableResult> {
-  const metaResponse = await withSheetsRetry(
+  const results = await clearOptionTablesToEmpty(
+    sheetsApi,
+    { spreadsheetId: target.spreadsheetId, targets: [target] },
+    retryOptions
+  );
+  return results[target.rangeName];
+}
+
+export interface MultiOptionTableGridFormatsResult {
+  tables: Record<string, OptionTableGridFormatsInfo>;
+  namedRanges: Record<string, NamedRangeSnapshot>;
+  valuesByNamedRange: Record<string, CellValue[][]>;
+  spreadsheet: sheets_v4.Schema$Spreadsheet;
+}
+
+function findGridCellInSheet(
+  sheet: sheets_v4.Schema$Sheet | undefined,
+  absRow: number,
+  absCol: number
+): sheets_v4.Schema$CellData | undefined {
+  for (const gridData of sheet?.data ?? []) {
+    const baseRow = gridData.startRow ?? 0;
+    const baseCol = gridData.startColumn ?? 0;
+    const rowData = gridData.rowData ?? [];
+    if (absRow >= baseRow && absRow < baseRow + rowData.length) {
+      const cells = rowData[absRow - baseRow]?.values ?? [];
+      const relCol = absCol - baseCol;
+      if (relCol >= 0 && relCol < cells.length) {
+        return cells[relCol];
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractOptionTableGridInfo(params: {
+  spreadsheet: sheets_v4.Schema$Spreadsheet;
+  sheetName: string;
+  rangeName: string;
+  endMarker: string;
+  sheetMergesOverride?: sheets_v4.Schema$GridRange[];
+}): OptionTableGridFormatsInfo {
+  const { spreadsheet, sheetName, rangeName, endMarker, sheetMergesOverride } = params;
+  const resolved = findNamedRangeInSpreadsheet(spreadsheet, rangeName, sheetName);
+  const sheet = (spreadsheet.sheets ?? []).find(
+    (s) =>
+      s.properties?.sheetId === resolved.sheetId ||
+      s.properties?.title?.toLowerCase() === resolved.sheetTitle.toLowerCase()
+  );
+  const sheetMerges = sheetMergesOverride ?? sheet?.merges ?? [];
+  const primaryGridData = sheet?.data?.[0];
+  const baseRow = primaryGridData?.startRow ?? resolved.gridRange.startRowIndex ?? 0;
+  const startRow = resolved.gridRange.startRowIndex ?? baseRow;
+  const startCol = resolved.gridRange.startColumnIndex ?? primaryGridData?.startColumn ?? 0;
+
+  let width = 1;
+  if (resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null) {
+    width = Math.max(resolved.gridRange.endColumnIndex - startCol, 1);
+  } else {
+    for (const gd of sheet?.data ?? []) {
+      const gdBaseRow = gd.startRow ?? 0;
+      const gdBaseCol = gd.startColumn ?? 0;
+      const gdRows = gd.rowData ?? [];
+      if (startRow >= gdBaseRow && startRow < gdBaseRow + gdRows.length) {
+        const headerLen = (gdRows[startRow - gdBaseRow]?.values ?? []).length;
+        width = Math.max(headerLen - (startCol - gdBaseCol), 1);
+        break;
+      }
+    }
+  }
+
+  const readRow = (absRow: number): OptionTableGridCellInfo[] =>
+    Array.from({ length: width }, (_, offset) => {
+      const cell = findGridCellInSheet(sheet, absRow, startCol + offset);
+      return {
+        formattedValue: cell?.formattedValue ?? '',
+        ...(cell?.userEnteredFormat !== undefined && cell.userEnteredFormat !== null
+          ? { userEnteredFormat: structuredClone(cell.userEnteredFormat) }
+          : {}),
+      };
+    });
+
+  const headerRow = readRow(startRow).map((c) => c.formattedValue.trim());
+  const headerNotes = Array.from(
+    { length: width },
+    (_, offset) => findGridCellInSheet(sheet, startRow, startCol + offset)?.note ?? ''
+  );
+
+  const maxGridRow = Math.max(
+    startRow + 1,
+    ...(sheet?.data ?? []).map((gd) => (gd.startRow ?? 0) + (gd.rowData?.length ?? 0))
+  );
+  const maxRow =
+    resolved.gridRange.endRowIndex !== undefined && resolved.gridRange.endRowIndex !== null
+      ? resolved.gridRange.endRowIndex
+      : maxGridRow;
+
+  const dataRows: OptionTableGridRowInfo[] = [];
+  for (let absRow = startRow + 1; absRow < maxRow; absRow++) {
+    const cells = readRow(absRow);
+    if (cells.some((c) => c.formattedValue.trim() === endMarker)) {
+      break;
+    }
+    dataRows.push({ absRowIndex: absRow, cells });
+  }
+
+  return { headerRow, headerNotes, dataRows, sheetMerges };
+}
+
+function extractFormattedValuesForGridRange(
+  spreadsheet: sheets_v4.Schema$Spreadsheet,
+  sheetId: number,
+  sheetTitle: string,
+  gridRange: sheets_v4.Schema$GridRange
+): CellValue[][] {
+  const sheet = (spreadsheet.sheets ?? []).find(
+    (s) =>
+      s.properties?.sheetId === sheetId ||
+      s.properties?.title?.toLowerCase() === sheetTitle.toLowerCase()
+  );
+  const startRow = gridRange.startRowIndex ?? 0;
+  const endRow = gridRange.endRowIndex ?? startRow;
+  const startCol = gridRange.startColumnIndex ?? 0;
+  const endCol = gridRange.endColumnIndex ?? startCol;
+  const rows: CellValue[][] = [];
+  for (let absRow = startRow; absRow < endRow; absRow++) {
+    const row: CellValue[] = [];
+    for (let absCol = startCol; absCol < endCol; absCol++) {
+      row.push(findGridCellInSheet(sheet, absRow, absCol)?.formattedValue ?? '');
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Reads option-table grid formats, `headerNotes`, `sheetMerges`, `namedRanges` snapshots,
+ * formatted values, and optional `extraRanges` in a single `spreadsheets.get(includeGridData: true)`.
+ */
+export async function readMultiOptionTableGridFormats(
+  sheetsApi: sheets_v4.Sheets,
+  params: {
+    spreadsheetId: string;
+    targets: ReadonlyArray<{
+      sheetName: string;
+      rangeName: string;
+      endMarker: string;
+    }>;
+    snapshotRangeNames?: readonly string[] | undefined;
+    extraRanges?: readonly string[] | undefined;
+  },
+  retryOptions?: LiveSheetsRetryOptions
+): Promise<MultiOptionTableGridFormatsResult> {
+  const { spreadsheetId, targets, snapshotRangeNames = [], extraRanges = [] } = params;
+  const sheetRanges = Array.from(new Set(targets.map((t) => gridRangeToA1(t.sheetName, {}))));
+  const requestedRanges = [...sheetRanges, ...extraRanges];
+
+  const response = await withSheetsRetry(
     () =>
       sheetsApi.spreadsheets.get({
-        spreadsheetId: target.spreadsheetId,
-        fields: 'sheets(properties(sheetId,title)),namedRanges',
+        spreadsheetId,
+        ...(requestedRanges.length > 0 ? { ranges: requestedRanges } : {}),
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,userEnteredFormat,note)))),namedRanges',
       }),
     retryOptions
   );
 
   const spreadsheet: sheets_v4.Schema$Spreadsheet = {
-    ...metaResponse.data,
-    spreadsheetId: target.spreadsheetId,
+    ...response.data,
+    spreadsheetId,
   };
-  const resolved = findNamedRangeInSpreadsheet(spreadsheet, target.rangeName, target.sheetName);
 
-  const valuesResponse = await withSheetsRetry(
-    () =>
-      sheetsApi.spreadsheets.values.get({
-        spreadsheetId: target.spreadsheetId,
-        range: resolved.a1Range,
-        valueRenderOption: 'FORMATTED_VALUE',
-      }),
-    retryOptions
-  );
-
-  const values = (valuesResponse.data.values as CellValue[][] | undefined) ?? [];
-  const startRow = resolved.gridRange.startRowIndex ?? 0;
-  const startCol = resolved.gridRange.startColumnIndex ?? 0;
-  const endCol =
-    resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
-      ? resolved.gridRange.endColumnIndex
-      : startCol + Math.max((values[0] ?? []).length, 1);
-  const width = Math.max(endCol - startCol, 1);
-
-  let terminatorRelIndex = -1;
-  for (let i = 1; i < values.length; i++) {
-    const row = values[i] ?? [];
-    if (row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() === target.endMarker)) {
-      terminatorRelIndex = i;
-      break;
-    }
-  }
-
-  if (terminatorRelIndex === -1) {
-    throw new Error(
-      `Option table "${target.rangeName}" on sheet "${target.sheetName}" is missing endMarker "${target.endMarker}".`
-    );
-  }
-
-  if (terminatorRelIndex <= 1) {
-    return {
-      cleared: false,
-      blankRowIndex: startRow + 1,
-      absTerminatorRowIndex: startRow + terminatorRelIndex,
-    };
-  }
-
-  const requests: sheets_v4.Schema$Request[] = [
-    {
-      updateCells: {
-        range: {
-          sheetId: resolved.sheetId,
-          startRowIndex: startRow + 1,
-          endRowIndex: startRow + 2,
-          startColumnIndex: startCol,
-          endColumnIndex: startCol + width,
-        },
-        rows: [{ values: Array.from({ length: width }, () => ({})) }],
-        fields: 'userEnteredValue,userEnteredFormat',
-      },
-    },
-  ];
-
-  if (terminatorRelIndex > 2) {
-    requests.push({
-      deleteRange: {
-        range: {
-          sheetId: resolved.sheetId,
-          startRowIndex: startRow + 2,
-          endRowIndex: startRow + terminatorRelIndex,
-          startColumnIndex: startCol,
-          endColumnIndex: startCol + width,
-        },
-        shiftDimension: 'ROWS',
-      },
-    });
-  }
-
-  if (target.validationRangeName) {
-    const valResolved = findNamedRangeInSpreadsheet(
+  const tables: Record<string, OptionTableGridFormatsInfo> = {};
+  for (const target of targets) {
+    tables[target.rangeName] = extractOptionTableGridInfo({
       spreadsheet,
-      target.validationRangeName,
-      target.sheetName
-    );
-    requests.push({
-      updateNamedRange: {
-        namedRange: {
-          ...(typeof valResolved.namedRange.namedRangeId === 'string'
-            ? { namedRangeId: valResolved.namedRange.namedRangeId }
-            : {}),
-          ...(typeof valResolved.namedRange.name === 'string'
-            ? { name: valResolved.namedRange.name }
-            : {}),
-          range: {
-            ...valResolved.gridRange,
-            sheetId: valResolved.sheetId,
-            startRowIndex: startRow + 1,
-            endRowIndex: startRow + 2,
-          },
-        },
-        fields: 'range',
-      },
+      sheetName: target.sheetName,
+      rangeName: target.rangeName,
+      endMarker: target.endMarker,
     });
   }
 
-  await withSheetsRetry(
-    () =>
-      sheetsApi.spreadsheets.batchUpdate({
-        spreadsheetId: target.spreadsheetId,
-        requestBody: { requests },
-      }),
-    retryOptions
-  );
+  const namedRanges: Record<string, NamedRangeSnapshot> = {};
+  const valuesByNamedRange: Record<string, CellValue[][]> = {};
+  for (const rangeName of snapshotRangeNames) {
+    const found = findNamedRangeInSpreadsheet(spreadsheet, rangeName);
+    namedRanges[rangeName] = {
+      name: found.namedRange.name ?? rangeName,
+      ...(typeof found.namedRange.namedRangeId === 'string'
+        ? { namedRangeId: found.namedRange.namedRangeId }
+        : {}),
+      sheetId: found.sheetId,
+      sheetTitle: found.sheetTitle,
+      gridRange: found.gridRange,
+      a1Range: found.a1Range,
+    };
+    valuesByNamedRange[rangeName] = extractFormattedValuesForGridRange(
+      spreadsheet,
+      found.sheetId,
+      found.sheetTitle,
+      found.gridRange
+    );
+  }
 
-  return {
-    cleared: true,
-    blankRowIndex: startRow + 1,
-    absTerminatorRowIndex: startRow + 2,
-  };
+  return { tables, namedRanges, valuesByNamedRange, spreadsheet };
 }
 
 /**
- * Reads `formattedValue` and `userEnteredFormat` for rows between header and `endMarker` in an option table.
+ * Reads `formattedValue`, `userEnteredFormat`, header `note`s, and sheet `merges` for an option table.
  */
 export async function readOptionTableGridFormats(
   sheetsApi: sheets_v4.Sheets,
@@ -1224,15 +1636,25 @@ export async function readOptionTableGridFormats(
     () =>
       sheetsApi.spreadsheets.get({
         spreadsheetId: target.spreadsheetId,
-        fields: 'sheets(properties(sheetId,title)),namedRanges',
+        fields: 'sheets(properties(sheetId,title),merges),namedRanges',
       }),
     retryOptions
   );
+  const metaSpreadsheet: sheets_v4.Schema$Spreadsheet = {
+    ...metaResponse.data,
+    spreadsheetId: target.spreadsheetId,
+  };
   const resolved = findNamedRangeInSpreadsheet(
-    { ...metaResponse.data, spreadsheetId: target.spreadsheetId },
+    metaSpreadsheet,
     target.rangeName,
     target.sheetName
   );
+  const metaSheet = (metaResponse.data.sheets ?? []).find(
+    (s) =>
+      s.properties?.sheetId === resolved.sheetId ||
+      s.properties?.title?.toLowerCase() === resolved.sheetTitle.toLowerCase()
+  );
+  const sheetMerges = metaSheet?.merges ?? [];
 
   const gridResponse = await withSheetsRetry(
     () =>
@@ -1240,57 +1662,23 @@ export async function readOptionTableGridFormats(
         spreadsheetId: target.spreadsheetId,
         ranges: [resolved.a1Range],
         includeGridData: true,
-        fields: 'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat))))',
+        fields:
+          'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat,note))))',
       }),
     retryOptions
   );
 
-  const sheet = (gridResponse.data.sheets ?? []).find(
-    (s) =>
-      s.properties?.sheetId === resolved.sheetId ||
-      s.properties?.title?.toLowerCase() === resolved.sheetTitle.toLowerCase()
-  );
-  const gridData = sheet?.data?.[0];
-  const baseRow = gridData?.startRow ?? resolved.gridRange.startRowIndex ?? 0;
-  const baseCol = gridData?.startColumn ?? resolved.gridRange.startColumnIndex ?? 0;
-  const startRow = resolved.gridRange.startRowIndex ?? baseRow;
-  const startCol = resolved.gridRange.startColumnIndex ?? baseCol;
-  const rowData = gridData?.rowData ?? [];
-  const headerCells = rowData[startRow - baseRow]?.values ?? [];
-  const width =
-    resolved.gridRange.endColumnIndex !== undefined && resolved.gridRange.endColumnIndex !== null
-      ? Math.max(resolved.gridRange.endColumnIndex - startCol, 1)
-      : Math.max(headerCells.length - (startCol - baseCol), 1);
-
-  const readRow = (absRow: number): OptionTableGridCellInfo[] => {
-    const relRow = absRow - baseRow;
-    const rawCells = relRow >= 0 && relRow < rowData.length ? (rowData[relRow]?.values ?? []) : [];
-    const relColStart = startCol - baseCol;
-    return Array.from({ length: width }, (_, offset) => {
-      const cell = rawCells[relColStart + offset];
-      return {
-        formattedValue: cell?.formattedValue ?? '',
-        ...(cell?.userEnteredFormat !== undefined && cell.userEnteredFormat !== null
-          ? { userEnteredFormat: structuredClone(cell.userEnteredFormat) }
-          : {}),
-      };
-    });
-  };
-
-  const headerRow = readRow(startRow).map((c) => c.formattedValue.trim());
-  const maxRow =
-    resolved.gridRange.endRowIndex !== undefined && resolved.gridRange.endRowIndex !== null
-      ? resolved.gridRange.endRowIndex
-      : baseRow + rowData.length;
-
-  const dataRows: OptionTableGridRowInfo[] = [];
-  for (let absRow = startRow + 1; absRow < maxRow; absRow++) {
-    const cells = readRow(absRow);
-    if (cells.some((c) => c.formattedValue.trim() === target.endMarker)) {
-      break;
-    }
-    dataRows.push({ absRowIndex: absRow, cells });
-  }
-
-  return { headerRow, dataRows };
+  return extractOptionTableGridInfo({
+    spreadsheet: {
+      ...gridResponse.data,
+      spreadsheetId: target.spreadsheetId,
+      ...(metaResponse.data.namedRanges !== undefined
+        ? { namedRanges: metaResponse.data.namedRanges }
+        : {}),
+    },
+    sheetName: target.sheetName,
+    rangeName: target.rangeName,
+    endMarker: target.endMarker,
+    sheetMergesOverride: sheetMerges,
+  });
 }

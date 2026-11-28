@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const BOOTSTRAP_PATH = path.join(ROOT_DIR, 'infra', 'bootstrap.ps1');
 const DEPLOY_YML_PATH = path.join(ROOT_DIR, '.github', 'workflows', 'deploy.yml');
 
-let cachedPowerShellCommand: string | undefined;
+let resolvedPowerShellCommand: string | undefined;
 
 const PS_OPT_OUT_ENV: Record<string, string> = {
   POWERSHELL_TELEMETRY_OPTOUT: '1',
@@ -16,27 +16,148 @@ const PS_OPT_OUT_ENV: Record<string, string> = {
   DOTNET_NOLOGO: '1',
 };
 
-function getPowerShellCommand(): string {
-  if (cachedPowerShellCommand) {
-    return cachedPowerShellCommand;
-  }
-  const probeArgs = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'];
-  const probeEnv = {
+const RETRYABLE_RM_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY', 'EMFILE', 'ENFILE']);
+
+interface SpawnResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Builds a child-process environment with mixed-case Windows `Path`/`PATH`
+ * keys normalized to a single canonical `PATH` entry.
+ */
+function buildPowerShellEnv(
+  overrides: Record<string, string | undefined> = {},
+  shimDir?: string
+): Record<string, string> {
+  const merged: Record<string, string | undefined> = {
     ...process.env,
     ...PS_OPT_OUT_ENV,
   };
+
+  let basePath: string | undefined;
+  for (const key of Object.keys(merged)) {
+    if (key.toLowerCase() === 'path') {
+      const value = merged[key];
+      if (value && !basePath) {
+        basePath = value;
+      }
+      delete merged[key];
+    }
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    if (key.toLowerCase() === 'path') {
+      basePath = value;
+      continue;
+    }
+    for (const existingKey of Object.keys(merged)) {
+      if (existingKey.toLowerCase() === key.toLowerCase()) {
+        delete merged[existingKey];
+      }
+    }
+    if (value !== undefined) {
+      merged[key] = value;
+    }
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== undefined) {
+      normalized[key] = value;
+    }
+  }
+
+  const resolvedPath = shimDir
+    ? (basePath ? `${shimDir}${path.delimiter}${basePath}` : shimDir)
+    : basePath;
+  if (resolvedPath !== undefined) {
+    normalized.PATH = resolvedPath;
+  }
+
+  return normalized;
+}
+
+function spawnCommand(
+  command: string,
+  args: string[],
+  env: Record<string, string>
+): Promise<SpawnResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      resolve({
+        status,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+      });
+    });
+  });
+}
+
+async function resolvePowerShellCommand(): Promise<string> {
+  if (resolvedPowerShellCommand) {
+    return resolvedPowerShellCommand;
+  }
+  const probeArgs = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'];
+  const probeEnv = buildPowerShellEnv();
   for (const cmd of ['pwsh', 'powershell']) {
     try {
-      const res = spawnSync(cmd, probeArgs, { env: probeEnv, encoding: 'utf8' });
+      const res = await spawnCommand(cmd, probeArgs, probeEnv);
       if (res.status === 0) {
-        cachedPowerShellCommand = cmd;
+        resolvedPowerShellCommand = cmd;
         return cmd;
       }
     } catch {
-      // ignore
+      // ignore missing executable
     }
   }
   throw new Error('Neither pwsh nor powershell is available on this system.');
+}
+
+function getPowerShellCommand(): string {
+  if (!resolvedPowerShellCommand) {
+    throw new Error('PowerShell executable has not been resolved. Ensure beforeAll ran.');
+  }
+  return resolvedPowerShellCommand;
+}
+
+async function removeDirWithRetry(dirPath: string): Promise<void> {
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await fs.promises.rm(dirPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 50,
+      });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (attempt === maxAttempts || !code || !RETRYABLE_RM_CODES.has(code)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 50));
+    }
+  }
 }
 
 interface ShimCall {
@@ -270,44 +391,43 @@ process.exit(0);
         return [];
       }
     },
-    cleanup: () => {
-      try {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // ignore
-      }
-    },
+    cleanup: () => removeDirWithRetry(tmpDir),
   };
 }
 
-function runBootstrap(args: string[], env: Record<string, string | undefined> = {}, shimDir?: string) {
-  const ps = getPowerShellCommand();
-  const sep = path.delimiter;
-  const mergedPath = shimDir ? `${shimDir}${sep}${process.env.PATH || ''}` : process.env.PATH;
+type BootstrapShim = ReturnType<typeof setupShim>;
 
-  const result = spawnSync(
-    ps,
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', BOOTSTRAP_PATH, ...args],
-    {
-      env: {
-        ...process.env,
-        ...PS_OPT_OUT_ENV,
-        ...env,
-        PATH: mergedPath,
-      },
-      encoding: 'utf8',
-    }
-  );
-
-  return result;
+async function withShim(
+  mockConfig: MockConfig,
+  fn: (shim: BootstrapShim) => Promise<void>
+): Promise<void> {
+  const shim = setupShim(mockConfig);
+  try {
+    await fn(shim);
+  } finally {
+    await shim.cleanup();
+  }
 }
 
-describe('GCP Bootstrap Script (infra/bootstrap.ps1)', { timeout: 15000 }, () => {
-  beforeAll(() => {
-    getPowerShellCommand();
-  }, 15000);
+function runBootstrap(
+  args: string[],
+  env: Record<string, string | undefined> = {},
+  shimDir?: string
+): Promise<SpawnResult> {
+  const ps = getPowerShellCommand();
+  return spawnCommand(
+    ps,
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', BOOTSTRAP_PATH, ...args],
+    buildPowerShellEnv(env, shimDir)
+  );
+}
 
-  it('parses cleanly with zero PowerShell AST syntax errors and defines expected parameters', () => {
+describe('GCP Bootstrap Script (infra/bootstrap.ps1)', () => {
+  beforeAll(async () => {
+    await resolvePowerShellCommand();
+  }, 15_000);
+
+  it.concurrent('parses cleanly with zero PowerShell AST syntax errors and defines expected parameters', async () => {
     const ps = getPowerShellCommand();
     const normalizedPath = BOOTSTRAP_PATH.replace(/\\/g, '/');
 
@@ -346,16 +466,10 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', { timeout: 15000 }, () =>
       } | ConvertTo-Json -Depth 5
     `;
 
-    const res = spawnSync(
+    const res = await spawnCommand(
       ps,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', checkScript],
-      {
-        env: {
-          ...process.env,
-          ...PS_OPT_OUT_ENV,
-        },
-        encoding: 'utf8',
-      }
+      buildPowerShellEnv()
     );
     expect(res.status).toBe(0);
     const parsed = JSON.parse(res.stdout);
@@ -375,588 +489,575 @@ describe('GCP Bootstrap Script (infra/bootstrap.ps1)', { timeout: 15000 }, () =>
   });
 
   describe('Parameter precedence and environment resolution', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('defaults to dev environment, resolving inc-io-docs-dev, develop branch, us-east4, and inc-io-docs-dev-pulumi-state', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined, REGION: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    beforeEach(() => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: true });
+        const calls = shim.getCalls();
+        // Foundational APIs enabled for inc-io-docs-dev
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable).toBeDefined();
+        expect(servicesEnable?.args).toContain('--project');
+        expect(servicesEnable?.args).toContain('inc-io-docs-dev');
+
+        // State bucket created / checked with inc-io-docs-dev-pulumi-state
+        const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
+        expect(bucketUpdate?.args).toContain('gs://inc-io-docs-dev-pulumi-state');
+
+        // WIF condition references dev and develop
+        const createOidc = calls.find((c) => c.args.includes('create-oidc'));
+        expect(createOidc).toBeDefined();
+        const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
+        expect(condArg).toContain("assertion.environment == 'dev'");
+        expect(condArg).toContain("assertion.ref == 'refs/heads/develop'");
+      });
     });
 
-    afterEach(() => {
-      shim.cleanup();
+    it.concurrent('resolves prod environment, mapping inc-io-docs-prod, main branch, and inc-io-docs-prod-pulumi-state', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(['-Environment', 'prod', '-Force'], { PROJECT_ID: undefined, REGION: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
+
+        const calls = shim.getCalls();
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable?.args).toContain('inc-io-docs-prod');
+
+        const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
+        expect(bucketUpdate?.args).toContain('gs://inc-io-docs-prod-pulumi-state');
+
+        const createOidc = calls.find((c) => c.args.includes('create-oidc'));
+        const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
+        expect(condArg).toContain("assertion.environment == 'prod'");
+        expect(condArg).toContain("assertion.ref == 'refs/heads/main'");
+      });
     });
 
-    it('defaults to dev environment, resolving inc-io-docs-dev, develop branch, us-east4, and inc-io-docs-dev-pulumi-state', () => {
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, REGION: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('enforces precedence: explicit -Environment prod wins over ambient $env:PROJECT_ID', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(
+          ['-Environment', 'prod', '-Force'],
+          { PROJECT_ID: 'inc-io-docs-dev' },
+          shim.tmpDir
+        );
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      // Foundational APIs enabled for inc-io-docs-dev
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable).toBeDefined();
-      expect(servicesEnable?.args).toContain('--project');
-      expect(servicesEnable?.args).toContain('inc-io-docs-dev');
-
-      // State bucket created / checked with inc-io-docs-dev-pulumi-state
-      const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
-      expect(bucketUpdate?.args).toContain('gs://inc-io-docs-dev-pulumi-state');
-
-      // WIF condition references dev and develop
-      const createOidc = calls.find((c) => c.args.includes('create-oidc'));
-      expect(createOidc).toBeDefined();
-      const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
-      expect(condArg).toContain("assertion.environment == 'dev'");
-      expect(condArg).toContain("assertion.ref == 'refs/heads/develop'");
+        const calls = shim.getCalls();
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable?.args).toContain('inc-io-docs-prod');
+      });
     });
 
-    it('resolves prod environment, mapping inc-io-docs-prod, main branch, and inc-io-docs-prod-pulumi-state', () => {
-      const res = runBootstrap(['-Environment', 'prod', '-Force'], { PROJECT_ID: undefined, REGION: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('enforces precedence: explicit CLI -ProjectId wins over both -Environment preset and $env:PROJECT_ID', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(
+          ['-Environment', 'dev', '-ProjectId', 'custom-project-id', '-Force'],
+          { PROJECT_ID: 'ambient-project-id' },
+          shim.tmpDir
+        );
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable?.args).toContain('inc-io-docs-prod');
+        const calls = shim.getCalls();
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable?.args).toContain('custom-project-id');
 
-      const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
-      expect(bucketUpdate?.args).toContain('gs://inc-io-docs-prod-pulumi-state');
-
-      const createOidc = calls.find((c) => c.args.includes('create-oidc'));
-      const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
-      expect(condArg).toContain("assertion.environment == 'prod'");
-      expect(condArg).toContain("assertion.ref == 'refs/heads/main'");
+        const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
+        expect(bucketUpdate?.args).toContain('gs://custom-project-id-pulumi-state');
+      });
     });
 
-    it('enforces precedence: explicit -Environment prod wins over ambient $env:PROJECT_ID', () => {
-      const res = runBootstrap(
-        ['-Environment', 'prod', '-Force'],
-        { PROJECT_ID: 'inc-io-docs-dev' },
-        shim.tmpDir
-      );
-      expect(res.status).toBe(0);
+    it.concurrent('falls back to ambient $env:PROJECT_ID when neither -ProjectId nor -Environment is passed', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const resWithForce = await runBootstrap(['-Force'], { PROJECT_ID: 'ambient-project-id' }, shim.tmpDir);
+        expect(resWithForce.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable?.args).toContain('inc-io-docs-prod');
+        const calls = shim.getCalls();
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable?.args).toContain('ambient-project-id');
+      });
     });
 
-    it('enforces precedence: explicit CLI -ProjectId wins over both -Environment preset and $env:PROJECT_ID', () => {
-      const res = runBootstrap(
-        ['-Environment', 'dev', '-ProjectId', 'custom-project-id', '-Force'],
-        { PROJECT_ID: 'ambient-project-id' },
-        shim.tmpDir
-      );
-      expect(res.status).toBe(0);
-
-      const calls = shim.getCalls();
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable?.args).toContain('custom-project-id');
-
-      const bucketUpdate = calls.find((c) => c.args.includes('storage') && c.args.includes('update'));
-      expect(bucketUpdate?.args).toContain('gs://custom-project-id-pulumi-state');
-    });
-
-    it('falls back to ambient $env:PROJECT_ID when neither -ProjectId nor -Environment is passed', () => {
-      const resWithForce = runBootstrap(['-Force'], { PROJECT_ID: 'ambient-project-id' }, shim.tmpDir);
-      expect(resWithForce.status).toBe(0);
-
-      const calls = shim.getCalls();
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable?.args).toContain('ambient-project-id');
-    });
-
-    it('enforces Region precedence: explicit -Region > ambient $env:REGION > default us-east4', () => {
+    it.concurrent('enforces Region precedence: explicit -Region > ambient $env:REGION > default us-east4', async () => {
       // 1. Explicit -Region wins
-      let res = runBootstrap(['-Region', 'europe-west1', '-Force'], { REGION: 'us-central1' }, shim.tmpDir);
-      expect(res.status).toBe(0);
-      expect(res.stdout).toContain('europe-west1');
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(['-Region', 'europe-west1', '-Force'], { REGION: 'us-central1' }, shim.tmpDir);
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('europe-west1');
+      });
 
       // 2. Ambient $env:REGION wins over default
-      shim.cleanup();
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
-      res = runBootstrap(['-Force'], { REGION: 'us-central1' }, shim.tmpDir);
-      expect(res.status).toBe(0);
-      expect(res.stdout).toContain('us-central1');
-    }, 15000);
+      await withShim({ wifProviderExists: false, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { REGION: 'us-central1' }, shim.tmpDir);
+        expect(res.status).toBe(0);
+        expect(res.stdout).toContain('us-central1');
+      });
+    });
 
-    it('strips leading refs/heads/ from explicit -Branch', () => {
-      const res = runBootstrap(
-        ['-Branch', 'refs/heads/feature-custom', '-Force'],
-        { PROJECT_ID: undefined },
-        shim.tmpDir
-      );
-      expect(res.status).toBe(0);
+    it.concurrent('strips leading refs/heads/ from explicit -Branch', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true }, async (shim) => {
+        const res = await runBootstrap(
+          ['-Branch', 'refs/heads/feature-custom', '-Force'],
+          { PROJECT_ID: undefined },
+          shim.tmpDir
+        );
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const createOidc = calls.find((c) => c.args.includes('create-oidc'));
-      const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
-      expect(condArg).toContain("assertion.ref == 'refs/heads/feature-custom'");
+        const calls = shim.getCalls();
+        const createOidc = calls.find((c) => c.args.includes('create-oidc'));
+        const condArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
+        expect(condArg).toContain("assertion.ref == 'refs/heads/feature-custom'");
+      });
     });
   });
 
   describe('GCS State Bucket & Least-Privilege IAM', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('enables the 5 foundational APIs', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
+        const calls = shim.getCalls();
+        const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
+        expect(servicesEnable).toBeDefined();
+        expect(servicesEnable?.args).toContain('iamcredentials.googleapis.com');
+        expect(servicesEnable?.args).toContain('cloudresourcemanager.googleapis.com');
+        expect(servicesEnable?.args).toContain('iam.googleapis.com');
+        expect(servicesEnable?.args).toContain('serviceusage.googleapis.com');
+        expect(servicesEnable?.args).toContain('storage.googleapis.com');
+      });
     });
 
-    it('enables the 5 foundational APIs', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('enables Object Versioning and grants bucket-scoped roles/storage.admin on the state bucket', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const servicesEnable = calls.find((c) => c.args.includes('services') && c.args.includes('enable'));
-      expect(servicesEnable).toBeDefined();
-      expect(servicesEnable?.args).toContain('iamcredentials.googleapis.com');
-      expect(servicesEnable?.args).toContain('cloudresourcemanager.googleapis.com');
-      expect(servicesEnable?.args).toContain('iam.googleapis.com');
-      expect(servicesEnable?.args).toContain('serviceusage.googleapis.com');
-      expect(servicesEnable?.args).toContain('storage.googleapis.com');
+        const calls = shim.getCalls();
+
+        // Object Versioning
+        const versioningCall = calls.find((c) =>
+          c.args.includes('storage') && c.args.includes('buckets') && c.args.includes('update') && c.args.includes('--versioning')
+        );
+        expect(versioningCall).toBeDefined();
+        expect(versioningCall?.args).toContain('gs://inc-io-docs-dev-pulumi-state');
+
+        // Bucket-scoped roles/storage.admin
+        const bucketIamCall = calls.find((c) =>
+          c.args.includes('storage') &&
+          c.args.includes('buckets') &&
+          c.args.includes('add-iam-policy-binding') &&
+          c.args.includes('gs://inc-io-docs-dev-pulumi-state')
+        );
+        expect(bucketIamCall).toBeDefined();
+        expect(bucketIamCall?.args).toContain('--role=roles/storage.admin');
+        expect(bucketIamCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+      });
     });
 
-    it('enables Object Versioning and grants bucket-scoped roles/storage.admin on the state bucket', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('binds the 7 least-privilege project roles to ci-deployer', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
+        const calls = shim.getCalls();
+        const projectBindings = calls.filter((c) =>
+          c.args.includes('projects') && c.args.includes('add-iam-policy-binding')
+        );
 
-      // Object Versioning
-      const versioningCall = calls.find((c) =>
-        c.args.includes('storage') && c.args.includes('buckets') && c.args.includes('update') && c.args.includes('--versioning')
-      );
-      expect(versioningCall).toBeDefined();
-      expect(versioningCall?.args).toContain('gs://inc-io-docs-dev-pulumi-state');
+        const boundRoles = projectBindings.map((c) => {
+          const roleArg = c.args.find((a) => a.startsWith('--role='));
+          return roleArg ? roleArg.split('=')[1] : undefined;
+        }).filter(Boolean);
 
-      // Bucket-scoped roles/storage.admin
-      const bucketIamCall = calls.find((c) =>
-        c.args.includes('storage') &&
-        c.args.includes('buckets') &&
-        c.args.includes('add-iam-policy-binding') &&
-        c.args.includes('gs://inc-io-docs-dev-pulumi-state')
-      );
-      expect(bucketIamCall).toBeDefined();
-      expect(bucketIamCall?.args).toContain('--role=roles/storage.admin');
-      expect(bucketIamCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+        const expectedRoles = [
+          'roles/serviceusage.serviceUsageAdmin',
+          'roles/browser',
+          'roles/iam.serviceAccountAdmin',
+          'roles/iam.serviceAccountUser',
+          'roles/run.admin',
+          'roles/artifactregistry.admin',
+          'roles/gsuiteaddons.developer',
+        ];
+
+        for (const role of expectedRoles) {
+          expect(boundRoles).toContain(role);
+        }
+        expect(boundRoles).not.toContain('roles/editor');
+        expect(boundRoles).not.toContain('roles/viewer');
+      });
     });
 
-    it('binds the 7 least-privilege project roles to ci-deployer', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('inspects project IAM policy and removes both roles/editor and roles/viewer from ci-deployer when present', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: true, hasViewerRole: true }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const projectBindings = calls.filter((c) =>
-        c.args.includes('projects') && c.args.includes('add-iam-policy-binding')
-      );
+        const calls = shim.getCalls();
+        const removeEditorCall = calls.find((c) =>
+          c.args.includes('projects') &&
+          c.args.includes('remove-iam-policy-binding') &&
+          c.args.some((a) => a.includes('roles/editor'))
+        );
+        expect(removeEditorCall).toBeDefined();
+        expect(removeEditorCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+        expect(removeEditorCall?.args).toContain('--role=roles/editor');
 
-      const boundRoles = projectBindings.map((c) => {
-        const roleArg = c.args.find((a) => a.startsWith('--role='));
-        return roleArg ? roleArg.split('=')[1] : undefined;
-      }).filter(Boolean);
-
-      const expectedRoles = [
-        'roles/serviceusage.serviceUsageAdmin',
-        'roles/browser',
-        'roles/iam.serviceAccountAdmin',
-        'roles/iam.serviceAccountUser',
-        'roles/run.admin',
-        'roles/artifactregistry.admin',
-        'roles/gsuiteaddons.developer',
-      ];
-
-      for (const role of expectedRoles) {
-        expect(boundRoles).toContain(role);
-      }
-      expect(boundRoles).not.toContain('roles/editor');
-      expect(boundRoles).not.toContain('roles/viewer');
+        const removeViewerCall = calls.find((c) =>
+          c.args.includes('projects') &&
+          c.args.includes('remove-iam-policy-binding') &&
+          c.args.some((a) => a.includes('roles/viewer'))
+        );
+        expect(removeViewerCall).toBeDefined();
+        expect(removeViewerCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+        expect(removeViewerCall?.args).toContain('--role=roles/viewer');
+      });
     });
 
-    it('inspects project IAM policy and removes both roles/editor and roles/viewer from ci-deployer when present', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: true, hasViewerRole: true });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('does not invoke remove-iam-policy-binding when primitive roles (roles/editor, roles/viewer) are absent', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: false, hasViewerRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const removeEditorCall = calls.find((c) =>
-        c.args.includes('projects') &&
-        c.args.includes('remove-iam-policy-binding') &&
-        c.args.some((a) => a.includes('roles/editor'))
-      );
-      expect(removeEditorCall).toBeDefined();
-      expect(removeEditorCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
-      expect(removeEditorCall?.args).toContain('--role=roles/editor');
-
-      const removeViewerCall = calls.find((c) =>
-        c.args.includes('projects') &&
-        c.args.includes('remove-iam-policy-binding') &&
-        c.args.some((a) => a.includes('roles/viewer'))
-      );
-      expect(removeViewerCall).toBeDefined();
-      expect(removeViewerCall?.args).toContain('--member=serviceAccount:ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
-      expect(removeViewerCall?.args).toContain('--role=roles/viewer');
-    });
-
-    it('does not invoke remove-iam-policy-binding when primitive roles (roles/editor, roles/viewer) are absent', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false, hasViewerRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
-
-      const calls = shim.getCalls();
-      const removeCalls = calls.filter((c) =>
-        c.args.includes('projects') &&
-        c.args.includes('remove-iam-policy-binding')
-      );
-      expect(removeCalls.length).toBe(0);
+        const calls = shim.getCalls();
+        const removeCalls = calls.filter((c) =>
+          c.args.includes('projects') &&
+          c.args.includes('remove-iam-policy-binding')
+        );
+        expect(removeCalls.length).toBe(0);
+      });
     });
   });
 
   describe('Hardened 3-Way WIF OIDC Provider', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('creates OIDC provider with 3-way condition and attribute mapping when provider does not exist', async () => {
+      await withShim({ wifProviderExists: false, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
+        const calls = shim.getCalls();
+        const createOidc = calls.find((c) => c.args.includes('create-oidc'));
+        expect(createOidc).toBeDefined();
+
+        const mappingArg = createOidc?.args.find((a) => a.startsWith('--attribute-mapping='));
+        expect(mappingArg).toBe(
+          '--attribute-mapping=google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment'
+        );
+
+        const conditionArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
+        expect(conditionArg).toBe(
+          "--attribute-condition=has(assertion.environment) && assertion.environment == 'dev' && assertion.repository == 'amcgoey/INC-IO-Docs' && assertion.ref == 'refs/heads/develop'"
+        );
+      });
     });
 
-    it('creates OIDC provider with 3-way condition and attribute mapping when provider does not exist', () => {
-      shim = setupShim({ wifProviderExists: false, hasEditorRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('updates OIDC provider with update-oidc when provider already exists', async () => {
+      await withShim({ wifProviderExists: true, hasEditorRole: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const calls = shim.getCalls();
-      const createOidc = calls.find((c) => c.args.includes('create-oidc'));
-      expect(createOidc).toBeDefined();
+        const calls = shim.getCalls();
+        const createOidc = calls.find((c) => c.args.includes('create-oidc'));
+        expect(createOidc).toBeUndefined();
 
-      const mappingArg = createOidc?.args.find((a) => a.startsWith('--attribute-mapping='));
-      expect(mappingArg).toBe(
-        '--attribute-mapping=google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment'
-      );
+        const updateOidc = calls.find((c) => c.args.includes('update-oidc'));
+        expect(updateOidc).toBeDefined();
 
-      const conditionArg = createOidc?.args.find((a) => a.startsWith('--attribute-condition='));
-      expect(conditionArg).toBe(
-        "--attribute-condition=has(assertion.environment) && assertion.environment == 'dev' && assertion.repository == 'amcgoey/INC-IO-Docs' && assertion.ref == 'refs/heads/develop'"
-      );
-    });
+        const mappingArg = updateOidc?.args.find((a) => a.startsWith('--attribute-mapping='));
+        expect(mappingArg).toBe(
+          '--attribute-mapping=google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment'
+        );
 
-    it('updates OIDC provider with update-oidc when provider already exists', () => {
-      shim = setupShim({ wifProviderExists: true, hasEditorRole: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
-
-      const calls = shim.getCalls();
-      const createOidc = calls.find((c) => c.args.includes('create-oidc'));
-      expect(createOidc).toBeUndefined();
-
-      const updateOidc = calls.find((c) => c.args.includes('update-oidc'));
-      expect(updateOidc).toBeDefined();
-
-      const mappingArg = updateOidc?.args.find((a) => a.startsWith('--attribute-mapping='));
-      expect(mappingArg).toBe(
-        '--attribute-mapping=google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment'
-      );
-
-      const conditionArg = updateOidc?.args.find((a) => a.startsWith('--attribute-condition='));
-      expect(conditionArg).toBe(
-        "--attribute-condition=has(assertion.environment) && assertion.environment == 'dev' && assertion.repository == 'amcgoey/INC-IO-Docs' && assertion.ref == 'refs/heads/develop'"
-      );
+        const conditionArg = updateOidc?.args.find((a) => a.startsWith('--attribute-condition='));
+        expect(conditionArg).toBe(
+          "--attribute-condition=has(assertion.environment) && assertion.environment == 'dev' && assertion.repository == 'amcgoey/INC-IO-Docs' && assertion.ref == 'refs/heads/develop'"
+        );
+      });
     });
   });
 
   describe('Pre-Flight gh Authentication Check', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('verifies gh auth status during pre-flight and aborts with a clear error before mutating GCP or GitHub state', async () => {
+      await withShim({ ghAuthSucceeds: false }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
-    });
+        expect(res.status).not.toBe(0);
+        expect(res.stdout).toContain(
+          "FATAL ERROR: You are not authenticated with the GitHub CLI (gh). Please run 'gh auth login' and try again."
+        );
 
-    it('verifies gh auth status during pre-flight and aborts with a clear error before mutating GCP or GitHub state', () => {
-      shim = setupShim({ ghAuthSucceeds: false });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        // Verify no mutating GCP commands were invoked
+        const mutatingGcloudCalls = shim.getGcloudCalls().filter((c) =>
+          c.args.includes('enable') ||
+          c.args.includes('create') ||
+          c.args.includes('add-iam-policy-binding') ||
+          c.args.includes('remove-iam-policy-binding')
+        );
+        expect(mutatingGcloudCalls).toHaveLength(0);
 
-      expect(res.status).not.toBe(0);
-      expect(res.stdout).toContain(
-        "FATAL ERROR: You are not authenticated with the GitHub CLI (gh). Please run 'gh auth login' and try again."
-      );
-
-      // Verify no mutating GCP commands were invoked
-      const mutatingGcloudCalls = shim.getGcloudCalls().filter((c) =>
-        c.args.includes('enable') ||
-        c.args.includes('create') ||
-        c.args.includes('add-iam-policy-binding') ||
-        c.args.includes('remove-iam-policy-binding')
-      );
-      expect(mutatingGcloudCalls).toHaveLength(0);
-
-      // Verify no mutating gh commands were invoked
-      const mutatingGhCalls = shim.getGhCalls().filter((c) =>
-        c.args.includes('api') ||
-        c.args.includes('set')
-      );
-      expect(mutatingGhCalls).toHaveLength(0);
+        // Verify no mutating gh commands were invoked
+        const mutatingGhCalls = shim.getGhCalls().filter((c) =>
+          c.args.includes('api') ||
+          c.args.includes('set')
+        );
+        expect(mutatingGhCalls).toHaveLength(0);
+      });
     });
   });
 
   describe('Idempotent GitHub Environment & Deployment Branch Policy Provisioning', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('provisions dev GitHub Environment with custom_branch_policies and registers develop branch policy when missing', async () => {
+      await withShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true }, async (shim) => {
+        const res = await runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
+        const ghCalls = shim.getGhCalls();
+
+        // PUT repos/amcgoey/INC-IO-Docs/environments/dev
+        const envPutCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev') &&
+          c.args.includes('PUT')
+        );
+        expect(envPutCall).toBeDefined();
+        if (envPutCall?.stdin) {
+          expect(envPutCall.stdin).toContain('"custom_branch_policies":true');
+          expect(envPutCall.stdin).toContain('"protected_branches":false');
+        }
+
+        // GET branch policies was performed
+        const getPolicyCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+          !c.args.includes('POST')
+        );
+        expect(getPolicyCall).toBeDefined();
+
+        // POST develop branch policy was performed
+        const postPolicyCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+          c.args.includes('POST')
+        );
+        expect(postPolicyCall).toBeDefined();
+        const hasDevelopInArgsOrStdin =
+          postPolicyCall?.args.some((a) => a.includes('develop')) ||
+          Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('develop'));
+        expect(hasDevelopInArgsOrStdin).toBe(true);
+      });
     });
 
-    it('provisions dev GitHub Environment with custom_branch_policies and registers develop branch policy when missing', () => {
-      shim = setupShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true });
-      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('provisions prod GitHub Environment with custom_branch_policies and registers main branch policy when missing', async () => {
+      await withShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true }, async (shim) => {
+        const res = await runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
+        const ghCalls = shim.getGhCalls();
 
-      // PUT repos/amcgoey/INC-IO-Docs/environments/dev
-      const envPutCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev') &&
-        c.args.includes('PUT')
-      );
-      expect(envPutCall).toBeDefined();
-      if (envPutCall?.stdin) {
-        expect(envPutCall.stdin).toContain('"custom_branch_policies":true');
-        expect(envPutCall.stdin).toContain('"protected_branches":false');
-      }
+        // PUT repos/amcgoey/INC-IO-Docs/environments/prod
+        const envPutCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod') &&
+          c.args.includes('PUT')
+        );
+        expect(envPutCall).toBeDefined();
 
-      // GET branch policies was performed
-      const getPolicyCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
-        !c.args.includes('POST')
-      );
-      expect(getPolicyCall).toBeDefined();
-
-      // POST develop branch policy was performed
-      const postPolicyCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
-        c.args.includes('POST')
-      );
-      expect(postPolicyCall).toBeDefined();
-      const hasDevelopInArgsOrStdin =
-        postPolicyCall?.args.some((a) => a.includes('develop')) ||
-        Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('develop'));
-      expect(hasDevelopInArgsOrStdin).toBe(true);
+        // POST main branch policy was performed
+        const postPolicyCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod/deployment-branch-policies') &&
+          c.args.includes('POST')
+        );
+        expect(postPolicyCall).toBeDefined();
+        const hasMainInArgsOrStdin =
+          postPolicyCall?.args.some((a) => a.includes('main')) ||
+          Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('main'));
+        expect(hasMainInArgsOrStdin).toBe(true);
+      });
     });
 
-    it('provisions prod GitHub Environment with custom_branch_policies and registers main branch policy when missing', () => {
-      shim = setupShim({ existingBranchPolicies: [], preventDuplicateBranchPolicy: true });
-      const res = runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('idempotently skips POST when branch policy already exists and avoids duplicate 422 errors on re-runs', async () => {
+      await withShim({ existingBranchPolicies: ['develop'], preventDuplicateBranchPolicy: true }, async (shim) => {
+        const res = await runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
+        const ghCalls = shim.getGhCalls();
 
-      // PUT repos/amcgoey/INC-IO-Docs/environments/prod
-      const envPutCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod') &&
-        c.args.includes('PUT')
-      );
-      expect(envPutCall).toBeDefined();
+        // GET branch policies was performed
+        const getPolicyCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+          !c.args.includes('POST')
+        );
+        expect(getPolicyCall).toBeDefined();
 
-      // POST main branch policy was performed
-      const postPolicyCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/prod/deployment-branch-policies') &&
-        c.args.includes('POST')
-      );
-      expect(postPolicyCall).toBeDefined();
-      const hasMainInArgsOrStdin =
-        postPolicyCall?.args.some((a) => a.includes('main')) ||
-        Boolean(postPolicyCall?.stdin && postPolicyCall.stdin.includes('main'));
-      expect(hasMainInArgsOrStdin).toBe(true);
-    });
-
-    it('idempotently skips POST when branch policy already exists and avoids duplicate 422 errors on re-runs', () => {
-      shim = setupShim({ existingBranchPolicies: ['develop'], preventDuplicateBranchPolicy: true });
-      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
-
-      const ghCalls = shim.getGhCalls();
-
-      // GET branch policies was performed
-      const getPolicyCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
-        !c.args.includes('POST')
-      );
-      expect(getPolicyCall).toBeDefined();
-
-      // POST branch policy was NOT performed
-      const postPolicyCall = ghCalls.find((c) =>
-        c.args.includes('api') &&
-        c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
-        c.args.includes('POST')
-      );
-      expect(postPolicyCall).toBeUndefined();
+        // POST branch policy was NOT performed
+        const postPolicyCall = ghCalls.find((c) =>
+          c.args.includes('api') &&
+          c.args.includes('repos/amcgoey/INC-IO-Docs/environments/dev/deployment-branch-policies') &&
+          c.args.includes('POST')
+        );
+        expect(postPolicyCall).toBeUndefined();
+      });
     });
   });
 
   describe('Automated GitHub Environment Variables', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('sets the 6 required environment variables for dev environment', async () => {
+      await withShim({ existingBranchPolicies: ['develop'] }, async (shim) => {
+        const res = await runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
+        const ghCalls = shim.getGhCalls();
+        const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
+
+        const getVarValue = (varName: string) => {
+          const call = varCalls.find((c) => c.args.includes(varName));
+          if (!call) return undefined;
+          const bodyIdx = call.args.indexOf('--body');
+          return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+        };
+
+        expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-dev');
+        expect(getVarValue('REGION')).toBe('us-east4');
+        expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
+        expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-dev');
+        expect(getVarValue('PULUMI_STACK')).toBe('dev');
+        expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-dev-pulumi-state');
+
+        // Verify all variable calls target the dev environment and amcgoey/INC-IO-Docs repo
+        for (const call of varCalls) {
+          expect(call.args).toContain('--env');
+          expect(call.args[call.args.indexOf('--env') + 1]).toBe('dev');
+          expect(call.args).toContain('--repo');
+          expect(call.args[call.args.indexOf('--repo') + 1]).toBe('amcgoey/INC-IO-Docs');
+        }
+      });
     });
 
-    it('sets the 6 required environment variables for dev environment', () => {
-      shim = setupShim({ existingBranchPolicies: ['develop'] });
-      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'dev-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('sets the 6 required environment variables for prod environment', async () => {
+      await withShim({ existingBranchPolicies: ['main'] }, async (shim) => {
+        const res = await runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
-      const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
+        const ghCalls = shim.getGhCalls();
+        const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
 
-      const getVarValue = (varName: string) => {
-        const call = varCalls.find((c) => c.args.includes(varName));
-        if (!call) return undefined;
-        const bodyIdx = call.args.indexOf('--body');
-        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
-      };
+        const getVarValue = (varName: string) => {
+          const call = varCalls.find((c) => c.args.includes(varName));
+          if (!call) return undefined;
+          const bodyIdx = call.args.indexOf('--body');
+          return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+        };
 
-      expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-dev');
-      expect(getVarValue('REGION')).toBe('us-east4');
-      expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
-      expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-dev');
-      expect(getVarValue('PULUMI_STACK')).toBe('dev');
-      expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-dev-pulumi-state');
+        expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-prod');
+        expect(getVarValue('REGION')).toBe('us-east4');
+        expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
+        expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-prod');
+        expect(getVarValue('PULUMI_STACK')).toBe('prod');
+        expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-prod-pulumi-state');
 
-      // Verify all variable calls target the dev environment and amcgoey/INC-IO-Docs repo
-      for (const call of varCalls) {
-        expect(call.args).toContain('--env');
-        expect(call.args[call.args.indexOf('--env') + 1]).toBe('dev');
-        expect(call.args).toContain('--repo');
-        expect(call.args[call.args.indexOf('--repo') + 1]).toBe('amcgoey/INC-IO-Docs');
-      }
-    });
-
-    it('sets the 6 required environment variables for prod environment', () => {
-      shim = setupShim({ existingBranchPolicies: ['main'] });
-      const res = runBootstrap(['-Environment', 'prod', '-Force', '-PulumiPassphrase', 'prod-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
-
-      const ghCalls = shim.getGhCalls();
-      const varCalls = ghCalls.filter((c) => c.args.includes('variable') && c.args.includes('set'));
-
-      const getVarValue = (varName: string) => {
-        const call = varCalls.find((c) => c.args.includes(varName));
-        if (!call) return undefined;
-        const bodyIdx = call.args.indexOf('--body');
-        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
-      };
-
-      expect(getVarValue('PROJECT_ID')).toBe('inc-io-docs-prod');
-      expect(getVarValue('REGION')).toBe('us-east4');
-      expect(getVarValue('REPO_NAME')).toBe('inc-io-docs');
-      expect(getVarValue('SERVICE_NAME')).toBe('inc-io-docs-prod');
-      expect(getVarValue('PULUMI_STACK')).toBe('prod');
-      expect(getVarValue('PULUMI_STATE_BUCKET')).toBe('gs://inc-io-docs-prod-pulumi-state');
-
-      for (const call of varCalls) {
-        expect(call.args).toContain('--env');
-        expect(call.args[call.args.indexOf('--env') + 1]).toBe('prod');
-      }
+        for (const call of varCalls) {
+          expect(call.args).toContain('--env');
+          expect(call.args[call.args.indexOf('--env') + 1]).toBe('prod');
+        }
+      });
     });
   });
 
   describe('Automated GitHub Environment Secrets & Passphrase Resolution', () => {
-    let shim: ReturnType<typeof setupShim>;
+    it.concurrent('sets WIF_PROVIDER and GCP_SERVICE_ACCOUNT secrets for dev environment', async () => {
+      await withShim({ projectNumber: '112233445566', existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-    afterEach(() => {
-      if (shim) shim.cleanup();
+        const ghCalls = shim.getGhCalls();
+        const secretCalls = ghCalls.filter((c) => c.args.includes('secret') && c.args.includes('set'));
+
+        const getSecretValue = (secretName: string) => {
+          const call = secretCalls.find((c) => c.args.includes(secretName));
+          if (!call) return undefined;
+          const bodyIdx = call.args.indexOf('--body');
+          return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
+        };
+
+        expect(getSecretValue('WIF_PROVIDER')).toBe(
+          'projects/112233445566/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+        );
+        expect(getSecretValue('GCP_SERVICE_ACCOUNT')).toBe('ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+      });
     });
 
-    it('sets WIF_PROVIDER and GCP_SERVICE_ACCOUNT secrets for dev environment', () => {
-      shim = setupShim({ projectNumber: '112233445566', existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('sets PULUMI_CONFIG_PASSPHRASE from explicit -PulumiPassphrase argument', async () => {
+      await withShim({}, async (shim) => {
+        const res = await runBootstrap(['-Force', '-PulumiPassphrase', 'explicit-custom-passphrase'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
-      const secretCalls = ghCalls.filter((c) => c.args.includes('secret') && c.args.includes('set'));
-
-      const getSecretValue = (secretName: string) => {
-        const call = secretCalls.find((c) => c.args.includes(secretName));
-        if (!call) return undefined;
-        const bodyIdx = call.args.indexOf('--body');
-        return bodyIdx !== -1 ? call.args[bodyIdx + 1] : undefined;
-      };
-
-      expect(getSecretValue('WIF_PROVIDER')).toBe(
-        'projects/112233445566/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
-      );
-      expect(getSecretValue('GCP_SERVICE_ACCOUNT')).toBe('ci-deployer@inc-io-docs-dev.iam.gserviceaccount.com');
+        const ghCalls = shim.getGhCalls();
+        const passphraseCall = ghCalls.find((c) =>
+          c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+        );
+        expect(passphraseCall).toBeDefined();
+        const bodyIdx = passphraseCall?.args.indexOf('--body');
+        expect(bodyIdx).toBeDefined();
+        expect(passphraseCall?.args[bodyIdx! + 1]).toBe('explicit-custom-passphrase');
+      });
     });
 
-    it('sets PULUMI_CONFIG_PASSPHRASE from explicit -PulumiPassphrase argument', () => {
-      shim = setupShim({});
-      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'explicit-custom-passphrase'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('sets PULUMI_CONFIG_PASSPHRASE from ambient env var $env:PULUMI_CONFIG_PASSPHRASE when argument omitted', async () => {
+      await withShim({}, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: 'env-custom-passphrase' }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
-      const passphraseCall = ghCalls.find((c) =>
-        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
-      );
-      expect(passphraseCall).toBeDefined();
-      const bodyIdx = passphraseCall?.args.indexOf('--body');
-      expect(bodyIdx).toBeDefined();
-      expect(passphraseCall?.args[bodyIdx! + 1]).toBe('explicit-custom-passphrase');
+        const ghCalls = shim.getGhCalls();
+        const passphraseCall = ghCalls.find((c) =>
+          c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+        );
+        expect(passphraseCall).toBeDefined();
+        const bodyIdx = passphraseCall?.args.indexOf('--body');
+        expect(bodyIdx).toBeDefined();
+        expect(passphraseCall?.args[bodyIdx! + 1]).toBe('env-custom-passphrase');
+      });
     });
 
-    it('sets PULUMI_CONFIG_PASSPHRASE from ambient env var $env:PULUMI_CONFIG_PASSPHRASE when argument omitted', () => {
-      shim = setupShim({});
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: 'env-custom-passphrase' }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('preserves existing PULUMI_CONFIG_PASSPHRASE without overwriting when secret already exists and argument omitted', async () => {
+      await withShim({ existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] }, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
-      const passphraseCall = ghCalls.find((c) =>
-        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
-      );
-      expect(passphraseCall).toBeDefined();
-      const bodyIdx = passphraseCall?.args.indexOf('--body');
-      expect(bodyIdx).toBeDefined();
-      expect(passphraseCall?.args[bodyIdx! + 1]).toBe('env-custom-passphrase');
+        const ghCalls = shim.getGhCalls();
+        // Verifies secret list was queried
+        const listCall = ghCalls.find((c) => c.args.includes('secret') && c.args.includes('list'));
+        expect(listCall).toBeDefined();
+
+        // Verifies PULUMI_CONFIG_PASSPHRASE was NOT set
+        const passphraseSetCall = ghCalls.find((c) =>
+          c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
+        );
+        expect(passphraseSetCall).toBeUndefined();
+      });
     });
 
-    it('preserves existing PULUMI_CONFIG_PASSPHRASE without overwriting when secret already exists and argument omitted', () => {
-      shim = setupShim({ existingSecrets: ['PULUMI_CONFIG_PASSPHRASE'] });
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('outputs only WIF_PROVIDER and GCP_SERVICE_ACCOUNT in summary Secrets and emits warning when passphrase omitted under -Force', async () => {
+      await withShim({}, async (shim) => {
+        const res = await runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const ghCalls = shim.getGhCalls();
-      // Verifies secret list was queried
-      const listCall = ghCalls.find((c) => c.args.includes('secret') && c.args.includes('list'));
-      expect(listCall).toBeDefined();
-
-      // Verifies PULUMI_CONFIG_PASSPHRASE was NOT set
-      const passphraseSetCall = ghCalls.find((c) =>
-        c.args.includes('secret') && c.args.includes('set') && c.args.includes('PULUMI_CONFIG_PASSPHRASE')
-      );
-      expect(passphraseSetCall).toBeUndefined();
+        const combinedOutput = `${res.stdout}\n${res.stderr}`;
+        expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT');
+        expect(combinedOutput).not.toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
+        expect(combinedOutput).toMatch(/PULUMI_CONFIG_PASSPHRASE was not configured \(omitted under -Force\)\. Ensure this secret is set in GitHub\s+Environment 'dev' before running CI deployments\./);
+      });
     });
 
-    it('outputs only WIF_PROVIDER and GCP_SERVICE_ACCOUNT in summary Secrets and emits warning when passphrase omitted under -Force', () => {
-      shim = setupShim({});
-      const res = runBootstrap(['-Force'], { PROJECT_ID: undefined, PULUMI_CONFIG_PASSPHRASE: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
+    it.concurrent('outputs WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE in summary Secrets without warning when passphrase configured', async () => {
+      await withShim({}, async (shim) => {
+        const res = await runBootstrap(['-Force', '-PulumiPassphrase', 'custom-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
+        expect(res.status).toBe(0);
 
-      const combinedOutput = `${res.stdout}\n${res.stderr}`;
-      expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT');
-      expect(combinedOutput).not.toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
-      expect(combinedOutput).toMatch(/PULUMI_CONFIG_PASSPHRASE was not configured \(omitted under -Force\)\. Ensure this secret is set in GitHub\s+Environment 'dev' before running CI deployments\./);
-    });
-
-    it('outputs WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE in summary Secrets without warning when passphrase configured', () => {
-      shim = setupShim({});
-      const res = runBootstrap(['-Force', '-PulumiPassphrase', 'custom-pass'], { PROJECT_ID: undefined }, shim.tmpDir);
-      expect(res.status).toBe(0);
-
-      const combinedOutput = `${res.stdout}\n${res.stderr}`;
-      expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
-      expect(combinedOutput).not.toContain('PULUMI_CONFIG_PASSPHRASE was not configured');
+        const combinedOutput = `${res.stdout}\n${res.stderr}`;
+        expect(combinedOutput).toContain('Secrets:   WIF_PROVIDER, GCP_SERVICE_ACCOUNT, PULUMI_CONFIG_PASSPHRASE');
+        expect(combinedOutput).not.toContain('PULUMI_CONFIG_PASSPHRASE was not configured');
+      });
     });
   });
 

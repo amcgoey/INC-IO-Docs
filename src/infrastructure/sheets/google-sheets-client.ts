@@ -1,4 +1,4 @@
-import { google, type sheets_v4 } from 'googleapis';
+import { sheets, type sheets_v4 } from '@googleapis/sheets';
 import { OAuth2Client } from 'google-auth-library';
 import type {
   CellValue,
@@ -20,6 +20,7 @@ import type {
   SheetFormulaCell,
   SheetsClient,
   SheetsConfigProvider,
+  SheetsOperationOptions,
   SheetsRetryOptions,
   WriteNamedRangeRequest,
 } from './types';
@@ -32,41 +33,15 @@ import {
   GoogleSheetsOptionTableConfigError,
 } from './errors';
 import { KeyedAsyncLock } from './keyed-lock';
+import {
+  executeWithRateLimitRetry,
+  extractHttpStatusCode,
+  formatErrorMessage,
+  throwIfAborted,
+  type GoogleApiRetryOptions,
+} from '../google/retry';
 
 const SHARED_SPREADSHEET_LOCK = new KeyedAsyncLock();
-
-function extractHttpStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
-  if (typeof err.statusCode === 'number') return err.statusCode;
-  if (typeof err.status === 'number') return err.status;
-  if (err.response && typeof err.response.status === 'number') return err.response.status;
-  if (typeof err.code === 'number') return err.code;
-  return undefined;
-}
-
-function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const status = extractHttpStatusCode(error);
-  if (status === 429) return true;
-  const err = error as Record<string, unknown>;
-  return err.code === '429' || err.code === 429;
-}
-
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return String(error);
-}
 
 function quoteSheetName(sheetName: string): string {
   const unquoted = sheetName.replace(/^'|'$/g, '');
@@ -1410,12 +1385,12 @@ export class GoogleSheetsClient implements SheetsClient {
         const oauth2Client = new OAuth2Client();
         oauth2Client.setCredentials({ access_token: options.auth });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.sheetsApi = google.sheets({ version: 'v4', auth: oauth2Client as any });
+        this.sheetsApi = sheets({ version: 'v4', auth: oauth2Client as any });
       } else if (options.auth) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        this.sheetsApi = google.sheets({ version: 'v4', auth: options.auth as any });
+        this.sheetsApi = sheets({ version: 'v4', auth: options.auth as any });
       } else {
-        this.sheetsApi = google.sheets({ version: 'v4' });
+        this.sheetsApi = sheets({ version: 'v4' });
       }
     }
   }
@@ -1441,7 +1416,10 @@ export class GoogleSheetsClient implements SheetsClient {
     );
   }
 
-  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
     let dynamicConfig;
     if (this.configProvider) {
       try {
@@ -1450,37 +1428,36 @@ export class GoogleSheetsClient implements SheetsClient {
         dynamicConfig = undefined;
       }
     }
-    const maxRetries = dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries ?? 3;
-    const initialDelayMs = dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs ?? 1000;
-    const backoffFactor = dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor ?? 2;
-    const sleep =
-      this.retryOptions.sleep ??
-      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const effectiveSignal = signal ?? this.retryOptions.signal;
+    const mergedOptions: GoogleApiRetryOptions = {
+      ...this.retryOptions,
+      maxRetries: dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries,
+      initialDelayMs: dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs,
+      backoffFactor: dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor,
+      ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
+    };
 
-    let attempt = 0;
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (isRateLimitError(error) && attempt < maxRetries) {
-          const delay = initialDelayMs * Math.pow(backoffFactor, attempt);
-          attempt++;
-          await sleep(delay);
-          continue;
-        }
-        this.wrapApiError(error);
-      }
+    try {
+      return await executeWithRateLimitRetry(operation, mergedOptions);
+    } catch (error) {
+      this.wrapApiError(error);
     }
   }
 
-  private async getSpreadsheetMetadata(spreadsheetId: string): Promise<sheets_v4.Schema$Spreadsheet> {
+  private async getSpreadsheetMetadata(
+    spreadsheetId: string,
+    signal?: AbortSignal
+  ): Promise<sheets_v4.Schema$Spreadsheet> {
     return await this.executeWithRetry(async () => {
-      const response = await this.sheetsApi.spreadsheets.get({
-        spreadsheetId,
-        fields: 'sheets(properties(sheetId,title)),namedRanges',
-      });
+      const response = await this.sheetsApi.spreadsheets.get(
+        {
+          spreadsheetId,
+          fields: 'sheets(properties(sheetId,title)),namedRanges',
+        },
+        ...(signal ? [{ signal }] : [])
+      );
       return response.data;
-    });
+    }, signal);
   }
 
   private findNamedRange(
@@ -1608,17 +1585,23 @@ export class GoogleSheetsClient implements SheetsClient {
   private async readBatchValues(
     spreadsheetId: string,
     ranges: string[],
-    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA'
+    valueRenderOption: 'UNFORMATTED_VALUE' | 'FORMATTED_VALUE' | 'FORMULA',
+    signal?: AbortSignal
   ): Promise<sheets_v4.Schema$ValueRange[]> {
     if (ranges.length === 0) {
       return [];
     }
-    const response = await this.executeWithRetry(() =>
-      this.sheetsApi.spreadsheets.values.batchGet({
-        spreadsheetId,
-        ranges,
-        valueRenderOption,
-      })
+    const response = await this.executeWithRetry(
+      () =>
+        this.sheetsApi.spreadsheets.values.batchGet(
+          {
+            spreadsheetId,
+            ranges,
+            valueRenderOption,
+          },
+          ...(signal ? [{ signal }] : [])
+        ),
+      signal
     );
 
     return response.data.valueRanges ?? [];
@@ -1635,13 +1618,17 @@ export class GoogleSheetsClient implements SheetsClient {
    * surfacing missing sheet or Named Range errors per target key without failing valid sibling targets.
    */
   async readNamedRangesBatch(
-    request: ReadNamedRangesBatchRequest
+    request: ReadNamedRangesBatchRequest,
+    options?: SheetsOperationOptions
   ): Promise<Record<string, ReadNamedRangeBatchEntry>> {
     if (request.targets.length === 0) {
       return {};
     }
 
-    const spreadsheet = await this.getSpreadsheetMetadata(request.spreadsheetId);
+    const signal = options?.signal;
+    throwIfAborted(signal);
+    const spreadsheet = await this.getSpreadsheetMetadata(request.spreadsheetId, signal);
+    throwIfAborted(signal);
     const results: Record<string, ReadNamedRangeBatchEntry> = {};
     const resolvedTargets: Array<{ key: string; a1Range: string }> = [];
 
@@ -1672,7 +1659,8 @@ export class GoogleSheetsClient implements SheetsClient {
       const valueRanges = await this.readBatchValues(
         request.spreadsheetId,
         resolvedTargets.map((item) => item.a1Range),
-        'FORMATTED_VALUE'
+        'FORMATTED_VALUE',
+        signal
       );
       resolvedTargets.forEach((item, index) => {
         results[item.key] = {

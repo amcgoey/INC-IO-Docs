@@ -142,7 +142,7 @@ rules:
       - pattern-either: *import_patterns
       - metavariable-regex:
           metavariable: $MODULE
-          regex: '(googleapis|fastify|@fastify/.*)'
+          regex: '(@googleapis/.*|googleapis|fastify|@fastify/.*)'
 
   # 10. Testing Locality - Prevent Test Imports in Core Source
   - id: prevent-test-imports-in-src

@@ -1,9 +1,16 @@
 import { Readable } from 'node:stream';
-import { google, type drive_v3 } from 'googleapis';
+import { drive, type drive_v3 } from '@googleapis/drive';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { Type } from '@sinclair/typebox';
 import { createMaxInMemoryFileBytesProvider } from '../manifest/app-manifest-provider';
 import { KeyedAsyncLock } from '../sheets/keyed-lock';
+import {
+  executeWithRateLimitRetry,
+  extractHttpStatusCode,
+  formatErrorMessage,
+  throwIfAborted,
+  type GoogleApiRetryOptions,
+} from '../google/retry';
 
 const SHARED_DRIVE_FOLDER_LOCK = new KeyedAsyncLock();
 
@@ -156,12 +163,7 @@ export class GoogleDriveFileTooLargeError extends GoogleDriveApiError {
   }
 }
 
-export interface DriveRetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-  sleep?: (ms: number) => Promise<void>;
-}
+export type DriveRetryOptions = GoogleApiRetryOptions;
 
 export interface DriveConfigProvider {
   getDriveConfig(): Promise<{
@@ -174,6 +176,7 @@ export interface DriveConfigProvider {
 
 export interface DriveOperationOptions {
   auth?: string | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface DriveDownloadOptions extends DriveOperationOptions {
@@ -191,41 +194,8 @@ export interface GoogleDriveClientOptions {
   folderLock?: KeyedAsyncLock | undefined;
 }
 
-function extractHttpStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const err = error as { statusCode?: unknown; status?: unknown; code?: unknown; response?: { status?: unknown } };
-  if (typeof err.statusCode === 'number') return err.statusCode;
-  if (typeof err.status === 'number') return err.status;
-  if (err.response && typeof err.response.status === 'number') return err.response.status;
-  if (typeof err.code === 'number') return err.code;
-  return undefined;
-}
-
 export function escapeDriveQuery(str: string): string {
   return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
-
-function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const status = extractHttpStatusCode(error);
-  if (status === 429) return true;
-  const err = error as Record<string, unknown>;
-  return err.code === '429';
-}
-
-function formatErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (
-    error &&
-    typeof error === 'object' &&
-    'message' in error &&
-    typeof (error as { message: unknown }).message === 'string'
-  ) {
-    return (error as { message: string }).message;
-  }
-  return String(error);
 }
 
 function isGoogleWorkspaceDocument(mimeType?: string): boolean {
@@ -324,9 +294,9 @@ export class GoogleDriveClient {
       this.defaultDrive = this.createDriveClientFromToken(options.auth);
     } else if (options.auth) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.defaultDrive = google.drive({ version: 'v3', auth: options.auth as any });
+      this.defaultDrive = drive({ version: 'v3', auth: options.auth as any });
     } else {
-      this.defaultDrive = google.drive({ version: 'v3' });
+      this.defaultDrive = drive({ version: 'v3' });
     }
   }
 
@@ -334,7 +304,7 @@ export class GoogleDriveClient {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: token });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return google.drive({ version: 'v3', auth: oauth2Client as any });
+    return drive({ version: 'v3', auth: oauth2Client as any });
   }
 
   private getDrive(auth?: string): drive_v3.Drive {
@@ -360,7 +330,10 @@ export class GoogleDriveClient {
     );
   }
 
-  private async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
     let dynamicConfig;
     if (this.configProvider) {
       try {
@@ -369,27 +342,15 @@ export class GoogleDriveClient {
         dynamicConfig = undefined;
       }
     }
-    const maxRetries = dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries ?? 3;
-    const initialDelayMs = dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs ?? 1000;
-    const backoffFactor = dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor ?? 2;
-    const sleep =
-      this.retryOptions.sleep ??
-      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
-
-    let attempt = 0;
-    while (true) {
-      try {
-        return await operation();
-      } catch (error) {
-        if (isRateLimitError(error) && attempt < maxRetries) {
-          const delay = initialDelayMs * Math.pow(backoffFactor, attempt);
-          attempt++;
-          await sleep(delay);
-          continue;
-        }
-        throw error;
-      }
-    }
+    const effectiveSignal = signal ?? this.retryOptions.signal;
+    const mergedOptions: GoogleApiRetryOptions = {
+      ...this.retryOptions,
+      maxRetries: dynamicConfig?.maxRetries ?? this.retryOptions.maxRetries,
+      initialDelayMs: dynamicConfig?.initialDelayMs ?? this.retryOptions.initialDelayMs,
+      backoffFactor: dynamicConfig?.backoffFactor ?? this.retryOptions.backoffFactor,
+      ...(effectiveSignal !== undefined ? { signal: effectiveSignal } : {}),
+    };
+    return executeWithRateLimitRetry(operation, mergedOptions);
   }
 
   private requireFileMetadata(
@@ -462,14 +423,20 @@ export class GoogleDriveClient {
 
   async getFile(fileId: string, options?: DriveOperationOptions): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
+    const signal = options?.signal;
     try {
-      const res = await this.executeWithRetry(() =>
-        drive.files.get({
-          fileId,
-          fields:
-            'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
-          supportsAllDrives: true,
-        })
+      const res = await this.executeWithRetry(
+        () =>
+          drive.files.get(
+            {
+              fileId,
+              fields:
+                'id, name, parents, mimeType, size, webViewLink, driveId, createdTime, modifiedTime, shortcutDetails(targetId, targetMimeType)',
+              supportsAllDrives: true,
+            },
+            ...(signal ? [{ signal }] : [])
+          ),
+        signal
       );
 
       const { id, name } = this.requireFileMetadata(
@@ -584,7 +551,9 @@ export class GoogleDriveClient {
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata> {
     const drive = this.getDrive(options?.auth);
+    const signal = options?.signal;
     try {
+      throwIfAborted(signal);
       if (pathSegments.length === 0) {
         return await this.getFile(rootFolderId, options);
       }
@@ -593,21 +562,28 @@ export class GoogleDriveClient {
       let currentFolder: DriveFileMetadata | undefined = undefined;
 
       for (const segment of pathSegments) {
+        throwIfAborted(signal);
         if (typeof segment !== 'string' || segment.trim().length === 0) {
           throw new Error('Folder path segment must be a non-empty string');
         }
         const escapedName = escapeDriveQuery(segment);
         const q = `'${currentFolderId}' in parents and name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
 
-        const res = await this.executeWithRetry(() =>
-          drive.files.list({
-            q,
-            fields: 'files(id, name, parents, mimeType, webViewLink)',
-            spaces: 'drive',
-            includeItemsFromAllDrives: true,
-            supportsAllDrives: true,
-          })
+        const res = await this.executeWithRetry(
+          () =>
+            drive.files.list(
+              {
+                q,
+                fields: 'files(id, name, parents, mimeType, webViewLink)',
+                spaces: 'drive',
+                includeItemsFromAllDrives: true,
+                supportsAllDrives: true,
+              },
+              ...(signal ? [{ signal }] : [])
+            ),
+          signal
         );
+        throwIfAborted(signal);
 
         const files = res.data.files ?? [];
         if (files.length === 0) {
@@ -837,7 +813,9 @@ export class GoogleDriveClient {
     options?: DriveOperationOptions
   ): Promise<DriveFileMetadata[]> {
     const drive = this.getDrive(options?.auth);
+    const signal = options?.signal;
     try {
+      throwIfAborted(signal);
       let parentIds: string[] | undefined = undefined;
 
       if (query.expectedParentPathNames && query.expectedParentPathNames.length > 0) {
@@ -854,6 +832,7 @@ export class GoogleDriveClient {
         };
 
         for (const parentFolderName of query.expectedParentPathNames) {
+          throwIfAborted(signal);
           const escapedParent = escapeDriveQuery(parentFolderName);
           const queryClauses = [`name = '${escapedParent}'`];
 
@@ -875,7 +854,11 @@ export class GoogleDriveClient {
             q: parentQuery,
           };
 
-          const parentRes = await this.executeWithRetry(() => drive.files.list(parentListParams));
+          const parentRes = await this.executeWithRetry(
+            () => drive.files.list(parentListParams, ...(signal ? [{ signal }] : [])),
+            signal
+          );
+          throwIfAborted(signal);
           const parentFiles = parentRes.data.files ?? [];
 
           if (parentFiles.length > 20) {
@@ -938,7 +921,11 @@ export class GoogleDriveClient {
         listParams.spaces = 'drive';
       }
 
-      const res = await this.executeWithRetry(() => drive.files.list(listParams));
+      throwIfAborted(signal);
+      const res = await this.executeWithRetry(
+        () => drive.files.list(listParams, ...(signal ? [{ signal }] : [])),
+        signal
+      );
 
       const files = res.data.files ?? [];
       return files
@@ -1265,7 +1252,12 @@ export class GoogleDriveClient {
         listParams.spaces = 'drive';
       }
 
-      const res = await this.executeWithRetry(() => drive.files.list(listParams));
+      const signal = driveOptions?.signal;
+      throwIfAborted(signal);
+      const res = await this.executeWithRetry(
+        () => drive.files.list(listParams, ...(signal ? [{ signal }] : [])),
+        signal
+      );
 
       const rawFiles = res.data.files ?? [];
       const folders: DriveFolderItem[] = [];

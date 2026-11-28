@@ -401,6 +401,23 @@ export class DocumentLogConfigurationError extends DocumentLogError {
   }
 }
 
+export interface LogStorageInaccessibleErrorOptions extends ErrorOptions {
+  spreadsheetId?: string | undefined;
+  statusCode?: number | undefined;
+}
+
+export class LogStorageInaccessibleError extends DocumentLogError {
+  readonly spreadsheetId?: string | undefined;
+  readonly statusCode?: number | undefined;
+
+  constructor(message: string, options?: LogStorageInaccessibleErrorOptions) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'LogStorageInaccessibleError';
+    this.spreadsheetId = options?.spreadsheetId;
+    this.statusCode = options?.statusCode;
+  }
+}
+
 export class DocumentLogMissingError extends DocumentLogError {
   readonly spaceName: string;
   readonly expectedFolderPath: string;
@@ -486,10 +503,24 @@ export interface LogDiscoveryCopyFileOptions {
   newName: string;
 }
 
+export interface DocumentLogOperationOptions {
+  signal?: AbortSignal | undefined;
+}
+
 export interface LogDiscoveryPort {
-  searchSpreadsheets(query: LogDiscoveryQuery): Promise<LogResolutionCandidate[]>;
-  getFile?(fileId: string): Promise<LogDiscoveryFileMetadata>;
-  resolveFolderPath?(rootFolderId: string, pathSegments: string[]): Promise<LogDiscoveryFolderMetadata>;
+  searchSpreadsheets(
+    query: LogDiscoveryQuery,
+    options?: DocumentLogOperationOptions
+  ): Promise<LogResolutionCandidate[]>;
+  getFile?(
+    fileId: string,
+    options?: DocumentLogOperationOptions
+  ): Promise<LogDiscoveryFileMetadata>;
+  resolveFolderPath?(
+    rootFolderId: string,
+    pathSegments: string[],
+    options?: DocumentLogOperationOptions
+  ): Promise<LogDiscoveryFolderMetadata>;
   ensureFolderPath?(
     rootFolderId: string,
     pathSegments: string[]
@@ -594,7 +625,10 @@ export type ReadNamedRangeEntry = Static<typeof ReadNamedRangeEntrySchema>;
 export interface LogStoragePort {
   insertRow(request: InsertLogRowRequest): Promise<InsertLogRowResult>;
   readRows(request: ReadLogRowsRequest): Promise<ReadLogRowsResult>;
-  readNamedRanges?(request: ReadNamedRangesRequest): Promise<Record<string, ReadNamedRangeEntry>>;
+  readNamedRanges?(
+    request: ReadNamedRangesRequest,
+    options?: DocumentLogOperationOptions
+  ): Promise<Record<string, ReadNamedRangeEntry>>;
 }
 
 // --- Pre-Submit UI Context DTOs ---
@@ -752,12 +786,18 @@ export type ReadOptionTablesResult = Static<typeof ReadOptionTablesResultSchema>
 
 export interface DocumentLogPort {
   requiresDocumentLog(documentTypeKey: string): boolean;
-  resolveLog(space: DocumentLogSpace): Promise<LogResolutionResult>;
+  resolveLog(
+    space: DocumentLogSpace,
+    options?: DocumentLogOperationOptions
+  ): Promise<LogResolutionResult>;
   copyLog(space: DocumentLogSpace): Promise<CopyDocumentLogResult>;
   queryUiContext(
     request: QueryDocumentLogUiContextRequest
   ): Promise<DocumentLogUiContextResult | undefined>;
   readLog(request: ReadDocumentLogRequest): Promise<ReadDocumentLogResult>;
-  readOptionTables?(request: ReadOptionTablesRequest): Promise<ReadOptionTablesResult>;
+  readOptionTables?(
+    request: ReadOptionTablesRequest,
+    options?: DocumentLogOperationOptions
+  ): Promise<ReadOptionTablesResult>;
   writeLog(request: WriteDocumentLogRequest): Promise<WriteDocumentLogResult>;
 }

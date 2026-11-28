@@ -122,10 +122,10 @@ function mockSpreadsheetReadsForConfig(
   }
 ): void {
   const contactsRows = config.contactsRows ?? [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture and Design', 'INC'],
-    ['PMG', 'Pavarini McGovern', 'Contractor'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['INC', 'INC', 'INC Architecture and Design', ''],
+    ['Contractor', 'PMG', 'Pavarini McGovern', ''],
+    ['---', '', '', ''],
   ];
   const historyRows = config.historyRows ?? [];
   const defaultNamedRanges = [
@@ -147,8 +147,8 @@ function mockSpreadsheetReadsForConfig(
             name: 'Options_Submittal_Arch_Statuses',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: config.statusesRows.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + config.statusesRows.length,
               startColumnIndex: 0,
               endColumnIndex: 3,
             },
@@ -162,8 +162,8 @@ function mockSpreadsheetReadsForConfig(
             name: 'Options_Submittal_Arch_Actions',
             range: {
               sheetId: 103,
-              startRowIndex: 0,
-              endRowIndex: config.actionsRows.length,
+              startRowIndex: 2,
+              endRowIndex: 2 + config.actionsRows.length,
               startColumnIndex: 4,
               endColumnIndex: 10,
             },
@@ -175,10 +175,10 @@ function mockSpreadsheetReadsForConfig(
       name: 'Options_Submittal_Arch_Contacts',
       range: {
         sheetId: 103,
-        startRowIndex: 0,
-        endRowIndex: contactsRows.length,
+        startRowIndex: 2,
+        endRowIndex: 2 + contactsRows.length,
         startColumnIndex: 11,
-        endColumnIndex: 14,
+        endColumnIndex: 15,
       },
     },
   ];
@@ -240,9 +240,9 @@ function mockSpreadsheetReadsForConfig(
         spreadsheetId,
         valueRanges: ranges.map((r) => ({
           range: r,
-          values: r.includes('A1:')
+          values: r.includes('A3:')
             ? (config.statusesRows ?? [])
-            : r.includes('E1:')
+            : r.includes('E3:')
               ? (config.actionsRows ?? [])
               : contactsRows,
         })),
@@ -281,7 +281,7 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       ['Ignored after terminator', 'PostEndStatus', 'blue'],
     ];
     const actionsRows = [
-      ['Name', 'Extra Hint', 'Order', 'Action', 'Suffix'],
+      ['Name', 'Extra Hint', 'Order', 'Key', 'Suffix'],
       ['', '', '', '', ''],
       ['Received', 'Initial receipt', '1', 'REC', ''],
       ['Duplicate Rec Ignored', 'Dup row', '9', ' rec ', '_DUP'],
@@ -291,13 +291,13 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
     ];
 
     const contactsRows = [
-      ['Contact Type', 'Name', 'Contact'],
-      ['', '', ''],
-      ['INC', 'INC Architecture and Design', 'INC'],
-      ['Contractor', 'Pavarini McGovern', 'PMG'],
-      ['Contractor Dup Ignored', 'Pavarini Dup', ' pmg '],
-      ['---', '', '---'],
-      ['Post End', 'Ignored Contact', 'POST'],
+      ['Type', 'Name', 'Key', 'Aliases'],
+      ['', '', '', ''],
+      ['INC', 'INC Architecture and Design', 'INC', ''],
+      ['Contractor', 'Pavarini McGovern', 'PMG', ''],
+      ['Contractor Dup Ignored', 'Pavarini Dup', ' pmg ', ''],
+      ['---', '', '---', ''],
+      ['Post End', 'Ignored Contact', 'POST', ''],
     ];
 
     mockDriveSelectionAndSpaces([{ id: logId, name: `${SPACE_NAME} Document Log` }]);
@@ -420,22 +420,22 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
           {
             namedRangeId: 'nr-statuses',
             name: 'Options_Submittal_Arch_Statuses',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: statusesRows.length, startColumnIndex: 0, endColumnIndex: 3 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + statusesRows.length, startColumnIndex: 0, endColumnIndex: 3 },
           },
           {
             namedRangeId: 'nr-actions',
             name: 'Options_Submittal_Arch_Actions',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: actionsRows.length, startColumnIndex: 4, endColumnIndex: 10 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + actionsRows.length, startColumnIndex: 4, endColumnIndex: 10 },
           },
           {
             namedRangeId: 'nr-contacts',
             name: 'Options_Submittal_Arch_Contacts',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: contactsRows.length, startColumnIndex: 11, endColumnIndex: 14 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + contactsRows.length, startColumnIndex: 11, endColumnIndex: 15 },
           },
           {
             namedRangeId: 'nr-csi-divisions',
             name: 'Options_Submittal_Arch_CSI_Divisions',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: csiRows.length, startColumnIndex: 15, endColumnIndex: 17 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 2 + csiRows.length, startColumnIndex: 15, endColumnIndex: 17 },
           },
         ],
       });
@@ -449,11 +449,11 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
           spreadsheetId: logId,
           valueRanges: ranges.map((r) => ({
             range: r,
-            values: r.includes('A1:')
+            values: r.includes('A3:')
               ? statusesRows
-              : r.includes('E1:')
+              : r.includes('E3:')
                 ? actionsRows
-                : r.includes('P1:')
+                : r.includes('P3:')
                   ? csiRows
                   : contactsRows,
           })),
@@ -525,9 +525,13 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
       { id: candidate0, name: `${SPACE_NAME} Document Log` },
       { id: candidate1, name: `${SPACE_NAME} Document Log Copy` },
     ]);
+    nock('https://sheets.googleapis.com')
+      .get('/v4/spreadsheets/stale-nonexistent-log-id')
+      .query(true)
+      .reply(404, { error: { code: 404, message: 'Requested entity was not found.' } });
     mockSpreadsheetReadsForConfig(candidate0, {
       statusesRows: [['Status'], ['Cand0Status'], ['---']],
-      actionsRows: [['Action', 'Name', 'Suffix', 'Order'], ['REC', 'Candidate Zero Action', '', '1'], ['---', '', '', '']],
+      actionsRows: [['Key', 'Name', 'Suffix', 'Order'], ['REC', 'Candidate Zero Action', '', '1'], ['---', '', '', '']],
     });
 
     // Stale SelectDocumentLog ID should cleanly fall back to candidates[0]
@@ -605,7 +609,7 @@ describe('Ticket #358 Workspace Addon E2E: Submittal Arch live _Config option ta
     mockDriveSelectionAndSpaces([{ id: badConfigLogId, name: `${SPACE_NAME} Document Log` }]);
     mockSpreadsheetReadsForConfig(badConfigLogId, {
       statusesRows: [['Status'], ['Open'], ['---']],
-      actionsRows: [['Action', 'Name', 'Suffix', 'Order'], ['REC', 'Received', '', '1']], // missing "---"
+      actionsRows: [['Key', 'Name', 'Suffix', 'Order'], ['REC', 'Received', '', '1']], // missing "---"
     });
 
     const cfgErrRes = await app.server.inject({
@@ -970,7 +974,7 @@ describe('Ticket #359 Workspace Addon Seam: Copy Log Invalidation & SelectDocume
       mockSpreadsheetReadsForConfig(createdSheetId, {
         statusesRows: [['Status'], ['Open'], ['In Review'], ['---']],
         actionsRows: [
-          ['Action', 'Name', 'Suffix', 'Order'],
+          ['Key', 'Name', 'Suffix', 'Order'],
           ['REC', 'Received', '', '1'],
           ['NOC', 'No Objections As Corrected', '_NOC', '6'],
           ['---', '', '', ''],
@@ -1054,7 +1058,7 @@ describe('Ticket #359 Workspace Addon Seam: Copy Log Invalidation & SelectDocume
       mockSpreadsheetReadsForConfig('log-1', {
         statusesRows: [['Status'], ['Open'], ['Closed'], ['---']],
         actionsRows: [
-          ['Action', 'Name', 'Suffix', 'Order'],
+          ['Key', 'Name', 'Suffix', 'Order'],
           ['REC', 'Received', '', '1'],
           ['---', '', '', ''],
         ],
@@ -1104,7 +1108,7 @@ describe('Ticket #359 Workspace Addon Seam: Copy Log Invalidation & SelectDocume
       mockSpreadsheetReadsForConfig('log-2', {
         statusesRows: [['Status'], ['Draft'], ['Issued'], ['---']],
         actionsRows: [
-          ['Action', 'Name', 'Suffix', 'Order'],
+          ['Key', 'Name', 'Suffix', 'Order'],
           ['NOC', 'No Objections As Corrected', '_NOC', '6'],
           ['---', '', '', ''],
         ],

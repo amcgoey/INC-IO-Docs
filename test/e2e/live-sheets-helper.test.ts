@@ -1,20 +1,28 @@
 import { describe, it, expect, vi } from 'vitest';
 // nosemgrep: adapter-leakage-warning
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import type { PositiveTableTarget } from '../../src/infrastructure/sheets';
 import {
   SHEET_ERROR_TOKENS,
   appendRawPositiveTableRows,
+  batchUpdateSpreadsheetValues,
   clearOptionTableToEmpty,
+  clearOptionTablesToEmpty,
   ensureClearedPositiveTable,
   findCleanDividerViolations,
   findSheetErrorTokens,
+  findSpreadsheetErrorTokens,
   findSideBySideTableShiftViolations,
   inspectPositiveTableLayout,
   partialHydrationRowToCellInputs,
+  readMultiOptionTableGridFormats,
   readNamedRangesFormattedValues,
   readOptionTableGridFormats,
+  readSheetsGridLayout,
+  readSpreadsheetMetadata,
+  readSpreadsheetValues,
   snapshotNamedRanges,
+  withLiveSheetsRetry,
 } from './utils/live-sheets-helper';
 
 function createMockSheetsApi(params: {
@@ -510,9 +518,16 @@ describe('live-sheets-helper', () => {
     });
   });
 
-  describe('findSheetErrorTokens and findCleanDividerViolations', () => {
-    it('detects Google Sheets error tokens in row records', () => {
-      expect(SHEET_ERROR_TOKENS).toEqual(['#REF!', '#ERROR!', '#N/A', '#VALUE!']);
+  describe('findSheetErrorTokens, findSpreadsheetErrorTokens, and findCleanDividerViolations', () => {
+    it('detects Google Sheets error tokens including #NAME? and #DIV/0! in row records', () => {
+      expect(SHEET_ERROR_TOKENS).toEqual([
+        '#REF!',
+        '#ERROR!',
+        '#N/A',
+        '#VALUE!',
+        '#NAME?',
+        '#DIV/0!',
+      ]);
       expect(
         findSheetErrorTokens({
           Status: 'Open',
@@ -526,8 +541,53 @@ describe('live-sheets-helper', () => {
         findSheetErrorTokens({
           'Spec Title': 'Lookup failed: #N/A',
           Notes: 'Broken ref #REF!',
+          Formula1: '#NAME?',
+          Formula2: '#DIV/0!',
         })
-      ).toEqual(['#N/A', '#REF!']);
+      ).toEqual(['#N/A', '#REF!', '#NAME?', '#DIV/0!']);
+    });
+
+    it('scans all sheets via values.batchGet and reports any formula error tokens with coordinates', async () => {
+      const sheetsApi = {
+        spreadsheets: {
+          get: vi.fn().mockResolvedValue({
+            data: {
+              sheets: [
+                { properties: { title: 'Submittal Arch' } },
+                { properties: { title: '_Config Submittal Arch' } },
+              ],
+            },
+          }),
+          values: {
+            batchGet: vi.fn().mockResolvedValue({
+              data: {
+                valueRanges: [
+                  { values: [['Header'], ['Clean row']] },
+                  { values: [['Settings'], ['Bad formula', '#NAME?'], ['Zero div', '#DIV/0!']] },
+                ],
+              },
+            }),
+          },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const findings = await findSpreadsheetErrorTokens(sheetsApi, 'sheet-123');
+      expect(findings).toEqual([
+        {
+          sheetTitle: '_Config Submittal Arch',
+          rowNumber: 2,
+          columnIndex: 1,
+          value: '#NAME?',
+          tokens: ['#NAME?'],
+        },
+        {
+          sheetTitle: '_Config Submittal Arch',
+          rowNumber: 3,
+          columnIndex: 1,
+          value: '#DIV/0!',
+          tokens: ['#DIV/0!'],
+        },
+      ]);
     });
 
     it('reports zero violations for clean Column-0-only dividers and flags adjacent, consecutive, or polluted dividers', () => {
@@ -1137,6 +1197,58 @@ describe('live-sheets-helper', () => {
       expect(values.Options_Submittal_Arch_Contacts).toEqual([['Contact', 'Name'], ['INC', 'INC'], ['---']]);
     });
 
+    it('resolves optional extraRanges alongside named-range snapshots in a single batchGet call', async () => {
+      const batchGet = vi.fn().mockResolvedValue({
+        data: {
+          valueRanges: [
+            { range: "'_Config Submittal Arch'!A1:A6", values: [['Status'], ['Open'], ['---']] },
+            {
+              range: "'_Config Submittal Arch'!A1:K2",
+              values: [
+                ['Architecture Submittal Log Settings'],
+                ['Statuses', '', '', 'Specification Divisions'],
+              ],
+            },
+          ],
+        },
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          values: { batchGet },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const snapshots = {
+        Options_Submittal_Arch_Statuses: {
+          name: 'Options_Submittal_Arch_Statuses',
+          sheetId: 401,
+          sheetTitle: '_Config Submittal Arch',
+          a1Range: "'_Config Submittal Arch'!A1:A6",
+          gridRange: { sheetId: 401, startRowIndex: 0, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 1 },
+        },
+      };
+
+      const values = await readNamedRangesFormattedValues(
+        sheetsApi,
+        'sheet-cfg-1',
+        snapshots,
+        undefined,
+        { archHeaderBanner: "'_Config Submittal Arch'!A1:K2" }
+      );
+
+      expect(batchGet).toHaveBeenCalledTimes(1);
+      expect(batchGet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-cfg-1',
+        ranges: ["'_Config Submittal Arch'!A1:A6", "'_Config Submittal Arch'!A1:K2"],
+        valueRenderOption: 'FORMATTED_VALUE',
+      });
+      expect(values.Options_Submittal_Arch_Statuses).toEqual([['Status'], ['Open'], ['---']]);
+      expect(values.archHeaderBanner).toEqual([
+        ['Architecture Submittal Log Settings'],
+        ['Statuses', '', '', 'Specification Divisions'],
+      ]);
+    });
+
     it('detects side-by-side _Config table range shifts or value mutations', () => {
       const baseSnap = {
         Options_Submittal_Arch_Statuses: {
@@ -1346,6 +1458,94 @@ describe('live-sheets-helper', () => {
       ]);
     });
 
+    it('reads headerNotes and sheetMerges in readOptionTableGridFormats without changing API call count', async () => {
+      const sheetMerges: sheets_v4.Schema$GridRange[] = [
+        { sheetId: 401, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 5, endColumnIndex: 9 },
+      ];
+      const getSpreadsheet = vi.fn().mockImplementation(async (req: { includeGridData?: boolean; fields?: string }) => {
+        if (!req.includeGridData) {
+          return {
+            data: {
+              sheets: [
+                {
+                  properties: { sheetId: 401, title: '_Config Submittal Arch' },
+                  merges: sheetMerges,
+                },
+              ],
+              namedRanges: [
+                {
+                  namedRangeId: 'nr-contacts',
+                  name: 'Options_Submittal_Arch_Contacts',
+                  range: { sheetId: 401, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 5, endColumnIndex: 9 },
+                },
+              ],
+            },
+          };
+        }
+        return {
+          data: {
+            sheets: [
+              {
+                properties: { sheetId: 401, title: '_Config Submittal Arch' },
+                data: [
+                  {
+                    startRow: 2,
+                    startColumn: 5,
+                    rowData: [
+                      {
+                        values: [
+                          { formattedValue: 'Type' },
+                          { formattedValue: 'Key' },
+                          { formattedValue: 'Name' },
+                          {
+                            formattedValue: 'Aliases',
+                            note: 'Comma-separated aliases; wrap ""quotes"" and note case-sensitive matching.',
+                          },
+                        ],
+                      },
+                      { values: [{ formattedValue: 'Consultant' }, { formattedValue: 'PMG' }, { formattedValue: 'Pavarini' }, { formattedValue: '' }] },
+                      { values: [{ formattedValue: '---' }] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const gridInfo = await readOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-1',
+        sheetName: '_Config Submittal Arch',
+        rangeName: 'Options_Submittal_Arch_Contacts',
+        endMarker: '---',
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(2);
+      expect(getSpreadsheet).toHaveBeenNthCalledWith(1, {
+        spreadsheetId: 'sheet-cfg-1',
+        fields: 'sheets(properties(sheetId,title),merges),namedRanges',
+      });
+      expect(getSpreadsheet).toHaveBeenNthCalledWith(2, {
+        spreadsheetId: 'sheet-cfg-1',
+        ranges: ["'_Config Submittal Arch'!F3:I6"],
+        includeGridData: true,
+        fields: 'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredFormat,note))))',
+      });
+      expect(gridInfo.headerNotes).toEqual([
+        '',
+        '',
+        '',
+        'Comma-separated aliases; wrap ""quotes"" and note case-sensitive matching.',
+      ]);
+      expect(gridInfo.sheetMerges).toEqual(sheetMerges);
+    });
+
     it('handles single-row and already-empty tables and rejects missing endMarker in clearOptionTableToEmpty', async () => {
       const makeApi = (values: string[][]) => {
         const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
@@ -1426,6 +1626,411 @@ describe('live-sheets-helper', () => {
           endMarker: '---',
         })
       ).rejects.toThrow(/missing endMarker "---"/);
+    });
+
+    it('clears multiple side-by-side option tables in 1 spreadsheets.get + 1 values.batchGet + 1 batchUpdate via clearOptionTablesToEmpty', async () => {
+      const batchUpdate = vi.fn().mockResolvedValue({ data: {} });
+      const batchGet = vi.fn().mockResolvedValue({
+        data: {
+          valueRanges: [
+            {
+              values: [
+                ['Tag', 'Title', 'Aliases'],
+                ['AC102', 'HOOK', ''],
+                ['CG104', 'BED', ''],
+                ['---'],
+              ],
+            },
+            {
+              values: [
+                ['Type', 'Key', 'Name', 'Aliases'],
+                ['Vendor', 'BM', 'Berman Falk', ''],
+                ['---'],
+              ],
+            },
+          ],
+        },
+      });
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [{ properties: { sheetId: 402, title: '_Config Submittal FF&E' } }],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-specs',
+              name: 'Options_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 6, startColumnIndex: 0, endColumnIndex: 3 },
+            },
+            {
+              namedRangeId: 'nr-val-specs',
+              name: 'Validation_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 3, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+            {
+              namedRangeId: 'nr-vendors',
+              name: 'Options_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 3, endColumnIndex: 7 },
+            },
+            {
+              namedRangeId: 'nr-val-vendors',
+              name: 'Validation_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 3, endRowIndex: 4, startColumnIndex: 5, endColumnIndex: 6 },
+            },
+          ],
+        },
+      });
+
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: { batchGet },
+          batchUpdate,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const results = await clearOptionTablesToEmpty(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-2',
+        targets: [
+          {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Specs',
+            validationRangeName: 'Validation_Submittal_FFE_Specs',
+            endMarker: '---',
+          },
+          {
+            sheetName: '_Config Submittal FF&E',
+            rangeName: 'Options_Submittal_FFE_Vendors',
+            validationRangeName: 'Validation_Submittal_FFE_Vendors',
+            endMarker: '---',
+          },
+        ],
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(batchGet).toHaveBeenCalledTimes(1);
+      expect(batchUpdate).toHaveBeenCalledTimes(1);
+      expect(results.Options_Submittal_FFE_Specs).toEqual({
+        cleared: true,
+        blankRowIndex: 3,
+        absTerminatorRowIndex: 4,
+      });
+      expect(results.Options_Submittal_FFE_Vendors).toEqual({
+        cleared: true,
+        blankRowIndex: 3,
+        absTerminatorRowIndex: 4,
+      });
+      const requests = batchUpdate.mock.calls[0][0].requestBody.requests as sheets_v4.Schema$Request[];
+      expect(requests.some((r) => r.deleteRange?.range?.startColumnIndex === 0 && r.deleteRange?.range?.endColumnIndex === 3)).toBe(true);
+      expect(requests.filter((r) => r.updateNamedRange)).toHaveLength(2);
+    });
+
+    it('reads multiple option-table formats, namedRanges, values, and extraRanges in 1 spreadsheets.get via readMultiOptionTableGridFormats', async () => {
+      const tmplFmt = { textFormat: { fontSize: 10 } };
+      const sheetMerges: sheets_v4.Schema$GridRange[] = [
+        { sheetId: 402, startRowIndex: 1, endRowIndex: 2, startColumnIndex: 0, endColumnIndex: 3 },
+      ];
+      const getSpreadsheet = vi.fn().mockResolvedValue({
+        data: {
+          sheets: [
+            {
+              properties: { sheetId: 402, title: '_Config Submittal FF&E' },
+              merges: sheetMerges,
+              data: [
+                {
+                  startRow: 0,
+                  startColumn: 0,
+                  rowData: [
+                    { values: [] },
+                    { values: [{ formattedValue: 'Specs' }] },
+                    {
+                      values: [
+                        { formattedValue: 'Tag' },
+                        { formattedValue: 'Title' },
+                        { formattedValue: 'Aliases', note: 'Aliases ""note"" case-sensitive' },
+                        { formattedValue: 'Type' },
+                        { formattedValue: 'Key' },
+                        { formattedValue: 'Name' },
+                        { formattedValue: 'Aliases', note: 'Aliases ""note"" case-sensitive' },
+                      ],
+                    },
+                    {
+                      values: [
+                        { formattedValue: 'AC102', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'HOOK', userEnteredFormat: tmplFmt },
+                        { formattedValue: '', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'Vendor', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'BM', userEnteredFormat: tmplFmt },
+                        { formattedValue: 'Berman Falk', userEnteredFormat: tmplFmt },
+                        { formattedValue: '', userEnteredFormat: tmplFmt },
+                      ],
+                    },
+                    {
+                      values: [
+                        { formattedValue: '---' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '---' },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              properties: { sheetId: 500, title: 'Submittal FF&E' },
+              data: [
+                {
+                  startRow: 3,
+                  startColumn: 0,
+                  rowData: [
+                    {
+                      values: [
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { formattedValue: '' },
+                        { userEnteredValue: { formulaValue: '=ARRAYFORMULA(IFERROR(VLOOKUP(B4:B,Options_Submittal_FFE_Specs,2,FALSE)))' } },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          namedRanges: [
+            {
+              namedRangeId: 'nr-specs',
+              name: 'Options_Submittal_FFE_Specs',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 3 },
+            },
+            {
+              namedRangeId: 'nr-vendors',
+              name: 'Options_Submittal_FFE_Vendors',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 3, endColumnIndex: 7 },
+            },
+            {
+              namedRangeId: 'nr-statuses',
+              name: 'Options_Submittal_FFE_Statuses',
+              range: { sheetId: 402, startRowIndex: 2, endRowIndex: 4, startColumnIndex: 0, endColumnIndex: 1 },
+            },
+          ],
+        },
+      });
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const result = await readMultiOptionTableGridFormats(sheetsApi, {
+        spreadsheetId: 'sheet-cfg-2',
+        targets: [
+          { sheetName: '_Config Submittal FF&E', rangeName: 'Options_Submittal_FFE_Specs', endMarker: '---' },
+          { sheetName: '_Config Submittal FF&E', rangeName: 'Options_Submittal_FFE_Vendors', endMarker: '---' },
+        ],
+        snapshotRangeNames: ['Options_Submittal_FFE_Specs', 'Options_Submittal_FFE_Vendors', 'Options_Submittal_FFE_Statuses'],
+        extraRanges: ["'Submittal FF&E'!A4:E4"],
+      });
+
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+      expect(getSpreadsheet).toHaveBeenCalledWith({
+        spreadsheetId: 'sheet-cfg-2',
+        ranges: ["'_Config Submittal FF&E'", "'Submittal FF&E'!A4:E4"],
+        includeGridData: true,
+        fields:
+          'sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,userEnteredFormat,note)))),namedRanges',
+      });
+      expect(result.tables.Options_Submittal_FFE_Specs.headerRow).toEqual(['Tag', 'Title', 'Aliases']);
+      expect(result.tables.Options_Submittal_FFE_Specs.dataRows[0].cells[0].userEnteredFormat).toEqual(tmplFmt);
+      expect(result.tables.Options_Submittal_FFE_Vendors.headerRow).toEqual(['Type', 'Key', 'Name', 'Aliases']);
+      expect(result.namedRanges.Options_Submittal_FFE_Statuses.gridRange.endRowIndex).toBe(4);
+      expect(result.valuesByNamedRange.Options_Submittal_FFE_Specs).toEqual([
+        ['Tag', 'Title', 'Aliases'],
+        ['AC102', 'HOOK', ''],
+        ['---', '', ''],
+      ]);
+      expect(result.spreadsheet.sheets).toHaveLength(2);
+    });
+  });
+
+  describe('shared rate-limit retry delegation', () => {
+    it('retries HTTP 403 quota-reason errors with ±25% jitter while ignoring non-quota 403', async () => {
+      const randomSpy = vi
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0) // 0.75x
+        .mockReturnValueOnce(0.999999); // ~1.25x
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+
+      try {
+        let getAttempts = 0;
+        const { sheetsApi, getSpreadsheet } = createMockSheetsApi({
+          formattedValues: [['Status', 'Section'], [], ['<--->'], [], ['<--->']],
+        });
+
+        getSpreadsheet.mockImplementation(async () => {
+          getAttempts++;
+          if (getAttempts === 1) {
+            throw { status: 403, errors: [{ reason: 'userRateLimitExceeded' }], message: 'Quota' };
+          }
+          if (getAttempts === 2) {
+            throw {
+              response: { status: 403, data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } } },
+              message: 'Rate limit',
+            };
+          }
+          return {
+            data: {
+              sheets: [{ properties: { sheetId: 101, title: 'Submittal Arch' } }],
+              namedRanges: [
+                {
+                  name: 'Log_Submittal_Arch',
+                  range: { sheetId: 101, startRowIndex: 2, endRowIndex: 7, startColumnIndex: 0, endColumnIndex: 2 },
+                },
+              ],
+            },
+          };
+        });
+
+        await ensureClearedPositiveTable(sheetsApi, archTarget, {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          backoffFactor: 2,
+          sleep: sleepMock,
+        });
+
+        expect(getSpreadsheet).toHaveBeenCalledTimes(3);
+        expect(sleepMock).toHaveBeenCalledTimes(2);
+        expect(sleepMock.mock.calls[0]?.[0]).toBe(75);
+        expect(sleepMock.mock.calls[1]?.[0]).toBe(250);
+
+        sleepMock.mockClear();
+        getSpreadsheet.mockRejectedValueOnce({
+          status: 403,
+          errors: [{ reason: 'forbidden' }],
+          message: 'Insufficient Permission',
+        });
+
+        await expect(
+          ensureClearedPositiveTable(sheetsApi, archTarget, {
+            maxRetries: 3,
+            initialDelayMs: 100,
+            sleep: sleepMock,
+          })
+        ).rejects.toMatchObject({ status: 403 });
+        expect(sleepMock).not.toHaveBeenCalled();
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('honors AbortSignal to terminate active retry backoff immediately', async () => {
+      const controller = new AbortController();
+      const { sheetsApi, getSpreadsheet } = createMockSheetsApi({
+        formattedValues: [['Status', 'Section'], [], ['<--->'], [], ['<--->']],
+      });
+      getSpreadsheet.mockRejectedValue({ statusCode: 429, message: 'Too Many Requests' });
+
+      const promise = ensureClearedPositiveTable(sheetsApi, archTarget, {
+        maxRetries: 3,
+        initialDelayMs: 60_000,
+        signal: controller.signal,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      expect(getSpreadsheet).toHaveBeenCalledTimes(1);
+    });
+
+    it('wraps readSpreadsheetMetadata, readSpreadsheetValues, batchUpdateSpreadsheetValues, and readSheetsGridLayout with rate-limit retry', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const retryOpts = { maxRetries: 2, initialDelayMs: 10, backoffFactor: 2, sleep: sleepMock };
+
+      let metaAttempt = 0;
+      let valuesGetAttempt = 0;
+      let valuesBatchUpdateAttempt = 0;
+      let gridAttempt = 0;
+
+      const getSpreadsheet = vi.fn().mockImplementation(async (req: { includeGridData?: boolean }) => {
+        if (req.includeGridData) {
+          gridAttempt++;
+          if (gridAttempt === 1) {
+            throw { status: 429, message: 'Rate limited' };
+          }
+          return { data: { sheets: [], namedRanges: [] } };
+        }
+        metaAttempt++;
+        if (metaAttempt === 1) {
+          throw { status: 429, message: 'Rate limited' };
+        }
+        return { data: { sheets: [{ properties: { sheetId: 7, title: 'Submittal Arch' } }] } };
+      });
+
+      const valuesGet = vi.fn().mockImplementation(async () => {
+        valuesGetAttempt++;
+        if (valuesGetAttempt === 1) {
+          throw { status: 403, errors: [{ reason: 'userRateLimitExceeded' }], message: 'Quota' };
+        }
+        return { data: { values: [['CalcValue']] } };
+      });
+
+      const valuesBatchUpdate = vi.fn().mockImplementation(async () => {
+        valuesBatchUpdateAttempt++;
+        if (valuesBatchUpdateAttempt === 1) {
+          throw { statusCode: 429, message: 'Rate limited' };
+        }
+        return { data: { totalUpdatedCells: 1 } };
+      });
+
+      const sheetsApi = {
+        spreadsheets: {
+          get: getSpreadsheet,
+          values: {
+            get: valuesGet,
+            batchUpdate: valuesBatchUpdate,
+          },
+        },
+      } as unknown as sheets_v4.Sheets;
+
+      const meta = await readSpreadsheetMetadata(sheetsApi, 'sheet-123', undefined, retryOpts);
+      expect(meta.sheets?.[0]?.properties?.sheetId).toBe(7);
+
+      const values = await readSpreadsheetValues(
+        sheetsApi,
+        'sheet-123',
+        "'Submittal FF&E'!L6",
+        'FORMATTED_VALUE',
+        retryOpts
+      );
+      expect(values).toEqual([['CalcValue']]);
+
+      await batchUpdateSpreadsheetValues(
+        sheetsApi,
+        'sheet-123',
+        [{ range: "'_Config Submittal Arch'!I5", values: [['alias']] }],
+        'RAW',
+        retryOpts
+      );
+
+      const grid = await readSheetsGridLayout(
+        sheetsApi,
+        'sheet-123',
+        ["'_Config Submittal Arch'!A1:K4"],
+        retryOpts
+      );
+      expect(grid).toEqual({ sheets: [], namedRanges: [] });
+
+      let directAttempts = 0;
+      const directResult = await withLiveSheetsRetry(async () => {
+        directAttempts++;
+        if (directAttempts === 1) {
+          throw { status: 429, message: 'Retry me' };
+        }
+        return 'ok';
+      }, retryOpts);
+      expect(directResult).toBe('ok');
+      expect(directAttempts).toBe(2);
+      expect(sleepMock).toHaveBeenCalledTimes(5);
     });
   });
 });

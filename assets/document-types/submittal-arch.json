@@ -367,7 +367,7 @@
         "rangeName": "Options_Submittal_Arch_Actions",
         "endMarker": "---",
         "columns": {
-          "Action": "key",
+          "Key": "key",
           "Name": "name",
           "Suffix": "suffix",
           "Order": "order"
@@ -379,7 +379,7 @@
         "validationRangeName": "Validation_Submittal_Arch_Contacts",
         "endMarker": "---",
         "columns": {
-          "Contact": "key",
+          "Key": "key",
           "Name": "name"
         },
         "aliasesColumn": "Aliases"

@@ -5,19 +5,37 @@ import type {
 } from '../ports';
 
 export interface DriveFolderListClient {
-  listFolders(options?: {
-    parentFolderId?: string | undefined;
-    sharedDriveId?: string | undefined;
-    pageSize?: number | undefined;
-    pageToken?: string | undefined;
-    name?: string | undefined;
-  }): Promise<{
+  listFolders(
+    options?: {
+      parentFolderId?: string | undefined;
+      sharedDriveId?: string | undefined;
+      pageSize?: number | undefined;
+      pageToken?: string | undefined;
+      name?: string | undefined;
+    },
+    driveOptions?: {
+      auth?: string | undefined;
+      signal?: AbortSignal | undefined;
+    }
+  ): Promise<{
     folders: Array<{ id: string; name: string }>;
     nextPageToken?: string | undefined;
   }>;
 }
 
 const DEFAULT_MAX_ITEMS = 150;
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+  if (signal.reason !== undefined) {
+    throw signal.reason;
+  }
+  const err = new Error('Operation aborted');
+  err.name = 'AbortError';
+  throw err;
+}
 
 function extractDrivePathSpec(relativePath?: string): string {
   if (typeof relativePath !== 'string') {
@@ -51,12 +69,14 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
     spaceStorageId: string;
     relativePath?: string | undefined;
     maxItems?: number | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<DriveOptionFolderResult> {
+    throwIfAborted(params.signal);
     const pathSpec = extractDrivePathSpec(params.relativePath);
     const targetPath = extractDriveTargetPath(pathSpec);
     const maxItems = params.maxItems ?? DEFAULT_MAX_ITEMS;
 
-    const outcome = await this.resolveTargetFolder(params.spaceStorageId, pathSpec);
+    const outcome = await this.resolveTargetFolder(params.spaceStorageId, pathSpec, params.signal);
     if (!outcome.success) {
       return { status: outcome.status, items: [], targetPath };
     }
@@ -66,11 +86,17 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
     let truncated = false;
 
     do {
-      const result = await this.driveClient.listFolders({
+      throwIfAborted(params.signal);
+      const listArgs = {
         parentFolderId: outcome.folderId,
         pageSize: 100,
         ...(pageToken !== undefined ? { pageToken } : {}),
-      });
+      };
+      const result =
+        params.signal !== undefined
+          ? await this.driveClient.listFolders(listArgs, { signal: params.signal })
+          : await this.driveClient.listFolders(listArgs);
+      throwIfAborted(params.signal);
 
       for (const folder of result.folders) {
         if (items.length >= maxItems) {
@@ -104,12 +130,14 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
     relativePath?: string | undefined;
     value: string;
     allowUserInput?: boolean | undefined;
+    signal?: AbortSignal | undefined;
   }): Promise<{
     isValid: boolean;
     status: LookupValidationStatus;
     targetPath: string;
     matchedTuple?: { key: string; name: string } | undefined;
   }> {
+    throwIfAborted(params.signal);
     const pathSpec = extractDrivePathSpec(params.relativePath);
     const targetPath = extractDriveTargetPath(pathSpec);
     const trimmed = params.value.trim();
@@ -118,7 +146,7 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
       return { isValid: false, status: 'option_not_found', targetPath };
     }
 
-    const outcome = await this.resolveTargetFolder(params.spaceStorageId, pathSpec);
+    const outcome = await this.resolveTargetFolder(params.spaceStorageId, pathSpec, params.signal);
     if (!outcome.success) {
       return { isValid: false, status: outcome.status, targetPath };
     }
@@ -129,12 +157,18 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
     let matchedFolderName: string | undefined;
 
     do {
-      const result = await this.driveClient.listFolders({
+      throwIfAborted(params.signal);
+      const listArgs = {
         parentFolderId: outcome.folderId,
         name: trimmed,
         pageSize: 100,
         ...(pageToken !== undefined ? { pageToken } : {}),
-      });
+      };
+      const result =
+        params.signal !== undefined
+          ? await this.driveClient.listFolders(listArgs, { signal: params.signal })
+          : await this.driveClient.listFolders(listArgs);
+      throwIfAborted(params.signal);
 
       for (const folder of result.folders) {
         if (folder.name.trim().toLowerCase() === normalizedTarget) {
@@ -167,8 +201,10 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
 
   private async resolveTargetFolder(
     spaceStorageId: string,
-    pathSpec: string
+    pathSpec: string,
+    signal?: AbortSignal
   ): Promise<ResolveFolderOutcome> {
+    throwIfAborted(signal);
     const segments = getDrivePathSegments(pathSpec);
     if (segments.length === 0) {
       return { success: true, folderId: spaceStorageId };
@@ -177,15 +213,22 @@ export class DriveOptionSourceAdapter implements DriveOptionSourcePort {
     let currentFolderId = spaceStorageId;
 
     for (const segment of segments) {
+      throwIfAborted(signal);
       const matchingFolders: Array<{ id: string; name: string }> = [];
       let pageToken: string | undefined;
 
       do {
-        const result = await this.driveClient.listFolders({
+        throwIfAborted(signal);
+        const listArgs = {
           parentFolderId: currentFolderId,
           pageSize: 100,
           ...(pageToken !== undefined ? { pageToken } : {}),
-        });
+        };
+        const result =
+          signal !== undefined
+            ? await this.driveClient.listFolders(listArgs, { signal })
+            : await this.driveClient.listFolders(listArgs);
+        throwIfAborted(signal);
 
         const matchesInPage = result.folders.filter((f) => f.name === segment);
         matchingFolders.push(...matchesInPage);

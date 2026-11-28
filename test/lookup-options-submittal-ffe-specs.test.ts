@@ -296,54 +296,67 @@ function mountSpreadsheetNock(sim: MultiSpreadsheetSim): void {
 function createFfeSim(
   spreadsheetId: string,
   specsRows: SimCellVal[][] = [
-    ['Spec Tag', 'Spec Title'],
-    ['AC102', 'HOOK'],
-    ['FB127', 'FABRIC - LEATHER'],
-    ['FB135', 'FABRIC - LEATHER'],
-    ['BLANK1', ''],
-    ['---', ''],
+    ['Tag', 'Title', 'Aliases'],
+    ['AC102', 'HOOK', ''],
+    ['FB127', 'FABRIC - LEATHER', ''],
+    ['FB135', 'FABRIC - LEATHER', ''],
+    ['BLANK1', '', ''],
+    ['---', '', ''],
   ]
 ): MultiSpreadsheetSim {
   const c = (value: SimCellVal): SimCell => ({ value });
   const cfgStatuses = [['Status'], ['Open'], ['Closed'], ['---']];
   const cfgActions = [
-    ['Action', 'Name', 'Suffix', 'Order'],
+    ['Key', 'Name', 'Suffix', 'Order'],
     ['REC', 'Received', '', '1'],
     ['NOC', 'No Objections As Corrected', '_NOC', '6'],
     ['---', '', '', ''],
   ];
   const cfgContacts = [
-    ['Contact', 'Name', 'Contact Type'],
-    ['INC', 'INC Architecture & Design', 'INC'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['INC', 'INC', 'INC Architecture & Design', ''],
+    ['---', '', '', ''],
   ];
   const cfgVendors = [
-    ['Vendor', 'Name', 'Vendor Type'],
-    ['BM', 'Berman Falk', 'Casegoods'],
-    ['---', '', ''],
+    ['Type', 'Key', 'Name', 'Aliases'],
+    ['Casegoods', 'BM', 'Berman Falk', ''],
+    ['---', '', '', ''],
   ];
 
-  const maxRows = Math.max(
+  const maxDataRows = Math.max(
     cfgStatuses.length,
     cfgActions.length,
     cfgContacts.length,
     cfgVendors.length,
     specsRows.length
   );
-  const configGrid: SimCell[][] = Array.from({ length: maxRows }, (_, r) => {
-    const row: SimCell[] = Array.from({ length: 17 }, () => c(''));
-    const st = cfgStatuses[r];
-    if (st) row[0] = c(st[0]);
-    const act = cfgActions[r];
-    if (act) act.forEach((v, idx) => (row[2 + idx] = c(v)));
-    const con = cfgContacts[r];
-    if (con) con.forEach((v, idx) => (row[7 + idx] = c(v)));
-    const ven = cfgVendors[r];
-    if (ven) ven.forEach((v, idx) => (row[11 + idx] = c(v)));
-    const sp = specsRows[r];
-    if (sp) sp.forEach((v, idx) => (row[15 + idx] = c(v)));
-    return row;
-  });
+  const titleRow: SimCell[] = Array.from({ length: 20 }, () => c(''));
+  titleRow[0] = c('Submittal FF&E Configuration');
+  const groupHeaderRow: SimCell[] = Array.from({ length: 20 }, () => c(''));
+  groupHeaderRow[0] = c('Statuses');
+  groupHeaderRow[2] = c('Actions');
+  groupHeaderRow[7] = c('Contacts');
+  groupHeaderRow[12] = c('Vendors');
+  groupHeaderRow[17] = c('Specs');
+
+  const configGrid: SimCell[][] = [
+    titleRow,
+    groupHeaderRow,
+    ...Array.from({ length: maxDataRows }, (_, r) => {
+      const row: SimCell[] = Array.from({ length: 20 }, () => c(''));
+      const st = cfgStatuses[r];
+      if (st) row[0] = c(st[0]);
+      const act = cfgActions[r];
+      if (act) act.forEach((v, idx) => (row[2 + idx] = c(v)));
+      const con = cfgContacts[r];
+      if (con) con.forEach((v, idx) => (row[7 + idx] = c(v)));
+      const ven = cfgVendors[r];
+      if (ven) ven.forEach((v, idx) => (row[12 + idx] = c(v)));
+      const sp = specsRows[r];
+      if (sp) sp.forEach((v, idx) => (row[17 + idx] = c(v)));
+      return row;
+    }),
+  ];
 
   return {
     spreadsheetId,
@@ -376,32 +389,32 @@ function createFfeSim(
       {
         namedRangeId: 'nr-ffe-statuses',
         name: 'Options_Submittal_FFE_Statuses',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: cfgStatuses.length, startColumnIndex: 0, endColumnIndex: 1 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + cfgStatuses.length, startColumnIndex: 0, endColumnIndex: 1 },
       },
       {
         namedRangeId: 'nr-ffe-actions',
         name: 'Options_Submittal_FFE_Actions',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: cfgActions.length, startColumnIndex: 2, endColumnIndex: 6 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + cfgActions.length, startColumnIndex: 2, endColumnIndex: 6 },
       },
       {
         namedRangeId: 'nr-ffe-contacts',
         name: 'Options_Submittal_FFE_Contacts',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: cfgContacts.length, startColumnIndex: 7, endColumnIndex: 10 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + cfgContacts.length, startColumnIndex: 7, endColumnIndex: 11 },
       },
       {
         namedRangeId: 'nr-ffe-vendors',
         name: 'Options_Submittal_FFE_Vendors',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: cfgVendors.length, startColumnIndex: 11, endColumnIndex: 14 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + cfgVendors.length, startColumnIndex: 12, endColumnIndex: 16 },
       },
       {
         namedRangeId: 'nr-ffe-specs',
         name: 'Options_Submittal_FFE_Specs',
-        range: { sheetId: 104, startRowIndex: 0, endRowIndex: specsRows.length, startColumnIndex: 15, endColumnIndex: 17 },
+        range: { sheetId: 104, startRowIndex: 2, endRowIndex: 2 + specsRows.length, startColumnIndex: 17, endColumnIndex: 20 },
       },
       {
         namedRangeId: 'nr-ffe-val-specs',
         name: 'Validation_Submittal_FFE_Specs',
-        range: { sheetId: 104, startRowIndex: 1, endRowIndex: specsRows.length - 1, startColumnIndex: 15, endColumnIndex: 16 },
+        range: { sheetId: 104, startRowIndex: 3, endRowIndex: 2 + specsRows.length - 1, startColumnIndex: 17, endColumnIndex: 18 },
       },
     ],
     batchUpdates: [],
@@ -833,21 +846,21 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
     expect(
       cfgGrid
         .slice(specsNr.range.startRowIndex, specsNr.range.endRowIndex)
-        .map((r) => r.slice(15, 17).map((cell) => cell.value))
+        .map((r) => r.slice(17, 20).map((cell) => cell.value))
     ).toEqual([
-      ['Spec Tag', 'Spec Title'],
-      ['AC102', 'HOOK'],
-      ['FB127', 'FABRIC - LEATHER'],
-      ['FB135', 'FABRIC - LEATHER'],
-      ['BLANK1', ''],
-      ['XX100', 'Custom Lounge Chair'],
-      ['REL200', 'Backfilled Sconce'],
-      ['FB999', 'FABRIC - LEATHER'],
-      ['---', ''],
+      ['Tag', 'Title', 'Aliases'],
+      ['AC102', 'HOOK', ''],
+      ['FB127', 'FABRIC - LEATHER', ''],
+      ['FB135', 'FABRIC - LEATHER', ''],
+      ['BLANK1', '', ''],
+      ['XX100', 'Custom Lounge Chair', ''],
+      ['REL200', 'Backfilled Sconce', ''],
+      ['FB999', 'FABRIC - LEATHER', ''],
+      ['---', '', ''],
     ]);
     expect(sim.namedRanges.find((nr) => nr.name === 'Validation_Submittal_FFE_Specs')?.range).toMatchObject({
-      startRowIndex: 1,
-      endRowIndex: 8,
+      startRowIndex: 3,
+      endRowIndex: 10,
     });
   });
 
@@ -918,21 +931,21 @@ describe('Ticket #362 E2E (Workspace Addon + POST /documents): Reactive LinkedFi
     expect(sim.batchUpdates).toHaveLength(1);
     // Known AC102 did not insert/modify _Config Specs
     const specsNr = sim.namedRanges.find((nr) => nr.name === 'Options_Submittal_FFE_Specs')!;
-    expect(specsNr.range.endRowIndex).toBe(6);
+    expect(specsNr.range.endRowIndex).toBe(8);
   });
 
   it('refreshes lockedFields on SelectDocumentLog switch in ambiguous spaces while keeping typed inputs intact', async () => {
     const logAId = 'log-ffe-ambig-a';
     const logBId = 'log-ffe-ambig-b';
     const simA = createFfeSim(logAId, [
-      ['Spec Tag', 'Spec Title'],
-      ['AC102', 'HOOK FROM LOG A'],
-      ['---', ''],
+      ['Tag', 'Title', 'Aliases'],
+      ['AC102', 'HOOK FROM LOG A', ''],
+      ['---', '', ''],
     ]);
     const simB = createFfeSim(logBId, [
-      ['Spec Tag', 'Spec Title'],
-      ['AC102', ''],
-      ['---', ''],
+      ['Tag', 'Title', 'Aliases'],
+      ['AC102', '', ''],
+      ['---', '', ''],
     ]);
     mountSpreadsheetNock(simA);
     mountSpreadsheetNock(simB);

@@ -1,7 +1,8 @@
 import type { GoogleAuth, OAuth2Client } from 'google-auth-library';
-import type { sheets_v4 } from 'googleapis';
+import type { sheets_v4 } from '@googleapis/sheets';
 import { Type, type Static } from '@sinclair/typebox';
 import type { KeyedAsyncLock } from './keyed-lock';
+import type { GoogleApiRetryOptions } from '../google/retry';
 
 export const CellValueSchema = Type.Union([
   Type.String(),
@@ -146,12 +147,7 @@ export const WriteNamedRangeRequestSchema = Type.Intersect([
 ]);
 export type WriteNamedRangeRequest = Static<typeof WriteNamedRangeRequestSchema>;
 
-export interface SheetsRetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-  sleep?: (ms: number) => Promise<void>;
-}
+export type SheetsRetryOptions = GoogleApiRetryOptions;
 
 export interface SheetsConfigProvider {
   getSheetsConfig(): Promise<{
@@ -169,12 +165,17 @@ export interface GoogleSheetsClientOptions {
   lock?: KeyedAsyncLock | undefined;
 }
 
+export interface SheetsOperationOptions {
+  signal?: AbortSignal | undefined;
+}
+
 export interface SheetsClient {
   readTable(request: ReadPositiveTableRequest): Promise<PositiveTableReadResult>;
   insertIntoGroupedList(request: InsertPositiveGroupedRowRequest): Promise<InsertGroupedRowResult>;
   readNamedRange(request: ReadNamedRangeRequest): Promise<CellValue[][]>;
   readNamedRangesBatch?(
-    request: ReadNamedRangesBatchRequest
+    request: ReadNamedRangesBatchRequest,
+    options?: SheetsOperationOptions
   ): Promise<Record<string, ReadNamedRangeBatchEntry>>;
   writeNamedRange(request: WriteNamedRangeRequest): Promise<void>;
 }

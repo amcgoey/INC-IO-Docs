@@ -98,6 +98,46 @@ describe('google/retry', () => {
       expect(isRateLimitOrQuotaError({ code: '' })).toBe(false);
       expect(isRateLimitOrQuotaError(null)).toBe(false);
     });
+
+    it('inspects Error.cause chains when HTTP 403 or 429 is wrapped in an outer error', () => {
+      const wrappedQuotaReason = new Error('Google Sheets API error: Forbidden', {
+        cause: {
+          response: {
+            status: 403,
+            data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } },
+          },
+          message: 'Forbidden',
+        },
+      });
+      Object.assign(wrappedQuotaReason, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedQuotaReason)).toBe(true);
+
+      const wrappedInheritedStatusQuota = new Error('Google Sheets API error: Forbidden', {
+        cause: { errors: [{ reason: 'userRateLimitExceeded' }] },
+      });
+      Object.assign(wrappedInheritedStatusQuota, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedInheritedStatusQuota)).toBe(true);
+
+      const wrapped429Cause = new Error('Wrapped error', {
+        cause: { status: 429, message: 'Too Many Requests' },
+      });
+      expect(isRateLimitOrQuotaError(wrapped429Cause)).toBe(true);
+
+      const wrappedForbidden = new Error('Google Sheets API error: The caller does not have permission', {
+        cause: {
+          status: 403,
+          errors: [{ reason: 'forbidden' }],
+          message: 'The caller does not have permission',
+        },
+      });
+      Object.assign(wrappedForbidden, { statusCode: 403 });
+      expect(isRateLimitOrQuotaError(wrappedForbidden)).toBe(false);
+
+      const cyclicCause: Error & { statusCode?: number; cause?: unknown } = new Error('Cyclic');
+      cyclicCause.statusCode = 403;
+      cyclicCause.cause = cyclicCause;
+      expect(isRateLimitOrQuotaError(cyclicCause)).toBe(false);
+    });
   });
 
   describe('executeWithRateLimitRetry', () => {
@@ -156,6 +196,117 @@ describe('google/retry', () => {
       ).rejects.toBe(forbiddenErr);
       expect(operation).toHaveBeenCalledTimes(1);
       expect(mockSleep).not.toHaveBeenCalled();
+    });
+
+    it('rejects immediately when AbortSignal is already aborted without calling operation or sleep', async () => {
+      const controller = new AbortController();
+      const abortReason = new Error('Lookup timed out');
+      controller.abort(abortReason);
+
+      const mockSleep = vi.fn(async () => undefined);
+      const operation = vi.fn<() => Promise<string>>().mockResolvedValue('ok');
+
+      await expect(
+        executeWithRateLimitRetry(operation, {
+          sleep: mockSleep,
+          signal: controller.signal,
+        })
+      ).rejects.toBe(abortReason);
+      expect(operation).not.toHaveBeenCalled();
+      expect(mockSleep).not.toHaveBeenCalled();
+    });
+
+    it('terminates active default backoff timer immediately when AbortSignal aborts', async () => {
+      const controller = new AbortController();
+      const operation = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce({ status: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce('should-not-run');
+
+      const startedAt = Date.now();
+      const promise = executeWithRateLimitRetry(operation, {
+        maxRetries: 3,
+        initialDelayMs: 60_000,
+        signal: controller.signal,
+      });
+
+      // Let first attempt reject and enter backoff wait, then abort immediately
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      expect(Date.now() - startedAt).toBeLessThan(1000);
+      expect(operation).toHaveBeenCalledTimes(1);
+    });
+
+    it('terminates active custom sleep immediately when AbortSignal aborts', async () => {
+      const controller = new AbortController();
+      const customReason = new Error('Cancelled by caller');
+      let capturedSignal: AbortSignal | undefined;
+      const hangingSleep = vi.fn((_ms: number, sig?: AbortSignal) => {
+        capturedSignal = sig;
+        return new Promise<void>(() => {
+          // Intentionally never resolves to prove abort short-circuits the wait
+        });
+      });
+
+      const operation = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce({ status: 403, errors: [{ reason: 'userRateLimitExceeded' }] })
+        .mockResolvedValueOnce('never');
+
+      const promise = executeWithRateLimitRetry(operation, {
+        maxRetries: 3,
+        initialDelayMs: 1000,
+        sleep: hangingSleep,
+        signal: controller.signal,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort(customReason);
+
+      await expect(promise).rejects.toBe(customReason);
+      expect(capturedSignal).toBe(controller.signal);
+      expect(hangingSleep).toHaveBeenCalledTimes(1);
+      expect(operation).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry when AbortSignal aborts during an in-flight failing operation', async () => {
+      const controller = new AbortController();
+      const mockSleep = vi.fn(async () => undefined);
+      const operation = vi.fn<() => Promise<string>>().mockImplementation(async () => {
+        controller.abort(new Error('Aborted mid-flight'));
+        throw { status: 429, message: 'Rate limited' };
+      });
+
+      await expect(
+        executeWithRateLimitRetry(operation, {
+          maxRetries: 3,
+          sleep: mockSleep,
+          signal: controller.signal,
+        })
+      ).rejects.toThrow('Aborted mid-flight');
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(mockSleep).not.toHaveBeenCalled();
+    });
+
+    it('removes abort listeners after completing retries normally', async () => {
+      const controller = new AbortController();
+      const removeListenerSpy = vi.spyOn(controller.signal, 'removeEventListener');
+      const operation = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce({ status: 429 })
+        .mockResolvedValueOnce('ok');
+
+      const result = await executeWithRateLimitRetry(operation, {
+        maxRetries: 2,
+        initialDelayMs: 5,
+        signal: controller.signal,
+      });
+
+      expect(result).toBe('ok');
+      expect(operation).toHaveBeenCalledTimes(2);
+      expect(removeListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
     });
   });
 });

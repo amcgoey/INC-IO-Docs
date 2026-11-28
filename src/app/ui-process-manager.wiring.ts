@@ -658,16 +658,6 @@ export function createUiProcessManagerWiring(
     );
   }
 
-  const schemaDrivenUi =
-    options.schemaDrivenUiService !== undefined
-      ? { schemaDrivenUiService: options.schemaDrivenUiService }
-      : createSchemaDrivenUiWiring({
-          manifestProvider: options.manifestProvider,
-          ...(options.optionsFetcher !== undefined ? { optionsFetcher: options.optionsFetcher } : {}),
-          ...(options.uiContextQuery !== undefined ? { uiContextQuery: options.uiContextQuery } : {}),
-          ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
-        });
-
   const configProvider: UiProcessConfigProviderPort = {
     getWorkspaceConfig: async () => {
       if (!options.configProvider) {
@@ -900,7 +890,13 @@ export function createUiProcessManagerWiring(
 
   const schemaDrivenUiOrResolver: SchemaDrivenUiService | SchemaDrivenUiServiceResolver = options.createSchemaDrivenUiService
     ? (context: WorkspaceExecutionContext) => options.createSchemaDrivenUiService!(context)
-    : schemaDrivenUi.schemaDrivenUiService;
+    : (options.schemaDrivenUiService ??
+        createSchemaDrivenUiWiring({
+          manifestProvider: options.manifestProvider,
+          ...(options.optionsFetcher !== undefined ? { optionsFetcher: options.optionsFetcher } : {}),
+          ...(options.uiContextQuery !== undefined ? { uiContextQuery: options.uiContextQuery } : {}),
+          ...(options.driveClient !== undefined ? { driveClient: options.driveClient } : {}),
+        }).schemaDrivenUiService);
 
   const requestScopedWrapper = createUiProcessRequestWrapper(
     orchestratorResolver,

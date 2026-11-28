@@ -89,7 +89,7 @@ Both [`infra/pulumi/Pulumi.dev.yaml`](../infra/pulumi/Pulumi.dev.yaml) and [`inf
 4. **Cloud Run v2 Service (`gcp.cloudrunv2.Service`)**: Deploys `inc-io-docs-dev` or `inc-io-docs-prod` bound to `template.serviceAccount = runtimeServiceAccount.email` (`addon-runtime`), listening on container port `8080` with `maxInstanceRequestConcurrency: 4` (configurable via `AppInfrastructureArgs.maxInstanceRequestConcurrency`) alongside `2` vCPU / `4Gi` memory limits and `NODE_OPTIONS=--max-old-space-size=3584` to bound peak in-memory PDF processing concurrency, plus environment variables `NODE_ENV=production` and `SKIP_SPACE_VALIDATION=true`. When `AppInfrastructureArgs.submittalCoverSheetTemplateId` is non-empty after trimming, `AppInfrastructure` conditionally injects `SUBMITTAL_COVER_SHEET_TEMPLATE_ID` into the Cloud Run container `envs`; when omitted or empty, it is excluded so initial bootstrap runs stay unblocked. Exports the HTTPS endpoint as `serviceUrl`.
 5. **`ServiceIdentity` & Cloud Run Invoker Bindings (`CloudRunInvokerBinding`)**: Provisions `gcp.projects.ServiceIdentity` for `gsuiteaddons.googleapis.com`, resolves the project number dynamically via `gcp.organizations.getProjectOutput`, and binds `roles/run.invoker` (`gcp.cloudrunv2.ServiceIamMember`) to both `addon-invoker` and `service-<projectNumber>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`.
 
-Run the Pulumi infrastructure unit tests and TypeScript typechecks locally via:
+Run the infrastructure bootstrap (`test/infra/`) and Pulumi (`infra/pulumi/`) tests and TypeScript typechecks locally via:
 
 ```bash
 npm run typecheck:infra
@@ -178,7 +178,7 @@ npm run test:all
 
 1. **`npm run lint`**: Executes ESLint (`npm run lint:eslint`) and Semgrep (`npm run lint:semgrep` against `semgrep.yml`) to enforce hexagonal architecture boundaries (ensuring `domain.ts` and `ports.ts` never import from `adapters/`, and `src/infrastructure/` never imports from `src/features/`).
 2. **`npm run typecheck`**: Runs `tsc --noEmit` across the root TypeScript project and `npm --prefix infra/pulumi run typecheck` across the Pulumi infrastructure module.
-3. **`npm run test:all`** (and `npm test`): Runs the full Vitest suite (unit, integration, schema validation, branding byte-drift validation, deployment manifest validation, and documentation contract validation) followed by the Pulumi unit test suite (`npm --prefix infra/pulumi test`).
+3. **`npm run test:all`**: Runs the unified Vitest projects configuration (`vitest.all.config.mts`) combining the `infra` (`test/infra/` and `test/infra-workflow.test.ts`) and `app` (offline unit, integration, offline E2E, schema validation, branding byte-drift validation, deployment manifest validation, and documentation contract validation) projects in one process pool (scheduling `infra` first to overlap with `app`), followed by Pulumi unit tests (`infra/pulumi/`), keeping `test/live/` isolated so CI remains strictly offline.
 
 ### Automated Cloud Run & `Workspace Addon` Deployment (`develop` → `dev`, `main` → `prod`)
 

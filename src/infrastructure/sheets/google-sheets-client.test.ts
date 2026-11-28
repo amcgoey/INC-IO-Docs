@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { type sheets_v4 } from 'googleapis';
+import { type sheets_v4 } from '@googleapis/sheets';
 import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 import { TypeSystemPolicy } from '@sinclair/typebox/system';
 import { Value } from '@sinclair/typebox/value';
@@ -819,35 +819,40 @@ describe('GoogleSheetsClient', () => {
 
   describe('Rate Limiting & Exponential Backoff Retry', () => {
     it('retries on HTTP 429 errors with exponential backoff and succeeds', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const sleepMock = vi.fn().mockResolvedValue(undefined);
 
-      mockSheetsApi.spreadsheets.values.get
-        .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit exceeded' })
-        .mockRejectedValueOnce({ code: '429', message: 'Quota exceeded' })
-        .mockResolvedValueOnce({
-          data: { values: [['Success']] },
+      try {
+        mockSheetsApi.spreadsheets.values.get
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit exceeded' })
+          .mockRejectedValueOnce({ code: '429', message: 'Quota exceeded' })
+          .mockResolvedValueOnce({
+            data: { values: [['Success']] },
+          });
+
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: {
+            maxRetries: 3,
+            initialDelayMs: 100,
+            backoffFactor: 2,
+            sleep: sleepMock,
+          },
         });
 
-      const client = new GoogleSheetsClient({
-        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
-        retryOptions: {
-          maxRetries: 3,
-          initialDelayMs: 100,
-          backoffFactor: 2,
-          sleep: sleepMock,
-        },
-      });
+        const result = await client.readNamedRange({
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          rangeName: 'Headers',
+        });
 
-      const result = await client.readNamedRange({
-        spreadsheetId: 'sheet-abc-123',
-        sheetName: 'Sheet1',
-        rangeName: 'Headers',
-      });
-
-      expect(result).toEqual([['Success']]);
-      expect(sleepMock).toHaveBeenCalledTimes(2);
-      expect(sleepMock).toHaveBeenNthCalledWith(1, 100);
-      expect(sleepMock).toHaveBeenNthCalledWith(2, 200);
+        expect(result).toEqual([['Success']]);
+        expect(sleepMock).toHaveBeenCalledTimes(2);
+        expect(sleepMock).toHaveBeenNthCalledWith(1, 100);
+        expect(sleepMock).toHaveBeenNthCalledWith(2, 200);
+      } finally {
+        randomSpy.mockRestore();
+      }
     });
 
     it('fails when maxRetries is exceeded on persistent 429 errors', async () => {
@@ -907,6 +912,7 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('uses dynamic retry options from configProvider when provided', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const sleepMock = vi.fn().mockResolvedValue(undefined);
       const mockConfigProvider: SheetsConfigProvider = {
         getSheetsConfig: vi.fn().mockResolvedValue({
@@ -916,28 +922,203 @@ describe('GoogleSheetsClient', () => {
         }),
       };
 
-      mockSheetsApi.spreadsheets.values.get
-        .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
-        .mockResolvedValueOnce({
-          data: { values: [['Done']] },
+      try {
+        mockSheetsApi.spreadsheets.values.get
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
+          .mockResolvedValueOnce({
+            data: { values: [['Done']] },
+          });
+
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: { sleep: sleepMock },
+          configProvider: mockConfigProvider,
         });
+
+        const result = await client.readNamedRange({
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          rangeName: 'Headers',
+        });
+
+        expect(result).toEqual([['Done']]);
+        expect(mockConfigProvider.getSheetsConfig).toHaveBeenCalled();
+        expect(sleepMock).toHaveBeenCalledTimes(1);
+        expect(sleepMock).toHaveBeenCalledWith(250);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('retries HTTP 403 quota-reason payloads before wrapApiError wraps them', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      try {
+        mockSheetsApi.spreadsheets.values.get
+          .mockRejectedValueOnce({
+            status: 403,
+            errors: [{ reason: 'userRateLimitExceeded' }],
+            message: 'Request failed',
+          })
+          .mockRejectedValueOnce({
+            response: {
+              status: 403,
+              data: { error: { errors: [{ reason: 'rateLimitExceeded' }] } },
+            },
+            message: 'Forbidden',
+          })
+          .mockResolvedValueOnce({
+            data: { values: [['QuotaRecovered']] },
+          });
+
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: {
+            maxRetries: 3,
+            initialDelayMs: 100,
+            backoffFactor: 2,
+            sleep: sleepMock,
+          },
+        });
+
+        const result = await client.readNamedRange({
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          rangeName: 'Headers',
+        });
+
+        expect(result).toEqual([['QuotaRecovered']]);
+        expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(3);
+        expect(sleepMock).toHaveBeenCalledTimes(2);
+        expect(sleepMock).toHaveBeenNthCalledWith(1, 100);
+        expect(sleepMock).toHaveBeenNthCalledWith(2, 200);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('does not retry non-quota HTTP 403 and wraps into GoogleSheetsApiError with statusCode 403', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      mockSheetsApi.spreadsheets.values.get.mockRejectedValueOnce({
+        status: 403,
+        errors: [{ reason: 'forbidden' }],
+        message: 'The caller does not have permission',
+      });
 
       const client = new GoogleSheetsClient({
         sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
-        retryOptions: { sleep: sleepMock },
-        configProvider: mockConfigProvider,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 50,
+          sleep: sleepMock,
+        },
       });
 
-      const result = await client.readNamedRange({
+      const err = await client
+        .readNamedRange({
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          rangeName: 'Headers',
+        })
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(GoogleSheetsApiError);
+      expect((err as GoogleSheetsApiError).statusCode).toBe(403);
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
+      expect(sleepMock).not.toHaveBeenCalled();
+    });
+
+    it('applies ±25% jitter bounds to exponential backoff delays', async () => {
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const randomSpy = vi
+        .spyOn(Math, 'random')
+        .mockReturnValueOnce(0) // 0.75x
+        .mockReturnValueOnce(0.999999); // ~1.25x
+
+      try {
+        mockSheetsApi.spreadsheets.values.get
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit' })
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit' })
+          .mockResolvedValueOnce({ data: { values: [['Jittered']] } });
+
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: {
+            maxRetries: 3,
+            initialDelayMs: 100,
+            backoffFactor: 2,
+            sleep: sleepMock,
+          },
+        });
+
+        const result = await client.readNamedRange({
+          spreadsheetId: 'sheet-abc-123',
+          sheetName: 'Sheet1',
+          rangeName: 'Headers',
+        });
+
+        expect(result).toEqual([['Jittered']]);
+        expect(sleepMock).toHaveBeenCalledTimes(2);
+        expect(sleepMock.mock.calls[0]?.[0]).toBe(75);
+        expect(sleepMock.mock.calls[1]?.[0]).toBe(250);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('preserves the private executeWithRetry prototype spy seam', async () => {
+      const spy = vi
+        .spyOn(
+          GoogleSheetsClient.prototype as unknown as { executeWithRetry: () => unknown },
+          'executeWithRetry'
+        )
+        .mockRejectedValueOnce(new Error('Blocked by prototype spy'));
+
+      try {
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+        });
+
+        await expect(
+          client.readNamedRange({
+            spreadsheetId: 'sheet-abc-123',
+            sheetName: 'Sheet1',
+            rangeName: 'Headers',
+          })
+        ).rejects.toThrow('Blocked by prototype spy');
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(mockSheetsApi.spreadsheets.get).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('honors retryOptions.signal to abort active retry backoff immediately', async () => {
+      const controller = new AbortController();
+      mockSheetsApi.spreadsheets.values.get
+        .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({ data: { values: [['ShouldNotRun']] } });
+
+      const client = new GoogleSheetsClient({
+        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+          signal: controller.signal,
+        },
+      });
+
+      const promise = client.readNamedRange({
         spreadsheetId: 'sheet-abc-123',
         sheetName: 'Sheet1',
         rangeName: 'Headers',
       });
 
-      expect(result).toEqual([['Done']]);
-      expect(mockConfigProvider.getSheetsConfig).toHaveBeenCalled();
-      expect(sleepMock).toHaveBeenCalledTimes(1);
-      expect(sleepMock).toHaveBeenCalledWith(250);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(/abort/i);
+      expect(mockSheetsApi.spreadsheets.values.get).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1675,64 +1856,69 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('retries HTTP 429 with exponential backoff on values.batchGet during readTable', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const sleepMock = vi.fn().mockResolvedValue(undefined);
       const initialDelayMs = 75;
 
-      mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
-      mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
-        data: {
-          values: [
-            ['Status', 'Calc Link'], // Row 3
-            ['<--->'], // Row 4
-            ['Open', 'Link'], // Row 5
-            ['<--->'], // Row 6
-          ],
-        },
-      });
-      mockSheetsApi.spreadsheets.values.batchGet
-        .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit' })
-        .mockResolvedValueOnce({
+      try {
+        mockSheetsApi.spreadsheets.get.mockResolvedValueOnce({ data: createArchMetadata() });
+        mockSheetsApi.spreadsheets.values.get.mockResolvedValueOnce({
           data: {
-            valueRanges: [
-              {
-                range: "'Submittal Arch'!B5:B5",
-                values: [['=HYPERLINK("https://drive.google.com/file/d/retry/view", "Link")']],
-              },
+            values: [
+              ['Status', 'Calc Link'], // Row 3
+              ['<--->'], // Row 4
+              ['Open', 'Link'], // Row 5
+              ['<--->'], // Row 6
             ],
           },
         });
+        mockSheetsApi.spreadsheets.values.batchGet
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Rate limit' })
+          .mockResolvedValueOnce({
+            data: {
+              valueRanges: [
+                {
+                  range: "'Submittal Arch'!B5:B5",
+                  values: [['=HYPERLINK("https://drive.google.com/file/d/retry/view", "Link")']],
+                },
+              ],
+            },
+          });
 
-      const client = new GoogleSheetsClient({
-        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
-        retryOptions: {
-          maxRetries: 3,
-          initialDelayMs,
-          backoffFactor: 2,
-          sleep: sleepMock,
-        },
-      });
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: {
+            maxRetries: 3,
+            initialDelayMs,
+            backoffFactor: 2,
+            sleep: sleepMock,
+          },
+        });
 
-      const result = await client.readTable({
-        target: {
-          spreadsheetId: 'log-sheet-1',
-          sheetName: 'Submittal Arch',
-          rangeName: 'Log_Submittal_Arch',
-          extentMarker: '<--->',
-          groupDividerMarker: '---',
-        },
-        linkColumns: ['Calc Link'],
-      });
+        const result = await client.readTable({
+          target: {
+            spreadsheetId: 'log-sheet-1',
+            sheetName: 'Submittal Arch',
+            rangeName: 'Log_Submittal_Arch',
+            extentMarker: '<--->',
+            groupDividerMarker: '---',
+          },
+          linkColumns: ['Calc Link'],
+        });
 
-      expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(2);
-      expect(sleepMock).toHaveBeenCalledTimes(1);
-      expect(sleepMock).toHaveBeenCalledWith(initialDelayMs);
-      expect(result.rows).toEqual([
-        {
-          rowNumber: 5,
-          values: { Status: 'Open', 'Calc Link': 'Link' },
-          links: { 'Calc Link': 'https://drive.google.com/file/d/retry/view' },
-        },
-      ]);
+        expect(mockSheetsApi.spreadsheets.values.batchGet).toHaveBeenCalledTimes(2);
+        expect(sleepMock).toHaveBeenCalledTimes(1);
+        expect(sleepMock).toHaveBeenCalledWith(initialDelayMs);
+        expect(result.rows).toEqual([
+          {
+            rowNumber: 5,
+            values: { Status: 'Open', 'Calc Link': 'Link' },
+            links: { 'Calc Link': 'https://drive.google.com/file/d/retry/view' },
+          },
+        ]);
+      } finally {
+        randomSpy.mockRestore();
+      }
     });
 
     it('extracts and validates all =HYPERLINK(...) and raw URL edge cases via readTable', async () => {
@@ -2437,34 +2623,39 @@ describe('GoogleSheetsClient', () => {
     });
 
     it('retries HTTP 429 during insertIntoGroupedList batchUpdate with exponential backoff', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const sleepMock = vi.fn().mockResolvedValue(undefined);
-      const state = createFfeClearedTemplateState([{ style: 'clean-data-row', cells: [] }]);
-      wireSimulator(state);
+      try {
+        const state = createFfeClearedTemplateState([{ style: 'clean-data-row', cells: [] }]);
+        wireSimulator(state);
 
-      const originalBatchUpdate = mockSheetsApi.spreadsheets.batchUpdate.getMockImplementation()!;
-      mockSheetsApi.spreadsheets.batchUpdate
-        .mockRejectedValueOnce({ statusCode: 429, message: 'Quota exceeded' })
-        .mockImplementationOnce(originalBatchUpdate);
+        const originalBatchUpdate = mockSheetsApi.spreadsheets.batchUpdate.getMockImplementation()!;
+        mockSheetsApi.spreadsheets.batchUpdate
+          .mockRejectedValueOnce({ statusCode: 429, message: 'Quota exceeded' })
+          .mockImplementationOnce(originalBatchUpdate);
 
-      const client = new GoogleSheetsClient({
-        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
-        retryOptions: {
-          maxRetries: 2,
-          initialDelayMs: 50,
-          backoffFactor: 2,
-          sleep: sleepMock,
-        },
-      });
+        const client = new GoogleSheetsClient({
+          sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+          retryOptions: {
+            maxRetries: 2,
+            initialDelayMs: 50,
+            backoffFactor: 2,
+            sleep: sleepMock,
+          },
+        });
 
-      const result = await client.insertIntoGroupedList({
-        target: ffeTarget,
-        rowData: { Status: 'Open', 'Spec Tag': 'CG104' },
-        readOnlyColumns: ['Spec Title'],
-      });
+        const result = await client.insertIntoGroupedList({
+          target: ffeTarget,
+          rowData: { Status: 'Open', 'Spec Tag': 'CG104' },
+          readOnlyColumns: ['Spec Title'],
+        });
 
-      expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
-      expect(sleepMock).toHaveBeenCalledTimes(1);
-      expect(sleepMock).toHaveBeenCalledWith(50);
+        expect(result).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 22 });
+        expect(sleepMock).toHaveBeenCalledTimes(1);
+        expect(sleepMock).toHaveBeenCalledWith(50);
+      } finally {
+        randomSpy.mockRestore();
+      }
     });
   });
 
@@ -3594,6 +3785,95 @@ describe('GoogleSheetsClient', () => {
         TypeSystemPolicy.ExactOptionalPropertyTypes = prevPolicy;
       }
     });
+
+    it('writes literal =text strings strictly as stringValue (never formulaValue) across insertIntoGroupedList insert and upsert while preserving explicit { formula } cells', async () => {
+      const state = createSeededState([makeBlankSimRow()]);
+      wireSimulator(state);
+
+      const client = new GoogleSheetsClient(mockSheetsApi as unknown as sheets_v4.Sheets);
+      const insertResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: '=STATUS_INJECT',
+          Group: '099000-001',
+          SortKey: '099000-001-0-260325-1',
+          Helper: { formula: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")' },
+          Notes: '=SUM(1,2)',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '099000-001', sortKey: '099000-001-0-260325-1' },
+        readOnlyColumns: ['Spec Title'],
+      });
+      expect(insertResult).toEqual({ rowNumber: 6, action: 'inserted', sheetId: 10 });
+
+      const insertRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[0][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const insertCellUpdates = insertRequests.filter((req) => req.updateCells);
+      const insertedCells = insertCellUpdates.flatMap((req) => req.updateCells?.rows?.[0]?.values ?? []);
+      expect(insertedCells).toEqual(
+        expect.arrayContaining([
+          { userEnteredValue: { stringValue: '=STATUS_INJECT' } },
+          { userEnteredValue: { formulaValue: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")' } },
+          { userEnteredValue: { stringValue: '=SUM(1,2)' } },
+        ])
+      );
+      expect(state.grid[5].cells[0]).toEqual({ kind: 'string', value: '=STATUS_INJECT' });
+      expect(state.grid[5].cells[4]).toEqual({
+        kind: 'formula',
+        value: '=HYPERLINK("https://drive.google.com/file/d/safe/view", "Link")',
+      });
+      expect(state.grid[5].cells[5]).toEqual({ kind: 'string', value: '=SUM(1,2)' });
+
+      // Upsert with another literal =text payload also uses stringValue (never formulaValue)
+      const upsertResult = await client.insertIntoGroupedList({
+        target,
+        rowData: {
+          Status: '=1+1',
+          Group: '099000-001',
+          SortKey: '099000-001-0-260325-1',
+          Notes: '=HYPERLINK("https://evil.example", "Phish")',
+        },
+        rowKeyExtractor,
+        targetKeys: { groupKey: '099000-001', sortKey: '099000-001-0-260325-1' },
+        duplicatePolicy: 'upsert',
+        readOnlyColumns: ['Spec Title'],
+      });
+      expect(upsertResult).toEqual({ rowNumber: 6, action: 'updated', sheetId: 10 });
+
+      const upsertRequests = mockSheetsApi.spreadsheets.batchUpdate.mock.calls[1][0].requestBody
+        .requests as sheets_v4.Schema$Request[];
+      const upsertCells = upsertRequests
+        .filter((req) => req.updateCells)
+        .flatMap((req) => req.updateCells?.rows?.[0]?.values ?? []);
+      expect(upsertCells).toEqual(
+        expect.arrayContaining([
+          { userEnteredValue: { stringValue: '=1+1' } },
+          {
+            userEnteredValue: {
+              stringValue: '=HYPERLINK("https://evil.example", "Phish")',
+            },
+          },
+        ])
+      );
+      expect(
+        upsertCells.some(
+          (c) =>
+            c.userEnteredValue?.formulaValue === '=1+1' ||
+            c.userEnteredValue?.formulaValue === '=HYPERLINK("https://evil.example", "Phish")'
+        )
+      ).toBe(false);
+
+      const table = await client.readTable({ target, linkColumns: ['Helper'] });
+      expect(table.rows).toHaveLength(1);
+      expect(table.rows[0].values).toMatchObject({
+        Status: '=1+1',
+        Group: '099000-001',
+        Notes: '=HYPERLINK("https://evil.example", "Phish")',
+      });
+      expect(table.rows[0].links).toEqual({
+        Helper: 'https://drive.google.com/file/d/safe/view',
+      });
+    });
   });
 
   describe('readNamedRangesBatch', () => {
@@ -3691,6 +3971,42 @@ describe('GoogleSheetsClient', () => {
       expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
       expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
       expect(res.statuses.status).toBe('missing_range');
+    });
+
+    it('aborts active 429 retry backoff immediately when per-call SheetsOperationOptions.signal aborts', async () => {
+      const controller = new AbortController();
+      mockSheetsApi.spreadsheets.get
+        .mockRejectedValueOnce({ statusCode: 429, message: 'Too Many Requests' })
+        .mockResolvedValueOnce({
+          data: {
+            spreadsheetId: 's1',
+            sheets: [{ properties: { sheetId: 301, title: '_Config Submittal Arch' } }],
+            namedRanges: [],
+          },
+        });
+
+      const retryClient = new GoogleSheetsClient({
+        sheets: mockSheetsApi as unknown as sheets_v4.Sheets,
+        retryOptions: {
+          maxRetries: 3,
+          initialDelayMs: 60_000,
+        },
+      });
+
+      const promise = retryClient.readNamedRangesBatch(
+        {
+          spreadsheetId: 's1',
+          targets: [{ key: 'statuses', sheetName: '_Config Submittal Arch', rangeName: 'Options_Statuses' }],
+        },
+        { signal: controller.signal }
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(/abort/i);
+      expect(mockSheetsApi.spreadsheets.get).toHaveBeenCalledTimes(1);
+      expect(mockSheetsApi.spreadsheets.values.batchGet).not.toHaveBeenCalled();
     });
   });
 

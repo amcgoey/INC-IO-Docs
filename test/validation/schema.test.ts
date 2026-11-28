@@ -535,7 +535,7 @@ describe('DocumentType JSON files schema validation', () => {
             rangeName: 'Options_Submittal_Arch_Actions',
             endMarker: '---',
             columns: {
-              Action: 'key',
+              Key: 'key',
               Name: 'name',
               Suffix: 'suffix',
               Order: 'order',
@@ -547,7 +547,7 @@ describe('DocumentType JSON files schema validation', () => {
             validationRangeName: 'Validation_Submittal_Arch_Contacts',
             endMarker: '---',
             columns: {
-              Contact: 'key',
+              Key: 'key',
               Name: 'name',
             },
             aliasesColumn: 'Aliases',
@@ -613,7 +613,7 @@ describe('DocumentType JSON files schema validation', () => {
             rangeName: 'Options_Submittal_FFE_Actions',
             endMarker: '---',
             columns: {
-              Action: 'key',
+              Key: 'key',
               Name: 'name',
               Suffix: 'suffix',
               Order: 'order',
@@ -625,7 +625,7 @@ describe('DocumentType JSON files schema validation', () => {
             validationRangeName: 'Validation_Submittal_FFE_Contacts',
             endMarker: '---',
             columns: {
-              Contact: 'key',
+              Key: 'key',
               Name: 'name',
             },
             aliasesColumn: 'Aliases',
@@ -636,7 +636,7 @@ describe('DocumentType JSON files schema validation', () => {
             validationRangeName: 'Validation_Submittal_FFE_Vendors',
             endMarker: '---',
             columns: {
-              Vendor: 'key',
+              Key: 'key',
               Name: 'name',
             },
             aliasesColumn: 'Aliases',
@@ -647,8 +647,8 @@ describe('DocumentType JSON files schema validation', () => {
             validationRangeName: 'Validation_Submittal_FFE_Specs',
             endMarker: '---',
             columns: {
-              'Spec Tag': 'key',
-              'Spec Title': 'name',
+              Tag: 'key',
+              Title: 'name',
             },
             aliasesColumn: 'Aliases',
           },

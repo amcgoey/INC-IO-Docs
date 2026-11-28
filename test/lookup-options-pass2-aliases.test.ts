@@ -582,7 +582,23 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
     vi.restoreAllMocks();
   });
 
-  function mockProductionSheetsTables(): void {
+  function mockProductionSheetsTables(options?: {
+    vendorsRows?: string[][];
+    specsRows?: string[][];
+  }): void {
+    const vendorsRows = options?.vendorsRows ?? [
+      ['Type', 'Key', 'Name', 'Aliases'],
+      ['', 'CUSTV', 'Custom Millwork Corp', '"Custom ""Design"", LLC", Custom Design'],
+      ['', '---', '', ''],
+    ];
+    const specsRows = options?.specsRows ?? [
+      ['Tag', 'Title', 'Aliases'],
+      ['CG104', 'BED - KING', 'XY999, CG-104X'],
+      ['---', '', ''],
+    ];
+    const vendorsColCount = vendorsRows[0]?.length ?? 4;
+    const specsColCount = specsRows[0]?.length ?? 3;
+
     nock('https://sheets.googleapis.com')
       .get(`/v4/spreadsheets/${LOG_ID}`)
       .query(true)
@@ -598,42 +614,54 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
           {
             namedRangeId: 'nr-arch-statuses',
             name: 'Options_Submittal_Arch_Statuses',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
           },
           {
             namedRangeId: 'nr-arch-actions',
             name: 'Options_Submittal_Arch_Actions',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 2, endColumnIndex: 6 },
           },
           {
             namedRangeId: 'nr-arch-contacts',
             name: 'Options_Submittal_Arch_Contacts',
-            range: { sheetId: 103, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+            range: { sheetId: 103, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
           },
           {
             namedRangeId: 'nr-ffe-statuses',
             name: 'Options_Submittal_FFE_Statuses',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 0, endColumnIndex: 1 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 0, endColumnIndex: 1 },
           },
           {
             namedRangeId: 'nr-ffe-actions',
             name: 'Options_Submittal_FFE_Actions',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 2, endColumnIndex: 6 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 2, endColumnIndex: 6 },
           },
           {
             namedRangeId: 'nr-ffe-contacts',
             name: 'Options_Submittal_FFE_Contacts',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 7, endColumnIndex: 10 },
+            range: { sheetId: 104, startRowIndex: 2, endRowIndex: 5, startColumnIndex: 7, endColumnIndex: 11 },
           },
           {
             namedRangeId: 'nr-ffe-vendors',
             name: 'Options_Submittal_FFE_Vendors',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 11, endColumnIndex: 14 },
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + vendorsRows.length,
+              startColumnIndex: 11,
+              endColumnIndex: 11 + vendorsColCount,
+            },
           },
           {
             namedRangeId: 'nr-ffe-specs',
             name: 'Options_Submittal_FFE_Specs',
-            range: { sheetId: 104, startRowIndex: 0, endRowIndex: 3, startColumnIndex: 15, endColumnIndex: 18 },
+            range: {
+              sheetId: 104,
+              startRowIndex: 2,
+              endRowIndex: 2 + specsRows.length,
+              startColumnIndex: 15,
+              endColumnIndex: 15 + specsColCount,
+            },
           },
         ],
       });
@@ -646,48 +674,34 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
         return {
           spreadsheetId: LOG_ID,
           valueRanges: requestedRanges.map((range) => {
-            if (range.includes('A1:A3')) {
+            if (range.includes('A3:A5')) {
               return { range, values: [['Status'], ['Open'], ['---']] };
             }
-            if (range.includes('C1:F3')) {
+            if (range.includes('C3:F5')) {
               return {
                 range,
                 values: [
-                  ['Action', 'Name', 'Suffix', 'Order'],
+                  ['Key', 'Name', 'Suffix', 'Order'],
                   ['REC', 'Received', '', '1'],
                   ['---', '', '', ''],
                 ],
               };
             }
-            if (range.includes('H1:J3')) {
+            if (range.includes('H3:K5')) {
               return {
                 range,
                 values: [
-                  ['Contact', 'Name', 'Aliases'],
-                  ['CUST', 'Custom Studio', '"Custom ""Studio"", Inc.", @custom-studio.com'],
-                  ['---', '', ''],
+                  ['Type', 'Key', 'Name', 'Aliases'],
+                  ['', 'CUST', 'Custom Studio', '"Custom ""Studio"", Inc.", @custom-studio.com'],
+                  ['', '---', '', ''],
                 ],
               };
             }
-            if (range.includes('L1:N3')) {
-              return {
-                range,
-                values: [
-                  ['Vendor', 'Name', 'Aliases'],
-                  ['CUSTV', 'Custom Millwork Corp', '"Custom ""Design"", LLC", Custom Design'],
-                  ['---', '', ''],
-                ],
-              };
+            if (range.includes('L3:')) {
+              return { range, values: vendorsRows };
             }
-            if (range.includes('P1:R3')) {
-              return {
-                range,
-                values: [
-                  ['Spec Tag', 'Spec Title', 'Aliases'],
-                  ['CG104', 'BED - KING', 'XY999, CG-104X'],
-                  ['---', '', ''],
-                ],
-              };
+            if (range.includes('P3:')) {
+              return { range, values: specsRows };
             }
             return { range, values: [] };
           }),
@@ -803,6 +817,168 @@ describe('Unmodified production manifest _Config Aliases Pass 2 integration', ()
     expect(findTextInputValue(ffeDocData, 'vendor', 'submittal-ffe')).toBe('CUSTV');
     expect(findTextInputValue(ffeDocData, 'specTag', 'submittal-ffe')).toBe('CG104');
     expect(findDecoratedTextValue(ffeDocData, 'Spec Title')).toBe('BED - KING');
+    expect(nock.isDone()).toBe(true);
+  });
+
+  it('concatenates duplicate Spec Tag row aliases into one first-row-wins tuple for SourceParser Pass 2, tolerates absent Aliases header with Tier 3 fallback, and survives unbalanced quotes (Ticket #388)', async () => {
+    vi.spyOn(gmailClient, 'getThread')
+      .mockResolvedValueOnce({
+        id: 'th-388-1',
+        messages: [
+          {
+            id: 'msg-388-1',
+            threadId: 'th-388-1',
+            subject: 'ZZ888-A Submittal',
+            from: 'Custom Studio <designer@custom-studio.com>',
+            to: 'Designer <designer@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:00:00 -0500',
+            labels: ['INBOX', SPACE_NAME],
+            plainTextBody: 'Please review.',
+            inlineImages: [],
+            attachments: [
+              {
+                partId: 'part-1',
+                attachmentId: 'att-1',
+                filename: 'ZZ888-A_Carnegie_CutSheet.pdf',
+                mimeType: 'application/pdf',
+                size: 1024,
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        id: 'th-388-2',
+        messages: [
+          {
+            id: 'msg-388-2',
+            threadId: 'th-388-2',
+            subject: 'ZZ888-A Submittal',
+            from: 'Custom Studio <designer@custom-studio.com>',
+            to: 'Designer <designer@inc.nyc>',
+            date: 'Tue, 17 Nov 2026 10:05:00 -0500',
+            labels: ['INBOX', SPACE_NAME],
+            plainTextBody: 'Please review.',
+            inlineImages: [],
+            attachments: [
+              {
+                partId: 'part-2',
+                attachmentId: 'att-2',
+                filename: 'ZZ888-A_Custom "Mill_CutSheet.pdf',
+                mimeType: 'application/pdf',
+                size: 1024,
+              },
+            ],
+          },
+        ],
+      });
+
+    // Request 1: duplicate Spec Tag rows (alias ZZ888 only on row 2, first-row-wins Spec Title) + absent Vendors Aliases header with Tier 3 fallback
+    mockDriveSpacesAndLogDiscovery();
+    mockProductionSheetsTables({
+      specsRows: [
+        ['Tag', 'Title', 'Aliases'],
+        ['CG104', 'BED - KING', 'XY999'],
+        [' cg104 ', 'BED - KING SECOND ROW', 'XY999, "Royal ""King"", Bed", ZZ888'],
+        ['---', '', ''],
+      ],
+      vendorsRows: [
+        ['Type', 'Key', 'Name'],
+        ['Fabric', 'CARN', 'Carnegie Fabrics'],
+        ['', '---', ''],
+      ],
+    });
+
+    const req1Res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt' },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-388-1',
+          threadId: 'th-388-1',
+          accessToken: 'ya29.token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: DRIVE_ID,
+            previousMessageId: 'msg-388-1',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: [SPACE_NAME] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-ffe'] } },
+            SelectEmailMessage: { stringInputs: { value: ['msg-388-1'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectAttachments: { stringInputs: { value: ['part-1'] } },
+          },
+        },
+      },
+    });
+
+    expect(req1Res.statusCode).toBe(200);
+    const req1Card = getCard(req1Res.payload, 'updateCard');
+    const req1DocData = findSection(req1Card, 'Document Data');
+    expect(findTextInputValue(req1DocData, 'specTag', 'submittal-ffe')).toBe('CG104');
+    expect(findDecoratedTextValue(req1DocData, 'Spec Title')).toBe('BED - KING');
+    expect(findTextInputValue(req1DocData, 'vendor', 'submittal-ffe')).toBe('CARN');
+    expect(nock.isDone()).toBe(true);
+
+    // Request 2: unbalanced quotes in duplicate Specs row and Vendors Aliases cell
+    mockDriveSpacesAndLogDiscovery();
+    mockProductionSheetsTables({
+      specsRows: [
+        ['Tag', 'Title', 'Aliases'],
+        ['CG104', 'BED - KING', 'XY999'],
+        ['cg104', 'BED - KING SECOND ROW', 'ZZ888, "Dangling'],
+        ['---', '', ''],
+      ],
+      vendorsRows: [
+        ['Type', 'Key', 'Name', 'Aliases'],
+        ['', 'CUSTV', 'Custom Millwork Corp', 'Custom "Mill, "Unclosed Quote'],
+        ['', '---', '', ''],
+      ],
+    });
+
+    const req2Res = await app.server.inject({
+      method: 'POST',
+      url: '/workspace/action',
+      headers: { authorization: 'Bearer valid-jwt' },
+      payload: {
+        hostApp: 'GMAIL',
+        gmail: {
+          messageId: 'msg-388-2',
+          threadId: 'th-388-2',
+          accessToken: 'ya29.token',
+        },
+        commonEventObject: {
+          hostApp: 'GMAIL',
+          parameters: {
+            action: 'onDocumentTypeChange',
+            previousSpaceId: DRIVE_ID,
+            previousMessageId: 'msg-388-2',
+          },
+          formInputs: {
+            SelectDocumentSpaceType: { stringInputs: { value: ['projects'] } },
+            [getDocumentSpaceWidgetName('projects')]: { stringInputs: { value: [SPACE_NAME] } },
+            [getDocumentTypeWidgetName('projects')]: { stringInputs: { value: ['submittal-ffe'] } },
+            SelectEmailMessage: { stringInputs: { value: ['msg-388-2'] } },
+            SelectFileSource: { stringInputs: { value: ['Email Attachments'] } },
+            SelectAttachments: { stringInputs: { value: ['part-2'] } },
+          },
+        },
+      },
+    });
+
+    expect(req2Res.statusCode).toBe(200);
+    const req2Card = getCard(req2Res.payload, 'updateCard');
+    const req2DocData = findSection(req2Card, 'Document Data');
+    expect(findTextInputValue(req2DocData, 'specTag', 'submittal-ffe')).toBe('CG104');
+    expect(findDecoratedTextValue(req2DocData, 'Spec Title')).toBe('BED - KING');
+    expect(findTextInputValue(req2DocData, 'vendor', 'submittal-ffe')).toBe('CUSTV');
     expect(nock.isDone()).toBe(true);
   });
 });

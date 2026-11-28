@@ -175,6 +175,7 @@ export interface LookupOptionsServiceDeps {
   driveOptionSource?: DriveOptionSourcePort | undefined;
   documentLogOptionSource?: DocumentLogOptionSourcePort | undefined;
   timeoutMs?: number | undefined;
+  lookupTimeoutMs?: number | undefined;
 }
 
 export class LookupOptionsService implements LookupOptionsPort {
@@ -188,7 +189,7 @@ export class LookupOptionsService implements LookupOptionsPort {
     private readonly manifestPort: LookupManifestPort,
     private readonly deps?: LookupOptionsServiceDeps
   ) {
-    this.timeoutMs = deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = deps?.lookupTimeoutMs ?? deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   invalidate(scope?: LookupInvalidationScope): void {
@@ -425,13 +426,14 @@ export class LookupOptionsService implements LookupOptionsPort {
       const valCacheKey = `${sourceCacheKey}::${query.value.trim().toLowerCase()}::${String(allowUserInput)}`;
       let cachedValidation = this.validationCache.get(valCacheKey);
       if (!cachedValidation) {
-        cachedValidation = this.runWithTimeout<LookupFieldValidationResult>(
-          () =>
+        const pendingValidation = this.runWithTimeout<LookupFieldValidationResult>(
+          (signal) =>
             this.deps!.driveOptionSource!.validateFolderExistence!({
               spaceStorageId,
               relativePath: optionSource.relativePath,
               value: query.value,
               allowUserInput,
+              signal,
             }),
           () => ({
             isValid: false,
@@ -443,11 +445,24 @@ export class LookupOptionsService implements LookupOptionsPort {
             status: 'error',
             ...(targetPath !== undefined ? { targetPath } : {}),
           })
-        ).catch((error) => {
-          this.validationCache.delete(valCacheKey);
-          throw error;
-        });
-        this.validationCache.set(valCacheKey, cachedValidation);
+        )
+          .then((result) => {
+            if (
+              result.status === 'timeout' &&
+              this.validationCache.get(valCacheKey) === pendingValidation
+            ) {
+              this.validationCache.delete(valCacheKey);
+            }
+            return result;
+          })
+          .catch((error) => {
+            if (this.validationCache.get(valCacheKey) === pendingValidation) {
+              this.validationCache.delete(valCacheKey);
+            }
+            throw error;
+          });
+        this.validationCache.set(valCacheKey, pendingValidation);
+        cachedValidation = pendingValidation;
       }
       return cachedValidation;
     }
@@ -499,12 +514,13 @@ export class LookupOptionsService implements LookupOptionsPort {
       const spaceStorageId = getSpaceStorageId(context.space);
       if (spaceStorageId) {
         return this.runWithTimeout<LookupFieldValidationResult>(
-          () =>
+          (signal) =>
             this.deps!.driveOptionSource!.validateFolderExistence!({
               spaceStorageId,
               relativePath: optionSource.relativePath,
               value: query.value,
               allowUserInput,
+              signal,
             }),
           () => ({
             isValid: false,
@@ -560,13 +576,29 @@ export class LookupOptionsService implements LookupOptionsPort {
 
     let cached = this.sourceCache.get(cacheKey);
     if (!cached) {
-      cached = this.executeResolveSingleSource(context, schema, sourceKey, spaceStorageId).catch(
-        (error) => {
-          this.sourceCache.delete(cacheKey);
+      const pendingSource = this.executeResolveSingleSource(
+        context,
+        schema,
+        sourceKey,
+        spaceStorageId
+      )
+        .then((result) => {
+          if (
+            result.resolution.status === 'timeout' &&
+            this.sourceCache.get(cacheKey) === pendingSource
+          ) {
+            this.sourceCache.delete(cacheKey);
+          }
+          return result;
+        })
+        .catch((error) => {
+          if (this.sourceCache.get(cacheKey) === pendingSource) {
+            this.sourceCache.delete(cacheKey);
+          }
           throw error;
-        }
-      );
-      this.sourceCache.set(cacheKey, cached);
+        });
+      this.sourceCache.set(cacheKey, pendingSource);
+      cached = pendingSource;
     }
 
     return cached;
@@ -636,11 +668,12 @@ export class LookupOptionsService implements LookupOptionsPort {
       }
 
       return this.runWithTimeout<InternalSourceResolution>(
-        async () => {
+        async (signal) => {
           const outcome = await this.deps!.driveOptionSource!.listFoldersAtPath({
             spaceStorageId,
             relativePath: optionSource.relativePath,
             maxItems: MAX_DRIVE_DYNAMIC_OPTIONS,
+            signal,
           });
           if (outcome.status === 'empty') {
             return {
@@ -726,23 +759,37 @@ export class LookupOptionsService implements LookupOptionsPort {
         .map(([k]) => k);
       const sourceKeys = allDocLogSourceKeys.length > 0 ? allDocLogSourceKeys : [sourceKey];
 
-      batchPromise = this.runWithTimeout<InternalDocumentLogBatchOutcome>(
-        async () => {
+      const pendingBatch = this.runWithTimeout<InternalDocumentLogBatchOutcome>(
+        async (signal) => {
           const result = await this.deps!.documentLogOptionSource!.readOptionTables({
             documentTypeKey: docKey,
             ...(context.space !== undefined ? { space: context.space } : {}),
             ...(selectedLogId ? { selectedLogId } : {}),
             sourceKeys,
+            signal,
           });
           return { kind: 'result', result };
         },
         () => ({ kind: 'timeout' }),
         () => ({ kind: 'error' })
-      ).catch((error) => {
-        this.documentLogBatchCache.delete(batchCacheKey);
-        throw error;
-      });
-      this.documentLogBatchCache.set(batchCacheKey, batchPromise);
+      )
+        .then((outcome) => {
+          if (
+            outcome.kind === 'timeout' &&
+            this.documentLogBatchCache.get(batchCacheKey) === pendingBatch
+          ) {
+            this.documentLogBatchCache.delete(batchCacheKey);
+          }
+          return outcome;
+        })
+        .catch((error) => {
+          if (this.documentLogBatchCache.get(batchCacheKey) === pendingBatch) {
+            this.documentLogBatchCache.delete(batchCacheKey);
+          }
+          throw error;
+        });
+      this.documentLogBatchCache.set(batchCacheKey, pendingBatch);
+      batchPromise = pendingBatch;
     }
 
     const batchOutcome = await batchPromise;
@@ -852,26 +899,36 @@ export class LookupOptionsService implements LookupOptionsPort {
   }
 
   private async runWithTimeout<T>(
-    operation: () => Promise<T>,
+    operation: (signal: AbortSignal) => Promise<T>,
     onTimeout: () => T,
     onError: () => T
   ): Promise<T> {
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutError = new Error(`LookupOptions operation timed out after ${this.timeoutMs}ms`);
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        controller.abort(timeoutError);
         reject(timeoutError);
       }, this.timeoutMs);
     });
 
-    const opPromise = operation();
+    let opPromise: Promise<T>;
+    try {
+      opPromise = Promise.resolve(operation(controller.signal));
+    } catch {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      return onError();
+    }
     opPromise.catch(() => {});
 
     try {
       return await Promise.race([opPromise, timeoutPromise]);
     } catch (error) {
-      if (error === timeoutError) {
+      if (error === timeoutError || controller.signal.aborted) {
         return onTimeout();
       }
       return onError();

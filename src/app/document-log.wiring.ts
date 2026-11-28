@@ -4,6 +4,7 @@ import {
   DocumentLogError,
   DocumentLogService,
   LogSchemaRegistryAdapter,
+  LogStorageInaccessibleError,
   type DocumentLogPort,
   type LogDiscoveryPort,
   type LogSchemaRegistryPort,
@@ -27,6 +28,10 @@ import {
   type SheetsConfigProvider,
 } from '../infrastructure/sheets';
 import { HandlebarsAdapter } from '../infrastructure/template-engine/handlebars-adapter';
+import {
+  extractHttpStatusCode,
+  isRateLimitOrQuotaError,
+} from '../infrastructure/google/retry';
 import type { WorkspaceExecutionContext } from '../infrastructure/workspace-addon/context';
 import type { UiProcessDocumentLogPort } from '../features/ui-process-manager';
 import type { UiContextQueryPort } from '../features/schema-driven-ui/ports';
@@ -167,13 +172,16 @@ function resolveTemplateEvaluator(candidate: unknown): LogTemplateEvaluatorPort 
 
 function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscoveryPort {
   return {
-    searchSpreadsheets: async (query) => {
-      const files = await driveClient.searchFiles({
+    searchSpreadsheets: async (query, options) => {
+      const searchParams = {
         targetName: query.targetName,
         ...(query.exactMatch !== undefined ? { exactMatch: query.exactMatch } : {}),
         ...(query.sharedDriveId !== undefined ? { sharedDriveId: query.sharedDriveId } : {}),
         ...(query.mimeTypes !== undefined ? { mimeTypes: query.mimeTypes } : {}),
-      });
+      };
+      const files = options?.signal
+        ? await driveClient.searchFiles(searchParams, { signal: options.signal })
+        : await driveClient.searchFiles(searchParams);
       return files.map((file) => ({
         id: file.id,
         name: file.name,
@@ -184,8 +192,10 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
     },
     ...(typeof driveClient.getFile === 'function'
       ? {
-          getFile: async (fileId) => {
-            const file = await driveClient.getFile(fileId);
+          getFile: async (fileId, options) => {
+            const file = options?.signal
+              ? await driveClient.getFile(fileId, { signal: options.signal })
+              : await driveClient.getFile(fileId);
             return {
               id: file.id,
               name: file.name,
@@ -200,8 +210,12 @@ function createDriveDiscoveryAdapter(driveClient: GoogleDriveClient): LogDiscove
       : {}),
     ...(typeof driveClient.resolveFolderPath === 'function'
       ? {
-          resolveFolderPath: async (rootFolderId, pathSegments) => {
-            const folder = await driveClient.resolveFolderPath(rootFolderId, pathSegments);
+          resolveFolderPath: async (rootFolderId, pathSegments, options) => {
+            const folder = options?.signal
+              ? await driveClient.resolveFolderPath(rootFolderId, pathSegments, {
+                  signal: options.signal,
+                })
+              : await driveClient.resolveFolderPath(rootFolderId, pathSegments);
             return {
               id: folder.id,
               name: folder.name,
@@ -247,6 +261,41 @@ function sanitizeSheetsErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message.trim() : String(error).trim();
   const sanitized = raw.replace(SHEETS_ERROR_PREFIX_REGEX, '').trim();
   return sanitized.length > 0 ? sanitized : 'Unable to read Document Log storage.';
+}
+
+function extractSheetsErrorStatusCode(error: unknown): number | undefined {
+  if (error instanceof GoogleSheetsApiError && error.statusCode !== undefined) {
+    return error.statusCode;
+  }
+  const directStatus = extractHttpStatusCode(error);
+  if (directStatus !== undefined) {
+    return directStatus;
+  }
+  if (error && typeof error === 'object' && 'cause' in error) {
+    return extractHttpStatusCode((error as { cause?: unknown }).cause);
+  }
+  return undefined;
+}
+
+function mapSheetsStorageError(error: unknown, spreadsheetId?: string): never {
+  const statusCode = extractSheetsErrorStatusCode(error);
+  if (statusCode === 404 || (statusCode === 403 && !isRateLimitOrQuotaError(error))) {
+    throw new LogStorageInaccessibleError(sanitizeSheetsErrorMessage(error), {
+      cause: error,
+      ...(spreadsheetId !== undefined ? { spreadsheetId } : {}),
+      statusCode,
+    });
+  }
+  if (
+    error instanceof GoogleSheetsApiError ||
+    (error instanceof Error &&
+      (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
+        SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
+    (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
+  ) {
+    throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
+  }
+  throw error;
 }
 
 function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort {
@@ -298,38 +347,23 @@ function createSheetsStorageAdapter(sheetsClient: SheetsClient): LogStoragePort 
           ...(request.linkColumns !== undefined ? { linkColumns: request.linkColumns } : {}),
         });
       } catch (error) {
-        if (
-          error instanceof GoogleSheetsApiError ||
-          (error instanceof Error &&
-            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
-              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
-          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
-        ) {
-          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
-        }
-        throw error;
+        mapSheetsStorageError(error, request.target.spreadsheetId);
       }
     },
-    readNamedRanges: async (request) => {
+    readNamedRanges: async (request, options) => {
       if (!sheetsClient.readNamedRangesBatch) {
         throw new Error('SheetsClient.readNamedRangesBatch is not implemented.');
       }
       try {
-        return await sheetsClient.readNamedRangesBatch({
+        const batchRequest = {
           spreadsheetId: request.spreadsheetId,
           targets: request.targets,
-        });
+        };
+        return options?.signal
+          ? await sheetsClient.readNamedRangesBatch(batchRequest, { signal: options.signal })
+          : await sheetsClient.readNamedRangesBatch(batchRequest);
       } catch (error) {
-        if (
-          error instanceof GoogleSheetsApiError ||
-          (error instanceof Error &&
-            (SHEETS_ERROR_NAME_REGEX.test(error.name) ||
-              SHEETS_ERROR_PREFIX_REGEX.test(error.message))) ||
-          (typeof error === 'string' && SHEETS_ERROR_PREFIX_REGEX.test(error.trim()))
-        ) {
-          throw new DocumentLogError(sanitizeSheetsErrorMessage(error), { cause: error });
-        }
-        throw error;
+        mapSheetsStorageError(error, request.spreadsheetId);
       }
     },
   };
